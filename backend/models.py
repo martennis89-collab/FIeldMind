@@ -14,7 +14,7 @@ def _now_iso() -> str:
 
 
 # ---------- USERS / TEAMS ----------
-Role = Literal["TM", "Manager", "Admin"]
+Role = Literal["TM", "Manager", "Admin", "Owner"]
 
 
 class UserCreate(BaseModel):
@@ -23,6 +23,7 @@ class UserCreate(BaseModel):
     password: str
     role: Role = "TM"
     team_id: Optional[str] = None
+    manager_user_id: Optional[str] = None
     region: Optional[str] = None
 
 
@@ -31,6 +32,7 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     role: Optional[Role] = None
     team_id: Optional[str] = None
+    manager_user_id: Optional[str] = None
     region: Optional[str] = None
     active_status: Optional[bool] = None
     password: Optional[str] = None
@@ -43,6 +45,7 @@ class UserPublic(BaseModel):
     email: EmailStr
     role: Role
     team_id: Optional[str] = None
+    manager_user_id: Optional[str] = None
     region: Optional[str] = None
     active_status: bool = True
     created_at: str

@@ -12,6 +12,40 @@ def _iso(dt=None):
     return (dt or datetime.now(timezone.utc)).isoformat()
 
 
+async def seed_owner(db) -> dict:
+    """Idempotently create the platform Owner (Martin Petrov).
+    Runs on every startup; no-op if Owner already exists with that email.
+    """
+    OWNER_EMAIL = "martennis89@gmail.com"
+    existing = await db.users.find_one({"email": OWNER_EMAIL})
+    if existing:
+        # If somehow a non-owner role exists with that email, upgrade them
+        if existing.get("role") != "Owner":
+            await db.users.update_one(
+                {"id": existing["id"]},
+                {"$set": {"role": "Owner", "active_status": True, "updated_at": _iso()}},
+            )
+            return {"upgraded": True, "id": existing["id"]}
+        return {"skipped": True}
+    now = _iso()
+    doc = {
+        "id": _uuid(),
+        "full_name": "Martin Petrov",
+        "email": OWNER_EMAIL,
+        "password_hash": hash_password("1234."),
+        "role": "Owner",
+        "team_id": None,
+        "manager_user_id": None,
+        "region": None,
+        "active_status": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.users.insert_one(doc)
+    return {"created": True, "id": doc["id"], "email": OWNER_EMAIL}
+
+
+
 async def seed_demo(db) -> dict:
     """Create demo users/team/doctors/visits/tasks if not present.
     Returns a small report."""
@@ -22,7 +56,6 @@ async def seed_demo(db) -> dict:
     if existing_admin:
         report["skipped"] = True
         return report
-
     now = _iso()
 
     # Team

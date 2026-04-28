@@ -45,7 +45,9 @@ function Users() {
   const [users, setUsers] = useState([]);
   const [teams, setTeams] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ full_name: "", email: "", password: "", role: "TM", team_id: "", region: "" });
+  const [editing, setEditing] = useState(null); // user object
+  const [resetting, setResetting] = useState(null); // user object
+  const [form, setForm] = useState({ full_name: "", email: "", password: "", role: "TM", team_id: "", manager_user_id: "", region: "" });
 
   const load = async () => {
     const [u, t] = await Promise.all([api.get("/users"), api.get("/teams")]);
@@ -53,30 +55,70 @@ function Users() {
   };
   useEffect(() => { load(); }, []);
 
+  const isOwner = me?.role === "Owner";
+
   const create = async () => {
     try {
-      await api.post("/users", { ...form, team_id: form.team_id || null, region: form.region || null });
+      await api.post("/users", {
+        ...form,
+        team_id: form.team_id || null,
+        manager_user_id: form.manager_user_id || null,
+        region: form.region || null,
+      });
       toast.success("User created");
-      setOpen(false); setForm({ full_name: "", email: "", password: "", role: "TM", team_id: "", region: "" });
+      setOpen(false); setForm({ full_name: "", email: "", password: "", role: "TM", team_id: "", manager_user_id: "", region: "" });
       load();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed");
     }
   };
 
-  // Count active admins (excluding the user being toggled) so we can preempt the server check.
-  const activeAdminCount = users.filter((u) => u.role === "Admin" && u.active_status).length;
+  const saveEdit = async () => {
+    try {
+      const payload = {
+        full_name: editing.full_name,
+        email: editing.email,
+        role: editing.role,
+        team_id: editing.team_id || null,
+        manager_user_id: editing.manager_user_id || null,
+        region: editing.region || null,
+      };
+      await api.put(`/users/${editing.id}`, payload);
+      toast.success("User updated");
+      setEditing(null);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
+
+  const resetPassword = async () => {
+    if (!resetting?.newPassword || resetting.newPassword.length < 4) {
+      toast.error("Password must be at least 4 characters"); return;
+    }
+    try {
+      await api.put(`/users/${resetting.id}`, { password: resetting.newPassword });
+      toast.success(`Password reset for ${resetting.full_name}`);
+      setResetting(null);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
+
+  const removeUser = async (u) => {
+    if (!window.confirm(`Hard-delete ${u.full_name} (${u.email})? Their doctors will be set to Inactive (un-assigned). This cannot be undone.`)) return;
+    try {
+      await api.delete(`/users/${u.id}`);
+      toast.success(`${u.full_name} deleted`);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
 
   const toggleActive = async (u) => {
-    if (me?.id === u.id) {
-      toast.error("You can't deactivate your own account.");
-      return;
-    }
-    if (u.role === "Admin" && u.active_status && activeAdminCount <= 1) {
-      toast.error("Can't deactivate the last active Admin. Promote another user first.");
-      return;
-    }
-    if (!window.confirm(`${u.active_status ? "Deactivate" : "Activate"} ${u.full_name}?\n${u.active_status ? "They won't be able to log in until reactivated." : ""}`)) return;
+    if (me?.id === u.id) { toast.error("You can't deactivate your own account."); return; }
+    if (!window.confirm(`${u.active_status ? "Deactivate" : "Activate"} ${u.full_name}?`)) return;
     try {
       await api.put(`/users/${u.id}`, { active_status: !u.active_status });
       toast.success(`${u.full_name} ${u.active_status ? "deactivated" : "reactivated"}`);
@@ -85,6 +127,15 @@ function Users() {
       toast.error(e?.response?.data?.detail || "Failed");
     }
   };
+
+  const canModify = (u) => {
+    // Only Owner can modify Owner; Admin can modify anyone else
+    if (u.role === "Owner" && !isOwner) return false;
+    return true;
+  };
+
+  const managerOptions = users.filter((u) => u.role === "Manager" && u.active_status);
+  const availableRoles = isOwner ? ["TM", "Manager", "Admin", "Owner"] : ["TM", "Manager", "Admin"];
 
   return (
     <div className="mt-4">
@@ -102,7 +153,7 @@ function Users() {
               <div><Label>Role</Label>
                 <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
                   <SelectTrigger data-testid="new-user-role"><SelectValue /></SelectTrigger>
-                  <SelectContent>{["TM", "Manager", "Admin"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                  <SelectContent>{availableRoles.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div><Label>Team</Label>
@@ -114,6 +165,17 @@ function Users() {
                   </SelectContent>
                 </Select>
               </div>
+              {form.role === "TM" && (
+                <div><Label>Manager</Label>
+                  <Select value={form.manager_user_id || ALL} onValueChange={(v) => setForm({ ...form, manager_user_id: v === ALL ? "" : v })}>
+                    <SelectTrigger data-testid="new-user-manager"><SelectValue placeholder="None" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>None</SelectItem>
+                      {managerOptions.map((u) => <SelectItem key={u.id} value={u.id}>{u.full_name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div><Label>Region</Label><Input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} /></div>
             </div>
             <DialogFooter>
@@ -122,17 +184,18 @@ function Users() {
           </DialogContent>
         </Dialog>
       </div>
+
       <div className="rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
         <table className="w-full text-sm">
           <thead style={{ background: "var(--bg-paper)" }}>
-            <tr>{["Name", "Email", "Role", "Team", "Active", ""].map((h) => <th key={h} className="text-left px-4 py-2 text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{h}</th>)}</tr>
+            <tr>{["Name", "Email", "Role", "Team", "Manager", "Active", ""].map((h) => <th key={h} className="text-left px-4 py-2 text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{h}</th>)}</tr>
           </thead>
           <tbody>
             {users.map((u) => {
               const team = teams.find((t) => t.id === u.team_id);
               const isSelf = me?.id === u.id;
-              const isLastActiveAdmin = u.role === "Admin" && u.active_status && activeAdminCount <= 1;
-              const protectedLock = isSelf || isLastActiveAdmin;
+              const mgr = users.find((x) => x.id === u.manager_user_id);
+              const modifiable = canModify(u);
               return (
                 <tr key={u.id} className="border-t" style={{ borderColor: "var(--border-default)" }} data-testid={`user-row-${u.id}`}>
                   <td className="px-4 py-2 font-medium">
@@ -140,20 +203,27 @@ function Users() {
                     {isSelf && <span className="ml-2 text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>you</span>}
                   </td>
                   <td className="px-4 py-2">{u.email}</td>
-                  <td className="px-4 py-2"><span className="pill pill-info">{u.role}</span></td>
+                  <td className="px-4 py-2">
+                    <span className={`pill ${u.role === "Owner" ? "pill-warning" : "pill-info"}`}>{u.role}</span>
+                  </td>
                   <td className="px-4 py-2">{team?.team_name || "—"}</td>
+                  <td className="px-4 py-2">{u.role === "TM" ? (mgr?.full_name || "—") : "—"}</td>
                   <td className="px-4 py-2">{u.active_status ? <span className="pill pill-success">Active</span> : <span className="pill pill-danger">Disabled</span>}</td>
                   <td className="px-4 py-2 text-right">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => toggleActive(u)}
-                      disabled={u.active_status && protectedLock}
-                      title={isSelf ? "You can't deactivate your own account" : isLastActiveAdmin ? "Last active Admin — promote another user first" : ""}
-                      data-testid={`toggle-user-${u.id}`}
-                    >
-                      {u.active_status ? "Deactivate" : "Activate"}
-                    </Button>
+                    <div className="flex gap-1 justify-end">
+                      <Button size="sm" variant="outline" disabled={!modifiable} onClick={() => setEditing({ ...u })} data-testid={`edit-user-${u.id}`} title="Edit">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={!modifiable} onClick={() => setResetting({ ...u, newPassword: "" })} data-testid={`reset-pw-${u.id}`} title="Reset password">
+                        <Shield className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={!modifiable || isSelf} onClick={() => toggleActive(u)} data-testid={`toggle-user-${u.id}`}>
+                        {u.active_status ? "Disable" : "Enable"}
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={!modifiable || isSelf} onClick={() => removeUser(u)} data-testid={`delete-user-${u.id}`} title="Delete user">
+                        <Trash2 className="w-3.5 h-3.5" style={{ color: "var(--status-danger)" }} />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -161,6 +231,78 @@ function Users() {
           </tbody>
         </table>
       </div>
+
+      {/* Edit user dialog */}
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit user</DialogTitle></DialogHeader>
+          {editing && (
+            <div className="space-y-3">
+              <div><Label>Full name</Label><Input value={editing.full_name || ""} onChange={(e) => setEditing({ ...editing, full_name: e.target.value })} data-testid="edit-user-name" /></div>
+              <div><Label>Email</Label><Input type="email" value={editing.email || ""} onChange={(e) => setEditing({ ...editing, email: e.target.value })} data-testid="edit-user-email" /></div>
+              <div><Label>Role</Label>
+                <Select value={editing.role} onValueChange={(v) => setEditing({ ...editing, role: v })}>
+                  <SelectTrigger data-testid="edit-user-role"><SelectValue /></SelectTrigger>
+                  <SelectContent>{availableRoles.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div><Label>Team</Label>
+                <Select value={editing.team_id || ALL} onValueChange={(v) => setEditing({ ...editing, team_id: v === ALL ? null : v })}>
+                  <SelectTrigger data-testid="edit-user-team"><SelectValue placeholder="None" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>None</SelectItem>
+                    {teams.map((t) => <SelectItem key={t.id} value={t.id}>{t.team_name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {editing.role === "TM" && (
+                <div><Label>Manager</Label>
+                  <Select value={editing.manager_user_id || ALL} onValueChange={(v) => setEditing({ ...editing, manager_user_id: v === ALL ? null : v })}>
+                    <SelectTrigger data-testid="edit-user-manager"><SelectValue placeholder="None" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>None</SelectItem>
+                      {managerOptions.map((u) => <SelectItem key={u.id} value={u.id}>{u.full_name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div><Label>Region</Label><Input value={editing.region || ""} onChange={(e) => setEditing({ ...editing, region: e.target.value })} /></div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
+            <Button onClick={saveEdit} data-testid="submit-edit-user">Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset password dialog */}
+      <Dialog open={!!resetting} onOpenChange={(o) => !o && setResetting(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Reset password</DialogTitle></DialogHeader>
+          {resetting && (
+            <div className="space-y-3">
+              <div className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                Setting a new password for <strong>{resetting.full_name}</strong> ({resetting.email}). They'll need to use this on their next login.
+              </div>
+              <div>
+                <Label>New password</Label>
+                <Input
+                  type="password"
+                  value={resetting.newPassword || ""}
+                  onChange={(e) => setResetting({ ...resetting, newPassword: e.target.value })}
+                  data-testid="reset-pw-input"
+                  placeholder="At least 4 characters"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetting(null)}>Cancel</Button>
+            <Button onClick={resetPassword} data-testid="submit-reset-pw">Set new password</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

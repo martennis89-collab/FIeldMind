@@ -74,8 +74,13 @@ async def get_current_user(
 
 
 def require_roles(*roles: str):
+    # Owner role implicitly satisfies any Admin requirement
+    effective = set(roles)
+    if "Admin" in effective:
+        effective.add("Owner")
+
     async def _checker(user: dict = Depends(get_current_user)):
-        if user["role"] not in roles:
+        if user["role"] not in effective:
             raise HTTPException(
                 status_code=403,
                 detail=f"Forbidden: requires role(s) {', '.join(roles)}",

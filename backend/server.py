@@ -49,7 +49,7 @@ from models import (
     ExpenseUpdate,
 )
 from ai import analyze_note as ai_analyze_note
-from seed import seed_demo
+from seed import seed_demo, seed_owner
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -445,6 +445,40 @@ async def seed_init():
     return report
 
 
+@api.post("/admin/wipe-test-data")
+async def wipe_test_data(user=Depends(require_roles("Owner"))):
+    """Owner-only: hard-delete all demo + test users and their related data.
+    Preserves: the calling Owner, any non-demo user accounts, and their data.
+    """
+    # Demo seed accounts
+    demo_emails = ["admin@field.io", "manager@field.io", "tm1@field.io", "tm2@field.io"]
+    demo_users = await db.users.find({"email": {"$in": demo_emails}}, {"_id": 0}).to_list(50)
+    demo_user_ids = [u["id"] for u in demo_users]
+    deleted = {"users": 0, "doctors": 0, "visits": 0, "tasks": 0, "expenses": 0, "reports": 0, "imports": 0}
+    if demo_user_ids:
+        # Doctors owned by demo users
+        owned_docs = await db.doctors.find({"assigned_tm_id": {"$in": demo_user_ids}}, {"_id": 0, "id": 1}).to_list(5000)
+        owned_doc_ids = [d["id"] for d in owned_docs]
+        if owned_doc_ids:
+            r1 = await db.visits.delete_many({"doctor_id": {"$in": owned_doc_ids}}); deleted["visits"] += r1.deleted_count
+            r2 = await db.tasks.delete_many({"doctor_id": {"$in": owned_doc_ids}}); deleted["tasks"] += r2.deleted_count
+            r3 = await db.doctors.delete_many({"id": {"$in": owned_doc_ids}}); deleted["doctors"] += r3.deleted_count
+        # Anything else tied to demo users
+        r4 = await db.visits.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["visits"] += r4.deleted_count
+        r5 = await db.tasks.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["tasks"] += r5.deleted_count
+        r6 = await db.expenses.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["expenses"] = r6.deleted_count
+        r7 = await db.reports.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["reports"] = r7.deleted_count
+        r8 = await db.doctor_imports.delete_many({"uploaded_by_user_id": {"$in": demo_user_ids}}); deleted["imports"] = r8.deleted_count
+        r9 = await db.users.delete_many({"id": {"$in": demo_user_ids}}); deleted["users"] = r9.deleted_count
+    # Test rows from pytest runs (any token-prefixed names)
+    test_tokens = ["iter9", "iter11", "iter12", "test_iter", "test_iter9"]
+    for tok in test_tokens:
+        # Doctors
+        await db.doctors.delete_many({"doctor_name": {"$regex": tok, "$options": "i"}})
+    await _audit(user, "wipe", "test_data", "*", new=deleted)
+    return {"ok": True, "deleted": deleted, "demo_emails_removed": demo_emails}
+
+
 # ====================================================
 # USERS (admin)
 # ====================================================
@@ -462,6 +496,9 @@ async def create_user(body: UserCreate, request: Request, user=Depends(require_r
     existing = await db.users.find_one({"email": body.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
+    # Only an Owner can create another Owner
+    if body.role == "Owner" and user.get("role") != "Owner":
+        raise HTTPException(status_code=403, detail="Only an Owner can create another Owner")
     import uuid
     doc = {
         "id": str(uuid.uuid4()),
@@ -470,6 +507,7 @@ async def create_user(body: UserCreate, request: Request, user=Depends(require_r
         "password_hash": hash_password(body.password),
         "role": body.role,
         "team_id": body.team_id,
+        "manager_user_id": body.manager_user_id,
         "region": body.region,
         "active_status": True,
         "created_at": _now_iso(),
@@ -487,27 +525,39 @@ async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Guardrails: protect the last active Admin from deactivation / role change / self-lockout.
+    # Owner protection: only an Owner can edit / disable / change role of an Owner.
+    if existing.get("role") == "Owner" and user.get("role") != "Owner":
+        raise HTTPException(status_code=403, detail="Only an Owner can modify an Owner account")
+    # Only an Owner can promote to Owner
+    if body.role == "Owner" and user.get("role") != "Owner":
+        raise HTTPException(status_code=403, detail="Only an Owner can grant the Owner role")
+
+    # Last-Owner / last-Admin guardrails
     will_deactivate = body.active_status is False and existing.get("active_status", True) is True
-    will_demote = body.role is not None and body.role != "Admin" and existing.get("role") == "Admin"
-    if existing.get("role") == "Admin" and (will_deactivate or will_demote):
-        active_admin_count = await db.users.count_documents({"role": "Admin", "active_status": True})
+    will_demote = body.role is not None and body.role != existing.get("role")
+    if existing.get("role") == "Owner" and (will_deactivate or (will_demote and body.role != "Owner")):
+        active_owner_count = await db.users.count_documents({"role": "Owner", "active_status": True})
+        if active_owner_count <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot deactivate or demote the last active Owner. Promote another user to Owner first.",
+            )
+    if existing.get("role") == "Admin" and (will_deactivate or (will_demote and body.role not in ("Admin", "Owner"))):
+        active_admin_count = await db.users.count_documents({"role": {"$in": ["Admin", "Owner"]}, "active_status": True})
         if active_admin_count <= 1:
             raise HTTPException(
                 status_code=409,
                 detail="Cannot deactivate or demote the last active Admin. Promote another user to Admin first.",
             )
-    if user["id"] == user_id and (will_deactivate or will_demote):
-        # An Admin cannot lock themselves out of their own account.
+    if user["id"] == user_id and (will_deactivate or (will_demote and body.role not in ("Admin", "Owner"))):
         raise HTTPException(
             status_code=409,
-            detail="You can't deactivate or change the role of your own account. Ask another Admin.",
+            detail="You can't deactivate or change the role of your own account. Ask another Admin/Owner.",
         )
 
-    update = {k: v for k, v in body.model_dump(exclude_none=True).items() if k != "password"}
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k != "password"}
     if body.email:
         update["email"] = body.email.lower()
-        # Reject duplicate email on a different user
         clash = await db.users.find_one({"email": update["email"], "id": {"$ne": user_id}})
         if clash:
             raise HTTPException(status_code=409, detail="Email already in use")
@@ -518,6 +568,34 @@ async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles
     new = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     await _audit(user, "update", "user", user_id, prev={"role": existing.get("role"), "active": existing.get("active_status")}, new={k: v for k, v in update.items() if k != "password_hash"})
     return new
+
+
+@api.delete("/users/{user_id}")
+async def delete_user(user_id: str, user=Depends(require_roles("Admin"))):
+    """Hard delete a user account. Cascades: orphans their doctors (assigned_tm_id=None, status=Inactive)."""
+    existing = await db.users.find_one({"id": user_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user["id"] == user_id:
+        raise HTTPException(status_code=409, detail="You can't delete your own account.")
+    if existing.get("role") == "Owner" and user.get("role") != "Owner":
+        raise HTTPException(status_code=403, detail="Only an Owner can delete an Owner account")
+    if existing.get("role") == "Owner":
+        active_owner_count = await db.users.count_documents({"role": "Owner", "active_status": True})
+        if active_owner_count <= 1:
+            raise HTTPException(status_code=409, detail="Cannot delete the last active Owner.")
+    if existing.get("role") == "Admin":
+        admin_count = await db.users.count_documents({"role": {"$in": ["Admin", "Owner"]}, "active_status": True})
+        if admin_count <= 1:
+            raise HTTPException(status_code=409, detail="Cannot delete the last active Admin/Owner.")
+    # Cascade: orphan their doctors so list queries don't break
+    await db.doctors.update_many(
+        {"assigned_tm_id": user_id},
+        {"$set": {"assigned_tm_id": None, "status": "Inactive", "updated_at": _now_iso()}},
+    )
+    await db.users.delete_one({"id": user_id})
+    await _audit(user, "delete", "user", user_id, prev={"email": existing.get("email"), "role": existing.get("role")})
+    return {"ok": True, "id": user_id}
 
 
 # ====================================================
@@ -3220,6 +3298,12 @@ async def on_startup():
         {"currency": {"$ne": "EUR"}},
         {"$set": {"currency": "EUR"}},
     )
+    # Bootstrap platform Owner (idempotent)
+    try:
+        owner_report = await seed_owner(db)
+        logger.info(f"Owner seed: {owner_report}")
+    except Exception as e:
+        logger.error(f"Owner seed failed: {e}")
     logger.info("Field Intelligence Platform started.")
 
 

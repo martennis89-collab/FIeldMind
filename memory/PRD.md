@@ -196,6 +196,25 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 13 (Feb 2026) — Owner role + full admin user CRUD
+- **New role: `Owner`** (`Literal["TM", "Manager", "Admin", "Owner"]`). `auth.require_roles` auto-grants Owner the same access as Admin (no per-route refactor needed).
+- **Auto-seeded Owner**: every backend startup runs `seed.seed_owner()` (idempotent) — creates Martin Petrov (`martennis89@gmail.com` / `1234.`) if missing. Survives all wipes/redeploys.
+- **Owner protection rules** in `update_user` & new `delete_user`:
+  - Only an Owner can create another Owner, promote to Owner, or modify/delete an Owner row.
+  - Last-active-Owner cannot be deactivated/demoted/deleted.
+  - Last-active-Admin (counting Owner) cannot be deactivated/demoted/deleted.
+  - Self-deactivation, self-demotion, and self-delete remain blocked.
+- **Admin Users tab — full UX rebuild**:
+  - Edit dialog (full_name, email, role, team, manager, region) — saves via `PUT /users/{id}` with `exclude_unset=True` so explicit nulls clear fields.
+  - Reset password dialog (Owner/Admin can set any user's new password).
+  - Hard delete user (red trash icon) — cascades by orphaning their doctors (`assigned_tm_id=null`, `status=Inactive`).
+  - Disable / Enable toggle (now wraps server guards — bug "I can no longer disable users" fixed: was a UI artifact when you tried to disable yourself).
+  - Disabled actions on Owner row when caller isn't Owner.
+- **TM ↔ Manager link**: `manager_user_id` field added to `User`. Editable directly on TM rows (not via team). Surfaced in users table as "Manager" column. Reassign by editing.
+- **New endpoint `DELETE /api/users/{id}`** (Admin/Owner) and **`POST /api/admin/wipe-test-data`** (Owner only) — wipes the four demo accounts plus their doctors/visits/tasks/expenses/reports/imports + any pytest token rows.
+- **Frontend access**: `/admin` route + nav link now allow Owner; `App.js` `ProtectedRoute roles=["Admin","Owner"]`.
+- Test coverage: 9 new tests in `tests/test_owner_and_admin.py` (Owner login, Owner-only owner-creation, edit/delete flow, admin-can't-modify-Owner, password reset, team/manager assignment, self-delete-blocked, **admin-can-disable-TM bug verification**). Updated `test_admin_guardrails.py` to accept either guard message (last-admin or self-lock). **24/24 admin/import/owner tests green.**
+
 ## Iteration 12 (Feb 2026) — Doctor list view + delete UX
 - **List ⇄ Cards toggle** on `/doctors` (saved in `localStorage.doctors_view`, default = list). List shows: name, clinic·city, segment, cadence, sentiment, last-visit days; Cards keep the original visual richness (priority pills, top barriers, etc.).
 - **Per-row delete** button (red trash icon) on every row/card, with `window.confirm` and toast feedback. Visits + tasks for that doctor are cascade-removed (visits hard-deleted, tasks soft-deleted) so the data stays consistent.

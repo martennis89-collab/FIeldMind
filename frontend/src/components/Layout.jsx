@@ -109,7 +109,7 @@ export default function Layout({ children }) {
                 {t.label}
               </NavLink>
             ))}
-            {user?.role === "Admin" && (
+            {(user?.role === "Admin" || user?.role === "Owner") && (
               <NavLink
                 to="/admin"
                 data-testid="nav-admin"

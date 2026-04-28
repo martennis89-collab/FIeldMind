@@ -41,7 +41,8 @@ class TestAdminGuardrails:
         r = requests.put(f"{API}/users/{admin_id}", headers=H(self.admin),
                          json={"active_status": False}, timeout=10)
         assert r.status_code == 409
-        assert "last active Admin" in r.json()["detail"]
+        # Either the last-admin guard or the self-lockout guard may trip first.
+        assert any(kw in r.json()["detail"] for kw in ("last active Admin", "your own account"))
         # Also can't be demoted
         r2 = requests.put(f"{API}/users/{admin_id}", headers=H(self.admin),
                           json={"role": "TM"}, timeout=10)
