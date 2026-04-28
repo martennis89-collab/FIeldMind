@@ -54,7 +54,7 @@ class TestDoctorImport:
         assert rc.status_code == 200
         assert rc.headers["content-type"].startswith("text/csv")
         body = rc.content.decode("utf-8")
-        assert "doctor_name" in body
+        assert "first_name" in body and "last_name" in body
         assert "Smile Clinic" in body
         rx = requests.get(f"{API}/doctors/import/template?format=xlsx", headers=H(self.tm), timeout=10)
         assert rx.status_code == 200
@@ -166,6 +166,70 @@ class TestDoctorImport:
         # TM cannot
         rt = requests.get(f"{API}/admin/doctor-imports", headers=H(self.tm), timeout=10)
         assert rt.status_code == 403
+
+    def test_first_last_name_merge(self):
+        """CSV with separate first_name/last_name columns should be merged into doctor_name."""
+        csv = (
+            "first_name,last_name,clinic_name,city,segment\n"
+            "Maria,Iter9_split,SplitClinic,Sofia,New\n"
+            "Petar,Iter9_split2,SplitClinic2,Plovdiv,Active\n"
+        ).encode("utf-8")
+        rp = requests.post(f"{API}/doctors/import/preview", headers=H(self.tm),
+                           files={"file": ("split.csv", csv, "text/csv")}, timeout=15)
+        assert rp.status_code == 200, rp.text
+        prev = rp.json()
+        sm = prev["suggested_mapping"]
+        # auto-mapping should bind first_name & last_name
+        assert sm.get("first_name") == "first_name"
+        assert sm.get("last_name") == "last_name"
+        body = {"filename": prev["filename"], "mapping": sm,
+                "rows": prev["rows"], "duplicate_strategy": "skip"}
+        rc = requests.post(f"{API}/doctors/import/commit", headers=H(self.tm), json=body, timeout=15)
+        assert rc.status_code == 200, rc.text
+        d = rc.json()
+        assert d["created_count"] == 2
+        assert d["failed_count"] == 0
+        # Verify merged doctor_name visible
+        rl = requests.get(f"{API}/doctors", headers=H(self.tm), timeout=15).json()
+        docs = rl if isinstance(rl, list) else rl.get("doctors", [])
+        names = [doc["doctor_name"] for doc in docs]
+        assert any("Maria Iter9_split" == n for n in names), names
+
+    def test_new_segment_accepted(self):
+        """'New' must be accepted by import + create flows."""
+        csv = (
+            "doctor_name,clinic_name,city,segment\n"
+            "Dr Iter9_newseg,NewSegClinic,Burgas,New\n"
+        ).encode("utf-8")
+        prev = requests.post(f"{API}/doctors/import/preview", headers=H(self.tm),
+                             files={"file": ("ns.csv", csv, "text/csv")}, timeout=15).json()
+        body = {"filename": prev["filename"], "mapping": prev["suggested_mapping"],
+                "rows": prev["rows"], "duplicate_strategy": "skip"}
+        rc = requests.post(f"{API}/doctors/import/commit", headers=H(self.tm), json=body, timeout=15)
+        assert rc.status_code == 200, rc.text
+        d = rc.json()
+        assert d["created_count"] == 1
+        assert d["failed_count"] == 0
+        # Check segment persisted as 'New'
+        rl = requests.get(f"{API}/doctors", headers=H(self.tm), timeout=15).json()
+        docs = rl if isinstance(rl, list) else rl.get("doctors", [])
+        match = next((doc for doc in docs if "iter9_newseg" in (doc.get("doctor_name") or "").lower()), None)
+        assert match is not None
+        assert match.get("segment") == "New"
+
+    def test_manual_add_new_segment(self):
+        """POST /api/doctors with segment='New' should succeed."""
+        r = requests.post(f"{API}/doctors", headers=H(self.tm), json={
+            "doctor_name": "Dr Iter9_manualnew",
+            "clinic_name": "ManualNewClinic",
+            "city": "Varna",
+            "segment": "New",
+            "doctor_type": "GP",
+        }, timeout=10)
+        assert r.status_code == 200, r.text
+        assert r.json().get("segment") == "New"
+
+
 
 
 class TestUserManagement:
