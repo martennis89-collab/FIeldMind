@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from "react";
 import api from "../lib/api";
 import { Link } from "react-router-dom";
+import { useAuth } from "../lib/auth";
 import { Input } from "../components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Button } from "../components/ui/button";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
-import { Search as SearchIcon, MapPin, Filter, Plus } from "lucide-react";
+import { Search as SearchIcon, MapPin, Filter, Plus, Upload } from "lucide-react";
 
 const ALL = "__ALL__";
 
 export default function Doctors() {
+  const { user } = useAuth();
   const [docs, setDocs] = useState([]);
   const [q, setQ] = useState("");
   const [segment, setSegment] = useState(ALL);
@@ -52,13 +54,20 @@ export default function Doctors() {
 
   return (
     <div data-testid="doctors-page">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <div>
           <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Roster</div>
           <h1 className="font-display text-3xl sm:text-4xl font-light tracking-tight" style={{ color: "var(--brand-primary)" }}>
             Doctors <span className="font-medium">({docs.length})</span>
           </h1>
         </div>
+        {user?.role === "TM" && (
+          <Link to="/doctors/import" data-testid="import-doctors-link">
+            <Button variant="outline" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>
+              <Upload className="w-4 h-4 mr-1" /> Import doctors
+            </Button>
+          </Link>
+        )}
       </div>
 
       <div className="rounded-md border p-4 mb-5 grid grid-cols-1 md:grid-cols-12 gap-3" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}>

@@ -487,6 +487,12 @@ async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
     update = {k: v for k, v in body.model_dump(exclude_none=True).items() if k != "password"}
+    if body.email:
+        update["email"] = body.email.lower()
+        # Reject duplicate email on a different user
+        clash = await db.users.find_one({"email": update["email"], "id": {"$ne": user_id}})
+        if clash:
+            raise HTTPException(status_code=409, detail="Email already in use")
     if body.password:
         update["password_hash"] = hash_password(body.password)
     update["updated_at"] = _now_iso()
@@ -556,14 +562,224 @@ async def list_doctors(
 
 
 @api.post("/doctors")
-async def create_doctor(body: DoctorCreate, user=Depends(require_roles("Admin", "Manager"))):
+async def create_doctor(body: DoctorCreate, user=Depends(require_roles("Admin", "Manager", "TM"))):
     doc = Doctor(**body.model_dump()).model_dump()
-    if user["role"] == "Manager" and not doc.get("team_id"):
+    if user["role"] == "TM":
+        # TM creates a doctor for themselves
+        doc["assigned_tm_id"] = user["id"]
+        doc["team_id"] = user.get("team_id")
+    elif user["role"] == "Manager" and not doc.get("team_id"):
         doc["team_id"] = user.get("team_id")
     await db.doctors.insert_one(doc)
     await _audit(user, "create", "doctor", doc["id"], new={"doctor_name": doc["doctor_name"]})
     _strip_id(doc)
     return await _enrich_doctor(doc)
+
+
+# ====================================================
+# DOCTOR IMPORT (xlsx / csv)
+# ====================================================
+@api.get("/doctors/import/template")
+async def download_doctor_template(format: str = "xlsx", user=Depends(get_current_user)):
+    """Downloadable template with sample row. CSV or XLSX."""
+    from fastapi.responses import Response
+    from imports import build_template_csv, build_template_xlsx
+
+    fmt = (format or "xlsx").lower()
+    if fmt == "csv":
+        body = build_template_csv()
+        return Response(
+            content=body,
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="doctor_import_template.csv"'},
+        )
+    if fmt == "xlsx":
+        body = build_template_xlsx()
+        return Response(
+            content=body,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="doctor_import_template.xlsx"'},
+        )
+    raise HTTPException(status_code=400, detail="format must be 'csv' or 'xlsx'")
+
+
+@api.post("/doctors/import/preview")
+async def preview_doctor_import(file: UploadFile = File(...), user=Depends(require_roles("Admin", "TM"))):
+    """Parse an uploaded sheet, return detected columns + suggested mapping + sample rows.
+
+    The frontend then sends these rows back through `/doctors/import/commit` after the user
+    confirms / edits the column mapping.
+    """
+    from imports import parse_upload, auto_map_headers, TARGET_FIELDS
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds 5 MB limit")
+    parsed = parse_upload(file.filename or "", raw)
+    headers = parsed["headers"]
+    rows = parsed["rows"]
+    if not headers or not rows:
+        raise HTTPException(status_code=400, detail="No data rows detected")
+    if len(rows) > 2000:
+        raise HTTPException(status_code=413, detail="Too many rows (max 2000) — split your file")
+    suggested = auto_map_headers(headers)
+    return {
+        "filename": file.filename,
+        "headers": headers,
+        "row_count": len(rows),
+        "sample_rows": rows[:5],
+        "rows": rows,
+        "suggested_mapping": suggested,
+        "target_fields": TARGET_FIELDS,
+    }
+
+
+@api.post("/doctors/import/commit")
+async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "TM"))):
+    """Commit a previewed import.
+
+    Body:
+      filename: str
+      mapping: {target_field -> source_header}  (source can be None)
+      rows: [{header: cell, ...}]
+      duplicate_strategy: "skip" | "update" | "import"   (default "skip")
+      assigned_tm_id: optional (Admin only — overrides default TM)
+    """
+    import uuid
+    from imports import validate_and_project
+
+    filename = (body or {}).get("filename") or "upload"
+    mapping = (body or {}).get("mapping") or {}
+    rows = (body or {}).get("rows") or []
+    strategy = ((body or {}).get("duplicate_strategy") or "skip").lower()
+    if strategy not in ("skip", "update", "import"):
+        raise HTTPException(status_code=400, detail="duplicate_strategy must be 'skip', 'update', or 'import'")
+
+    # Determine assigned TM
+    assigned_tm_id = (body or {}).get("assigned_tm_id")
+    if user["role"] == "TM":
+        assigned_tm_id = user["id"]
+    elif user["role"] == "Admin":
+        if not assigned_tm_id:
+            raise HTTPException(status_code=400, detail="assigned_tm_id is required for Admin imports")
+
+    target_user = await db.users.find_one({"id": assigned_tm_id, "role": "TM"}, {"_id": 0})
+    if not target_user:
+        raise HTTPException(status_code=400, detail="Target TM not found")
+    target_team_id = target_user.get("team_id")
+
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+    if len(rows) > 2000:
+        raise HTTPException(status_code=413, detail="Too many rows (max 2000)")
+
+    validated = validate_and_project(rows, mapping)
+
+    # Pre-fetch existing doctors for this TM for duplicate detection
+    existing_docs = await db.doctors.find(
+        {"assigned_tm_id": assigned_tm_id},
+        {"_id": 0, "id": 1, "doctor_name": 1, "clinic_name": 1, "city": 1},
+    ).to_list(5000)
+
+    def key1(name, city):
+        return f"{(name or '').strip().lower()}|{(city or '').strip().lower()}"
+
+    def key2(clinic, city):
+        return f"{(clinic or '').strip().lower()}|{(city or '').strip().lower()}"
+
+    name_city = {key1(d.get("doctor_name"), d.get("city")): d for d in existing_docs}
+    clinic_city = {key2(d.get("clinic_name"), d.get("city")): d for d in existing_docs if d.get("clinic_name")}
+
+    created = []
+    updated = []
+    skipped = []
+    failed = []
+    now = _now_iso()
+    for v in validated:
+        if v["errors"]:
+            failed.append({"row_index": v["row_index"], "errors": v["errors"]})
+            continue
+        p = v["projected"]
+        # find duplicate
+        dup = None
+        if p.get("doctor_name") and p.get("city"):
+            dup = name_city.get(key1(p["doctor_name"], p["city"]))
+        if not dup and p.get("clinic_name") and p.get("city"):
+            dup = clinic_city.get(key2(p["clinic_name"], p["city"]))
+
+        doc_payload = {
+            "doctor_name": p["doctor_name"],
+            "clinic_name": p.get("clinic_name"),
+            "city": p.get("city"),
+            "region": p.get("region"),
+            "doctor_type": p.get("doctor_type") or "GP",
+            "segment": p.get("segment") or "Occasional",
+            "general_notes": p.get("general_notes"),
+        }
+
+        if dup:
+            if strategy == "skip":
+                skipped.append({"row_index": v["row_index"], "doctor_name": p["doctor_name"], "duplicate_id": dup["id"], "reason": "duplicate"})
+                continue
+            if strategy == "update":
+                # keep existing id, refresh fields
+                upd = {k: vv for k, vv in doc_payload.items() if vv is not None}
+                upd["updated_at"] = now
+                await db.doctors.update_one({"id": dup["id"]}, {"$set": upd})
+                updated.append({"row_index": v["row_index"], "doctor_id": dup["id"], "doctor_name": p["doctor_name"]})
+                continue
+            # strategy == "import": fall through and create a fresh row
+
+        new_id = str(uuid.uuid4())
+        new_doc = {
+            "id": new_id,
+            **doc_payload,
+            "assigned_tm_id": assigned_tm_id,
+            "team_id": target_team_id,
+            "status": "Active",
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.doctors.insert_one(new_doc)
+        created.append({"row_index": v["row_index"], "doctor_id": new_id, "doctor_name": p["doctor_name"]})
+        # Update local indexes so duplicates inside the same import are caught
+        if p.get("doctor_name") and p.get("city"):
+            name_city[key1(p["doctor_name"], p["city"])] = {"id": new_id, **doc_payload}
+        if p.get("clinic_name") and p.get("city"):
+            clinic_city[key2(p["clinic_name"], p["city"])] = {"id": new_id, **doc_payload}
+
+    import_id = str(uuid.uuid4())
+    summary = {
+        "id": import_id,
+        "filename": filename,
+        "uploaded_by_user_id": user["id"],
+        "uploaded_by_email": user.get("email"),
+        "assigned_tm_id": assigned_tm_id,
+        "assigned_tm_name": target_user.get("full_name"),
+        "row_count": len(rows),
+        "created_count": len(created),
+        "updated_count": len(updated),
+        "skipped_count": len(skipped),
+        "failed_count": len(failed),
+        "duplicate_strategy": strategy,
+        "details": {"created": created, "updated": updated, "skipped": skipped, "failed": failed},
+        "created_at": now,
+    }
+    await db.doctor_imports.insert_one(summary)
+    summary.pop("_id", None)
+    await _audit(user, "import", "doctors", import_id, new={
+        "row_count": len(rows), "created": len(created), "updated": len(updated),
+        "skipped": len(skipped), "failed": len(failed),
+    })
+    return summary
+
+
+@api.get("/admin/doctor-imports")
+async def list_doctor_imports(limit: int = 50, user=Depends(require_roles("Admin"))):
+    rows = await db.doctor_imports.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"imports": rows}
 
 
 @api.get("/doctors/{doctor_id}")
@@ -590,6 +806,16 @@ async def update_doctor(doctor_id: str, body: DoctorUpdate, user=Depends(require
     new = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     await _audit(user, "update", "doctor", doctor_id, prev=existing, new=new)
     return await _enrich_doctor(new)
+
+
+@api.delete("/doctors/{doctor_id}")
+async def delete_doctor(doctor_id: str, user=Depends(require_roles("Admin"))):
+    existing = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    await db.doctors.delete_one({"id": doctor_id})
+    await _audit(user, "delete", "doctor", doctor_id, prev=existing)
+    return {"ok": True, "id": doctor_id}
 
 
 @api.get("/doctors/{doctor_id}/visits")

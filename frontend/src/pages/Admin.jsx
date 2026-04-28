@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import api from "../lib/api";
+import { Link } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -7,7 +8,7 @@ import { Label } from "../components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { Plus, Shield, Users as UsersIcon, Briefcase, Activity, BookOpen, Pencil, Trash2 } from "lucide-react";
+import { Plus, Shield, Users as UsersIcon, Briefcase, Activity, BookOpen, Pencil, Trash2, FileSpreadsheet } from "lucide-react";
 
 const ALL = "__ALL__";
 
@@ -25,11 +26,13 @@ export default function Admin() {
           <TabsTrigger value="users" data-testid="admin-tab-users"><UsersIcon className="w-4 h-4 mr-1" />Users</TabsTrigger>
           <TabsTrigger value="teams" data-testid="admin-tab-teams"><Briefcase className="w-4 h-4 mr-1" />Teams</TabsTrigger>
           <TabsTrigger value="taxonomy" data-testid="admin-tab-taxonomy"><BookOpen className="w-4 h-4 mr-1" />Taxonomy</TabsTrigger>
+          <TabsTrigger value="imports" data-testid="admin-tab-imports"><FileSpreadsheet className="w-4 h-4 mr-1" />Doctor imports</TabsTrigger>
           <TabsTrigger value="audit" data-testid="admin-tab-audit"><Shield className="w-4 h-4 mr-1" />Audit log</TabsTrigger>
         </TabsList>
         <TabsContent value="users"><Users /></TabsContent>
         <TabsContent value="teams"><Teams /></TabsContent>
         <TabsContent value="taxonomy"><Taxonomy /></TabsContent>
+        <TabsContent value="imports"><DoctorImports /></TabsContent>
         <TabsContent value="audit"><Audit /></TabsContent>
       </Tabs>
     </div>
@@ -365,6 +368,108 @@ function Taxonomy() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+
+function DoctorImports() {
+  const [imports, setImports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(null); // selected import for details
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/admin/doctor-imports");
+      setImports(data.imports || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="mt-4 space-y-4" data-testid="doctor-imports-tab">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          Recent doctor imports across the platform.
+        </div>
+        <Link to="/doctors/import">
+          <Button data-testid="admin-import-btn" style={{ background: "var(--brand-primary)", color: "white" }}>
+            <Plus className="w-4 h-4 mr-1" /> New import
+          </Button>
+        </Link>
+      </div>
+      {loading ? (
+        <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>Loading…</div>
+      ) : imports.length === 0 ? (
+        <div className="rounded-md border p-10 text-center" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}>
+          <FileSpreadsheet className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
+          <div className="text-sm" style={{ color: "var(--text-secondary)" }}>No imports yet. Run one from the Doctors page or click "New import" above.</div>
+        </div>
+      ) : (
+        <div className="rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+          <table className="w-full text-sm">
+            <thead style={{ background: "var(--bg-paper)" }}>
+              <tr>
+                {["Date", "By", "Assigned TM", "File", "Rows", "Created", "Updated", "Skipped", "Failed", ""].map((h) => (
+                  <th key={h} className="text-left px-4 py-2 text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {imports.map((imp) => (
+                <tr key={imp.id} className="border-t" style={{ borderColor: "var(--border-default)" }} data-testid={`import-row-${imp.id}`}>
+                  <td className="px-4 py-2">{new Date(imp.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                  <td className="px-4 py-2">{imp.uploaded_by_email}</td>
+                  <td className="px-4 py-2">{imp.assigned_tm_name || "—"}</td>
+                  <td className="px-4 py-2 text-xs font-mono" style={{ color: "var(--text-muted)" }}>{imp.filename}</td>
+                  <td className="px-4 py-2 text-right">{imp.row_count}</td>
+                  <td className="px-4 py-2 text-right" style={{ color: "var(--status-success)" }}>{imp.created_count}</td>
+                  <td className="px-4 py-2 text-right">{imp.updated_count}</td>
+                  <td className="px-4 py-2 text-right" style={{ color: imp.skipped_count ? "var(--status-warning)" : "inherit" }}>{imp.skipped_count}</td>
+                  <td className="px-4 py-2 text-right" style={{ color: imp.failed_count ? "var(--status-danger)" : "inherit" }}>{imp.failed_count}</td>
+                  <td className="px-4 py-2 text-right">
+                    <Button size="sm" variant="outline" onClick={() => setOpen(imp)} data-testid={`view-import-${imp.id}`}>Details</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Dialog open={!!open} onOpenChange={(v) => !v && setOpen(null)}>
+        <DialogContent data-testid="import-details-dialog" className="max-w-2xl">
+          <DialogHeader><DialogTitle>Import details</DialogTitle></DialogHeader>
+          {open && (
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div><span className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>File</span><div>{open.filename}</div></div>
+                <div><span className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Strategy</span><div>{open.duplicate_strategy}</div></div>
+                <div><span className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>By</span><div>{open.uploaded_by_email}</div></div>
+                <div><span className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>For TM</span><div>{open.assigned_tm_name || "—"}</div></div>
+              </div>
+              {open.details?.failed?.length > 0 && (
+                <div>
+                  <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--status-danger)" }}>Failed rows</div>
+                  <ul className="list-disc pl-5 text-xs space-y-0.5 max-h-40 overflow-y-auto">
+                    {open.details.failed.slice(0, 50).map((f, i) => <li key={i}>Row {f.row_index + 2}: {f.errors.join(", ")}</li>)}
+                  </ul>
+                </div>
+              )}
+              {open.details?.skipped?.length > 0 && (
+                <div>
+                  <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--status-warning)" }}>Skipped duplicates</div>
+                  <ul className="list-disc pl-5 text-xs space-y-0.5 max-h-40 overflow-y-auto">
+                    {open.details.skipped.slice(0, 50).map((s, i) => <li key={i}>Row {s.row_index + 2}: {s.doctor_name}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

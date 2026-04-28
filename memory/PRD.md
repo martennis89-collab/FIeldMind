@@ -89,6 +89,48 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 ## Iteration 8 (Feb 2026) — Expense Tracking module (Phase 3)
 Mobile-first, food/petrol-only, image-driven expense capture with monthly submission to manager. **EUR-only, no per-receipt approval workflow** — manager simply views totals and downloads receipts.
 
+- **Data model**: `expenses` collection with GridFS `receipts` bucket. Status lifecycle is `Draft → Submitted` only.
+- **AI receipt OCR** via Claude Sonnet 4.5 vision (`expenses_ai.py`) extracts amount/currency/date/vendor/category_hint/confidence with SHA-1 dedupe.
+- **Endpoints**: `POST /expenses` (TM, multipart, currency forced to EUR), `POST /expenses/extract` (OCR-only), `GET /expenses` (RBAC-scoped + filters), `GET /expenses/summary`, `PUT/DELETE /expenses/{id}` (Draft only), `GET /expenses/{id}/receipt`, `POST /expenses/submit-month`, `GET /expenses/team-summary` (Manager/Admin per-TM rollup), `GET /expenses/receipts.zip` (Manager/Admin bulk download).
+- **TM `/expenses`**: month navigator, 4 stat cards, Add/Submit-month buttons, list with receipt thumbnails + delete-draft.
+- **TM `/expenses/log`**: mobile camera capture → AI pre-fill → Petrol/Food picker → save in <10s.
+- **Manager `/expenses`**: by-Territory-Manager rollup table (Petrol € / Food € / Total € / counts), drill-down list, "Download all receipts (ZIP)" + per-TM zip icon.
+- Idempotent startup migration normalised legacy Approved/Rejected → Submitted and any non-EUR currency → EUR.
+
+## Iteration 9 (Feb 2026) — Admin user management + doctor import wizard
+
+### Admin user management (existing endpoints regression-hardened)
+- `POST /api/users` — Admin only (Manager/TM forbidden — verified by tests).
+- `PUT /api/users/{id}` — extended to allow **email change** (with 409 duplicate check) on top of existing fields (name / role / team / region / active_status / password).
+- Login flow already rejects users where `active_status=False` (regression test added).
+- The Admin > Users tab UI already supports create + activate/deactivate; this iteration adds the regression coverage and email-update capability.
+
+### Doctor import (xlsx / csv) — TM self-service + Admin on-behalf
+- **New module** `imports.py`: parses .xlsx (openpyxl) / .csv, auto-suggests header → field mapping (smart aliases), validates rows (required `doctor_name`, normalises `doctor_type` to GP/Ortho/Other, validates `segment` against the four allowed values).
+- **Endpoints**:
+  - `GET /api/doctors/import/template?format=xlsx|csv` — branded template with a sample row "Dr Ivanov · Smile Clinic · Sofia · Sofia · Ortho · Active · Interested in Invisalign but low clinical confidence".
+  - `POST /api/doctors/import/preview` (TM/Admin, multipart) — returns `{filename, headers, row_count, sample_rows, rows, suggested_mapping, target_fields}`.
+  - `POST /api/doctors/import/commit` (TM/Admin, JSON) — applies the mapping, performs **dedupe** (same name+city OR same clinic+city, scoped to the target TM), supports `duplicate_strategy=skip|update|import`. Returns a full `DoctorImport` summary record `{created/updated/skipped/failed counts, details}` and persists it to the new `doctor_imports` collection. Also catches duplicates **inside** the same uploaded file.
+  - `GET /api/admin/doctor-imports` — admin-only history feed.
+  - **`POST /api/doctors`** widened to accept TM role — TMs can now also create individual doctors (auto-assigned to themselves). Strict RBAC unchanged otherwise.
+  - **`DELETE /api/doctors/{id}`** added (Admin only) for taxonomy-style cleanup.
+- **Frontend wizard** `/doctors/import` (TM + Admin):
+  - 4-step pill stepper: Upload → Map columns → Preview → Done.
+  - Step 1: dropzone (.xlsx/.csv, ≤5 MB), template-download buttons, Admin-only TM picker.
+  - Step 2: target-field × source-header mapping with auto-fill from `suggested_mapping`.
+  - Step 3: live validation (total / valid / invalid / possible-duplicates stats, errors banner with first 10 row errors), duplicate-strategy chooser, sample-row preview table.
+  - Step 4: success summary + "Import another" / "Back to doctors" actions.
+- **Doctors page** gains a "Import doctors" button (TM-only).
+- **Admin > Doctor imports** tab: history table with row counts, created/updated/skipped/failed (colored), per-row "Details" dialog showing the failed-row errors and skipped duplicates list.
+- All actions audited (`audit_logs` action=`import` entity=`doctors`; `delete` entity=`doctor`).
+- New index on `doctor_imports.created_at` ordering (implicit by sort).
+
+### Test coverage (iter-9)
+- 8 doctor-import tests: template (csv/xlsx), preview→commit, dedupe-skip, missing-name validation, xlsx upload, manager-cannot-import, admin-must-pick-tm, admin import-history visibility.
+- 2 user-management tests: only-admin-can-create + deactivation-blocks-login, manager-cannot-edit.
+- Tests include teardown cleanup so the seeded baseline (10 doctors) is preserved for downstream regression. **Total backend 100/100 green.**
+Mobile-first, food/petrol-only, image-driven expense capture with monthly submission to manager. **EUR-only, no per-receipt approval workflow** — manager simply views totals and downloads receipts.
+
 - **Data model**: `expenses` collection — `{id, tm_user_id, tm_name, team_id, expense_date, submission_month, category (Petrol|Food), amount, currency=EUR, vendor?, notes?, receipt_image_id, receipt_mime, receipt_hash, ocr, status (Draft|Submitted), submitted_at, created_at, updated_at}`. Receipt images stored in **GridFS** (`receipts` bucket).
 - **AI receipt OCR** — module `expenses_ai.py` using Claude Sonnet 4.5 vision via Emergent LLM Key (`emergentintegrations.llm.chat` + `ImageContent.image_base64`) extracts `{amount, currency, expense_date, vendor, category_hint, confidence, notes}`.
 - **Endpoints**:

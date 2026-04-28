@@ -28,6 +28,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
     role: Optional[Role] = None
     team_id: Optional[str] = None
     region: Optional[str] = None
