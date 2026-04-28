@@ -69,6 +69,12 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 - **Frontend**: LogVisit Step 2 now has a "Voice note" mic button beside the textarea. Browser MediaRecorder (audio/webm) records, auto-stops at ~110s, uploads to `/visits/transcribe`, and **appends** transcribed text into the existing note (TM can dictate multiple chunks). Live elapsed timer + "Transcribing…" spinner state. Graceful fallbacks: unsupported device, mic permission denied, empty transcription.
 - Test coverage: 6/6 backend tests for the endpoint + 29/29 regression (iter-3 + iter-4) all green.
 
+## Iteration 6 (Feb 2026) — Weekly report PDF / CSV export
+- **New endpoint**: `GET /api/reports/{report_id}/export?format=pdf|csv` — RBAC mirrors `GET /reports/{id}` (TM only own; Manager only same team; Admin all). Returns `application/pdf` (built with reportlab — branded forest-green letterhead, metrics grid, insights bullet list, doctor attention table) or `text/csv` (flat key-value layout) with proper `Content-Disposition: attachment`.
+- **Frontend**: TM Reports list shows PDF + CSV buttons on every row; Manager review drawer adds the same two actions in the footer. Both wire through a shared `downloadReportExport()` helper that uses axios `responseType: blob`, honours server-side filename, and shows a success/error toast.
+- **Audit**: every export records an audit_log entry (`action=export`, `entity=report`, with `format`).
+- Test coverage: 6/6 new tests in `tests/test_report_export.py` (PDF magic bytes, CSV header, 400 invalid format, 401 no-auth, manager same-team allowed, other-TM 403). Total backend now 70/70 green.
+
 ## Iteration 2 (Feb 2026) — Manager Control Dashboard + Reports- Replaced TM-style dashboard view for managers with **Manager Control Dashboard**
 - Added **TM Performance Table** with: visits vs target (cadence-derived), avg visits/day, overdue count, promise completion rate (30d), high-priority doctors not visited (priority ≥ 55), sentiment trend per TM (recent vs prior 30d)
 - Auto **performance flags**: Low visit activity / Rising or High overdue tasks / Poor follow-up discipline / Avoidance of high-priority doctors — color-coded chips
@@ -80,7 +86,6 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 
 ## Backlog (next phases)
 **P1**
-- Weekly report generator with PDF/CSV export
 - Editable Admin taxonomy (custom topics & barriers per region)
 - Expense tracking module with receipt photo upload + OCR (deferred per user request)
 

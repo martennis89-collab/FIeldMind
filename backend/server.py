@@ -2092,6 +2092,189 @@ async def get_report(report_id: str, user=Depends(get_current_user)):
     return r
 
 
+@api.get("/reports/{report_id}/export")
+async def export_report(report_id: str, format: str = "pdf", user=Depends(get_current_user)):
+    """Export a weekly report as CSV or PDF. RBAC mirrors GET /reports/{id}."""
+    r = await db.reports.find_one({"id": report_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if user["role"] == "TM" and r["tm_user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "Manager" and r.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    fmt = (format or "pdf").lower()
+    if fmt not in ("csv", "pdf"):
+        raise HTTPException(status_code=400, detail="format must be 'csv' or 'pdf'")
+
+    from fastapi.responses import Response
+    safe_name = (r.get("tm_name") or "report").replace(" ", "_")
+    base = f"weekly_report_{safe_name}_{r.get('week_start','')}"
+    await _audit(user, "export", "report", report_id, new={"format": fmt})
+
+    if fmt == "csv":
+        import csv
+        import io as _io
+        buf = _io.StringIO()
+        w = csv.writer(buf)
+        c = r.get("content", {}) or {}
+        w.writerow(["Field", "Value"])
+        w.writerow(["TM", r.get("tm_name", "")])
+        w.writerow(["Week start", r.get("week_start", "")])
+        w.writerow(["Week end", r.get("week_end", "")])
+        w.writerow(["Status", r.get("status", "")])
+        w.writerow(["Auto summary", r.get("auto_summary", "")])
+        w.writerow([])
+        w.writerow(["Metric", "Value"])
+        for k in ["visits_completed", "doctors_visited", "promises_created", "promises_completed",
+                 "overdue_promises", "demos_discussed", "demos_booked", "demos_completed",
+                 "proposals_sent", "proposals_followed_up"]:
+            w.writerow([k.replace("_", " ").title(), c.get(k, 0)])
+        w.writerow([])
+        w.writerow(["Top topics", ", ".join(c.get("topics_discussed", []) or [])])
+        w.writerow(["Top barriers", ", ".join(c.get("barriers_heard", []) or [])])
+        sent = c.get("sentiment_summary", {}) or {}
+        w.writerow(["Sentiment", "; ".join(f"{k}: {v}" for k, v in sent.items())])
+        w.writerow([])
+        w.writerow(["Key insights"])
+        for line in (c.get("key_insights", []) or []):
+            w.writerow([line])
+        w.writerow([])
+        w.writerow(["Doctors needing attention", "Segment", "Reason", "Score"])
+        for d in (c.get("doctors_needing_attention", []) or []):
+            w.writerow([d.get("doctor_name", ""), d.get("segment", ""), d.get("reason", ""), d.get("score", "")])
+        w.writerow([])
+        w.writerow(["TM notes", c.get("notes_from_tm", "") or r.get("notes_from_tm", "")])
+        if r.get("manager_comment"):
+            w.writerow(["Manager comment", r["manager_comment"]])
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{base}.csv"'},
+        )
+
+    # PDF via reportlab
+    import io as _io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, ListFlowable, ListItem,
+    )
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=18 * mm, bottomMargin=18 * mm,
+        title=f"Weekly Report — {r.get('tm_name','')}",
+    )
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="Eyebrow", parent=styles["Normal"],
+                              fontSize=8, textColor=colors.HexColor("#7A8980"),
+                              spaceAfter=2, leading=10))
+    styles.add(ParagraphStyle(name="H1", parent=styles["Title"], fontSize=22,
+                              textColor=colors.HexColor("#274035"), leading=26, spaceAfter=8))
+    styles.add(ParagraphStyle(name="H2", parent=styles["Heading2"], fontSize=12,
+                              textColor=colors.HexColor("#274035"), spaceBefore=10, spaceAfter=4))
+    styles.add(ParagraphStyle(name="Body", parent=styles["Normal"], fontSize=10, leading=14))
+    styles.add(ParagraphStyle(name="Muted", parent=styles["Normal"], fontSize=9,
+                              textColor=colors.HexColor("#5A6B62"), leading=12))
+
+    flow = []
+    flow.append(Paragraph("FIELDMIND · WEEKLY FIELD REPORT", styles["Eyebrow"]))
+    flow.append(Paragraph(r.get("tm_name", "Report"), styles["H1"]))
+    flow.append(Paragraph(
+        f"{r.get('week_start','')} → {r.get('week_end','')}  ·  Status: {r.get('status','Draft')}",
+        styles["Muted"],
+    ))
+    flow.append(Spacer(1, 6))
+
+    if r.get("auto_summary"):
+        flow.append(Paragraph("Auto summary", styles["H2"]))
+        flow.append(Paragraph(r["auto_summary"], styles["Body"]))
+
+    c = r.get("content", {}) or {}
+    flow.append(Paragraph("Activity", styles["H2"]))
+    metrics = [
+        ["Visits completed", c.get("visits_completed", 0), "Doctors visited", c.get("doctors_visited", 0)],
+        ["Promises created", c.get("promises_created", 0), "Promises completed", c.get("promises_completed", 0)],
+        ["Overdue promises", c.get("overdue_promises", 0), "Demos completed", c.get("demos_completed", 0)],
+        ["Demos discussed", c.get("demos_discussed", 0), "Demos booked", c.get("demos_booked", 0)],
+        ["Proposals sent", c.get("proposals_sent", 0), "Proposals followed-up", c.get("proposals_followed_up", 0)],
+    ]
+    t = Table(metrics, colWidths=[45 * mm, 25 * mm, 50 * mm, 25 * mm])
+    t.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#274035")),
+        ("BACKGROUND", (1, 0), (1, -1), colors.HexColor("#F4F1EA")),
+        ("BACKGROUND", (3, 0), (3, -1), colors.HexColor("#F4F1EA")),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("ALIGN", (3, 0), (3, -1), "RIGHT"),
+        ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#E2DDD2")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#E2DDD2")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    flow.append(t)
+
+    if c.get("topics_discussed"):
+        flow.append(Paragraph("Top topics", styles["H2"]))
+        flow.append(Paragraph(", ".join(c["topics_discussed"]), styles["Body"]))
+    if c.get("barriers_heard"):
+        flow.append(Paragraph("Top barriers", styles["H2"]))
+        flow.append(Paragraph(", ".join(c["barriers_heard"]), styles["Body"]))
+
+    sent = c.get("sentiment_summary") or {}
+    if sent:
+        flow.append(Paragraph("Sentiment mix", styles["H2"]))
+        flow.append(Paragraph(" · ".join(f"{k}: {v}" for k, v in sent.items()), styles["Body"]))
+
+    if c.get("key_insights"):
+        flow.append(Paragraph("Key insights", styles["H2"]))
+        items = [ListItem(Paragraph(line, styles["Body"]), leftIndent=8) for line in c["key_insights"]]
+        flow.append(ListFlowable(items, bulletType="bullet", start="•"))
+
+    if c.get("doctors_needing_attention"):
+        flow.append(Paragraph("Doctors needing attention next week", styles["H2"]))
+        rows = [["Doctor", "Segment", "Reason", "Score"]]
+        for d in c["doctors_needing_attention"]:
+            rows.append([d.get("doctor_name", ""), d.get("segment", ""),
+                         d.get("reason", ""), str(d.get("score", ""))])
+        att = Table(rows, colWidths=[45 * mm, 25 * mm, 70 * mm, 15 * mm])
+        att.setStyle(TableStyle([
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#274035")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#E2DDD2")),
+            ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#E2DDD2")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#FDFBF7"), colors.white]),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        flow.append(att)
+
+    notes = (c.get("notes_from_tm") or r.get("notes_from_tm") or "").strip()
+    if notes:
+        flow.append(Paragraph("TM notes", styles["H2"]))
+        flow.append(Paragraph(notes.replace("\n", "<br/>"), styles["Body"]))
+
+    if r.get("manager_comment"):
+        flow.append(Paragraph("Manager comment", styles["H2"]))
+        flow.append(Paragraph(r["manager_comment"].replace("\n", "<br/>"), styles["Body"]))
+
+    doc.build(flow)
+    pdf_bytes = buf.getvalue()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'},
+    )
+
+
 
 # ====================================================
 # AUDIT

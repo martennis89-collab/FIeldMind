@@ -9,7 +9,7 @@ import { Label } from "../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { StatusPill } from "../components/StatusPill";
 import { toast } from "sonner";
-import { FileText, Sparkles, Send, Pencil, MessageSquare, AlertTriangle, Clock, CheckCircle2, X, Plus } from "lucide-react";
+import { FileText, Sparkles, Send, Pencil, MessageSquare, AlertTriangle, Clock, CheckCircle2, X, Plus, Download } from "lucide-react";
 
 function formatDate(s) {
   if (!s) return "—";
@@ -18,6 +18,30 @@ function formatDate(s) {
 function formatDateTime(s) {
   if (!s) return "—";
   try { return new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return s; }
+}
+
+async function downloadReportExport(reportId, format, fallbackName) {
+  try {
+    const res = await api.get(`/reports/${reportId}/export`, {
+      params: { format },
+      responseType: "blob",
+    });
+    const blob = res.data;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    // Try to honour server-provided filename
+    const cd = res.headers?.["content-disposition"] || "";
+    const match = /filename="?([^"]+)"?/i.exec(cd);
+    a.download = match ? match[1] : `${fallbackName}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast.success(`${format.toUpperCase()} downloaded`);
+  } catch {
+    toast.error(`Could not export ${format.toUpperCase()}`);
+  }
 }
 
 export default function Reports() {
@@ -164,6 +188,12 @@ function TMReports() {
                       View
                     </Button>
                   )}
+                  <Button size="sm" variant="outline" onClick={() => downloadReportExport(r.id, "pdf", `weekly_report_${r.week_start}`)} data-testid={`export-pdf-${r.id}`} title="Export as PDF">
+                    <Download className="w-3 h-3 mr-1" /> PDF
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => downloadReportExport(r.id, "csv", `weekly_report_${r.week_start}`)} data-testid={`export-csv-${r.id}`} title="Export as CSV">
+                    CSV
+                  </Button>
                 </div>
               </div>
               {r.comments?.length > 0 && (
@@ -565,6 +595,14 @@ function ReportDrawer({ reportId, onClose }) {
         </section>
 
         <DialogFooter>
+          <div className="flex flex-1 gap-2">
+            <Button variant="outline" size="sm" onClick={() => downloadReportExport(report.id, "pdf", `weekly_report_${report.week_start}`)} data-testid="manager-export-pdf">
+              <Download className="w-3 h-3 mr-1" /> PDF
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => downloadReportExport(report.id, "csv", `weekly_report_${report.week_start}`)} data-testid="manager-export-csv">
+              CSV
+            </Button>
+          </div>
           <Button variant="outline" onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>
