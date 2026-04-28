@@ -243,6 +243,13 @@ function ReportEditor({ open, onClose, draft, setDraft, readonly, saving, onSave
             <Stat label="Promises completed" value={c.promises_completed} kind="success" />
           </div>
 
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Demos discussed" value={c.demos_discussed || 0} />
+            <Stat label="Demos booked" value={c.demos_booked || 0} />
+            <Stat label="Demos completed" value={c.demos_completed || 0} kind="success" />
+            <Stat label="Proposals sent" value={c.proposals_sent || 0} />
+          </div>
+
           <section>
             <Label className="text-xs uppercase tracking-widest mb-2 block" style={{ color: "var(--text-muted)" }}>Key insights</Label>
             <div className="space-y-2">
@@ -485,6 +492,13 @@ function ReportDrawer({ reportId, onClose }) {
           <Stat label="Doctors" value={c.doctors_visited} />
           <Stat label="Promises created" value={c.promises_created} />
           <Stat label="Promises completed" value={c.promises_completed} kind="success" />
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+          <Stat label="Demos discussed" value={c.demos_discussed || 0} />
+          <Stat label="Demos booked" value={c.demos_booked || 0} />
+          <Stat label="Demos completed" value={c.demos_completed || 0} kind="success" />
+          <Stat label="Proposals sent" value={c.proposals_sent || 0} />
         </div>
 
         {(c.key_insights || []).length > 0 && (

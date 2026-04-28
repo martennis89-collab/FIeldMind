@@ -52,6 +52,11 @@ PROMISES: actionable follow-ups the TM committed to (e.g., "send certification i
 
 MARKET_SIGNALS: short string observations relevant to market intelligence (e.g., "Doctor cited competitor X in city Y", "Affordability concern raised by Active segment").
 
+COMMERCIAL_ACTIONS — detect execution-layer signals from the note. All booleans default false. Only flip true if explicitly mentioned. Dates are ISO YYYY-MM-DD. Fields:
+- demo_discussed, demo_booked, demo_booked_date, demo_completed, demo_completed_date
+- boost_discussed (any mention of "boost" pricing), trade_in_discussed, trade_in_interest, growth_program_explained
+- proposal_discussed, proposal_sent, proposal_sent_date, proposal_follow_up_done
+
 OUTPUT FORMAT — ALWAYS return ONLY a single JSON object, no prose, no markdown fences:
 {
   "summary": "1-2 sentence neutral factual summary, no patient details",
@@ -64,7 +69,15 @@ OUTPUT FORMAT — ALWAYS return ONLY a single JSON object, no prose, no markdown
   ],
   "suggested_next_action": "",
   "market_signals": [],
-  "privacy_warnings": []
+  "privacy_warnings": [],
+  "commercial_actions": {
+    "demo_discussed": false, "demo_booked": false, "demo_booked_date": null,
+    "demo_completed": false, "demo_completed_date": null,
+    "boost_discussed": false, "trade_in_discussed": false, "trade_in_interest": false,
+    "growth_program_explained": false,
+    "proposal_discussed": false, "proposal_sent": false, "proposal_sent_date": null,
+    "proposal_follow_up_done": false
+  }
 }
 """
 
@@ -100,6 +113,14 @@ def _empty_result(reason: str = "") -> dict:
         "suggested_next_action": "",
         "market_signals": [],
         "privacy_warnings": ([reason] if reason else []),
+        "commercial_actions": {
+            "demo_discussed": False, "demo_booked": False, "demo_booked_date": None,
+            "demo_completed": False, "demo_completed_date": None,
+            "boost_discussed": False, "trade_in_discussed": False, "trade_in_interest": False,
+            "growth_program_explained": False,
+            "proposal_discussed": False, "proposal_sent": False, "proposal_sent_date": None,
+            "proposal_follow_up_done": False,
+        },
     }
 
 
@@ -154,6 +175,15 @@ async def analyze_note(note: str, session_id: str) -> dict:
         result["suggested_next_action"] = (data.get("suggested_next_action") or "")[:400]
         result["market_signals"] = [str(m) for m in (data.get("market_signals") or [])][:6]
         result["privacy_warnings"] = [str(w) for w in (data.get("privacy_warnings") or [])][:6]
+
+        # Commercial actions
+        ca_in = data.get("commercial_actions") or {}
+        ca = result["commercial_actions"]
+        for k in ca.keys():
+            if k.endswith("_date"):
+                ca[k] = ca_in.get(k) or None
+            else:
+                ca[k] = bool(ca_in.get(k))
         return result
     except Exception as e:
         logger.exception("AI analyze_note failed: %s", e)

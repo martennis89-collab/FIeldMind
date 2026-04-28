@@ -12,6 +12,9 @@ import LogVisit from "@/pages/LogVisit";
 import Tasks from "@/pages/Tasks";
 import Search from "@/pages/Search";
 import Reports from "@/pages/Reports";
+import Intervention from "@/pages/Intervention";
+import MarketIntelligence from "@/pages/MarketIntelligence";
+import TeamPerformance from "@/pages/TeamPerformance";
 import Admin from "@/pages/Admin";
 
 export default function App() {
@@ -75,6 +78,30 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout><Reports /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/intervention"
+            element={
+              <ProtectedRoute roles={["Manager", "Admin"]}>
+                <Layout><Intervention /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/market-intelligence"
+            element={
+              <ProtectedRoute roles={["Manager", "Admin"]}>
+                <Layout><MarketIntelligence /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/team-performance"
+            element={
+              <ProtectedRoute roles={["Manager", "Admin"]}>
+                <Layout><TeamPerformance /></Layout>
               </ProtectedRoute>
             }
           />

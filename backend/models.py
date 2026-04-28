@@ -143,6 +143,25 @@ class PromiseDraft(BaseModel):
     priority: Literal["Low", "Medium", "High"] = "Medium"
 
 
+class CommercialActions(BaseModel):
+    # Demo actions
+    demo_discussed: bool = False
+    demo_booked: bool = False
+    demo_booked_date: Optional[str] = None  # ISO date
+    demo_completed: bool = False
+    demo_completed_date: Optional[str] = None
+    # Pricing context
+    boost_discussed: bool = False
+    trade_in_discussed: bool = False
+    trade_in_interest: bool = False
+    growth_program_explained: bool = False
+    # Proposal actions
+    proposal_discussed: bool = False
+    proposal_sent: bool = False
+    proposal_sent_date: Optional[str] = None
+    proposal_follow_up_done: bool = False
+
+
 class AIExtraction(BaseModel):
     summary: str = ""
     topics: List[str] = []
@@ -152,7 +171,8 @@ class AIExtraction(BaseModel):
     promises_detected: List[PromiseDraft] = []
     suggested_next_action: str = ""
     market_signals: List[str] = []
-    privacy_warnings: List[str] = []  # e.g., "Possible patient name detected"
+    privacy_warnings: List[str] = []
+    commercial_actions: CommercialActions = CommercialActions()
 
 
 class AnalyzeNoteRequest(BaseModel):
@@ -170,8 +190,9 @@ class VisitCreate(BaseModel):
     sentiment: Sentiment = "Neutral"
     opportunity_state: OpportunityState = "Unknown"
     next_step: Optional[str] = None
-    promises: List[PromiseDraft] = []  # tasks user confirmed
-    ai_extraction: Optional[AIExtraction] = None  # raw AI result preserved separately
+    promises: List[PromiseDraft] = []
+    ai_extraction: Optional[AIExtraction] = None
+    commercial_actions: CommercialActions = CommercialActions()
 
 
 class Visit(BaseModel):
@@ -189,6 +210,7 @@ class Visit(BaseModel):
     opportunity_state: OpportunityState = "Unknown"
     next_step: Optional[str] = None
     ai_extraction: Optional[AIExtraction] = None
+    commercial_actions: CommercialActions = CommercialActions()
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
 
@@ -264,8 +286,13 @@ class ReportContent(BaseModel):
     overdue_promises: int = 0
     sentiment_summary: dict = {}
     key_insights: List[str] = []
-    doctors_needing_attention: List[dict] = []  # [{id, doctor_name, reason}]
+    doctors_needing_attention: List[dict] = []
     notes_from_tm: str = ""
+    demos_discussed: int = 0
+    demos_booked: int = 0
+    demos_completed: int = 0
+    proposals_sent: int = 0
+    proposals_followed_up: int = 0
 
 
 class ReportComment(BaseModel):

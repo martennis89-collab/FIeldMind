@@ -12,10 +12,13 @@ import {
   Plus,
   Brain,
   FileText,
+  AlertOctagon,
+  TrendingUp,
+  BarChart3,
 } from "lucide-react";
 import { Button } from "./ui/button";
 
-const TABS = [
+const TM_TABS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
   { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
@@ -23,11 +26,21 @@ const TABS = [
   { to: "/search", label: "Search", icon: Search, testId: "nav-search" },
 ];
 
+const MANAGER_TABS = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
+  { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
+  { to: "/market-intelligence", label: "Market Intel", icon: BarChart3, testId: "nav-market-intel" },
+  { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
+  { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
+];
+
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const showFab = !location.pathname.startsWith("/log-visit");
+  const isManager = user?.role === "Manager";
+  const TABS = isManager ? MANAGER_TABS : TM_TABS;
+  const showFab = !isManager && !location.pathname.startsWith("/log-visit");
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg-default)" }}>

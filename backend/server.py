@@ -38,6 +38,7 @@ from models import (
     TaskUpdate,
     Task,
     AIExtraction,
+    CommercialActions,
     WeeklyReport,
     ReportCreate,
     ReportUpdate,
@@ -243,6 +244,9 @@ async def _enrich_doctor(doctor: dict) -> dict:
         top_topics,
     )
 
+    # Commercial state derived across all visits for this doctor
+    commercial = _aggregate_commercial(recent)
+
     enriched = {
         **doctor,
         "last_visit_date": last_visit_date,
@@ -259,8 +263,56 @@ async def _enrich_doctor(doctor: dict) -> dict:
         "visit_priority_score": score,
         "visit_priority_label": _priority_label(score),
         "suggested_next_action": last_visit.get("next_step") if last_visit else None,
+        "commercial_state": commercial,
     }
     return enriched
+
+
+def _aggregate_commercial(visits: list) -> dict:
+    """Aggregate commercial actions across a doctor's visit list. Returns derived state."""
+    state = {
+        "demo_discussed": False, "demo_booked": False, "demo_completed": False,
+        "demo_booked_date": None, "demo_completed_date": None,
+        "boost_discussed": False, "trade_in_discussed": False, "trade_in_interest": False,
+        "growth_program_explained": False,
+        "proposal_discussed": False, "proposal_sent": False, "proposal_sent_date": None,
+        "proposal_follow_up_done": False,
+        "days_since_proposal": None,
+        "demo_pending": False,           # booked but not completed
+        "proposal_unfollowed": False,    # sent but no follow-up
+    }
+    latest_proposal_sent = None
+    proposal_follow_up_after = False
+    for v in visits or []:
+        ca = v.get("commercial_actions") or {}
+        for k in ("demo_discussed", "demo_booked", "demo_completed",
+                  "boost_discussed", "trade_in_discussed", "trade_in_interest",
+                  "growth_program_explained", "proposal_discussed", "proposal_sent",
+                  "proposal_follow_up_done"):
+            if ca.get(k):
+                state[k] = True
+        if ca.get("demo_booked_date") and not state["demo_booked_date"]:
+            state["demo_booked_date"] = ca.get("demo_booked_date")
+        if ca.get("demo_completed_date") and not state["demo_completed_date"]:
+            state["demo_completed_date"] = ca.get("demo_completed_date")
+        if ca.get("proposal_sent_date"):
+            d = ca.get("proposal_sent_date")
+            if (latest_proposal_sent is None) or d > latest_proposal_sent:
+                latest_proposal_sent = d
+                proposal_follow_up_after = bool(ca.get("proposal_follow_up_done"))
+        if ca.get("proposal_follow_up_done"):
+            proposal_follow_up_after = True
+
+    state["proposal_sent_date"] = latest_proposal_sent
+    if latest_proposal_sent:
+        try:
+            d = datetime.fromisoformat(latest_proposal_sent)
+            state["days_since_proposal"] = (datetime.now(timezone.utc).date() - d.date()).days
+        except Exception:
+            state["days_since_proposal"] = None
+    state["demo_pending"] = state["demo_booked"] and not state["demo_completed"]
+    state["proposal_unfollowed"] = state["proposal_sent"] and not proposal_follow_up_after
+    return state
 
 
 # ====================================================
@@ -1038,12 +1090,291 @@ async def manager_performance(user=Depends(require_roles("Manager", "Admin"))):
             "sentiment_trend": sent_trend,
             "pct_visits_to_low_value": pct_low,
         }
+        # high-priority visited %
+        total_high_priority = len([d for d in enriched_my if d["visit_priority_score"] >= 55])
+        if total_high_priority > 0:
+            visited_high = total_high_priority - len(high_pri_unvisited)
+            perf["high_priority_visited_pct"] = round(visited_high / total_high_priority, 2)
+        else:
+            perf["high_priority_visited_pct"] = None
+        perf["total_high_priority"] = total_high_priority
+
+        # demo + proposal performance using enriched commercial_state
+        demos_completed = sum(1 for d in enriched_my if d["commercial_state"]["demo_completed"])
+        demos_booked = sum(1 for d in enriched_my if d["commercial_state"]["demo_booked"])
+        demos_pending = sum(1 for d in enriched_my if d["commercial_state"]["demo_pending"])
+        proposals_sent = sum(1 for d in enriched_my if d["commercial_state"]["proposal_sent"])
+        proposals_unfollowed = sum(1 for d in enriched_my if d["commercial_state"]["proposal_unfollowed"])
+        perf["demos_booked"] = demos_booked
+        perf["demos_completed"] = demos_completed
+        perf["demos_pending"] = demos_pending
+        perf["demo_completion_rate"] = round(demos_completed / demos_booked, 2) if demos_booked else 0.0
+        perf["proposals_sent"] = proposals_sent
+        perf["proposals_unfollowed"] = proposals_unfollowed
+        perf["proposal_followup_rate"] = round((proposals_sent - proposals_unfollowed) / proposals_sent, 2) if proposals_sent else 0.0
+
+        # Execution Quality Score = blended score Low/Medium/High
+        eqs = 0.0
+        eqs += min(perf["visits_vs_target"], 1.5) * 30
+        eqs += (perf["completion_rate"] or 0) * 30
+        if perf["high_priority_visited_pct"] is not None:
+            eqs += perf["high_priority_visited_pct"] * 25
+        else:
+            eqs += 12
+        # penalty for overdue
+        eqs -= min(perf["overdue_count"], 6) * 2
+        # penalty for proposals_unfollowed
+        eqs -= min(perf["proposals_unfollowed"], 4) * 3
+        eqs = max(0, min(round(eqs), 100))
+        perf["execution_quality_score"] = eqs
+        perf["execution_quality_label"] = "High" if eqs >= 65 else "Medium" if eqs >= 40 else "Low"
+
         perf["flags"] = _classify_flags(perf)
         perf["insights"] = _classify_insights(perf)
+        perf["coaching"] = _coaching_for(perf)
         rows.append(perf)
 
-    rows.sort(key=lambda r: (-len(r["flags"]), -r["overdue_count"], -r["high_priority_unvisited"]))
+    rows.sort(key=lambda r: (r["execution_quality_score"], -len(r["flags"])))
     return {"rows": rows}
+
+
+def _coaching_for(perf: dict) -> dict:
+    strengths, weaknesses, suggestions = [], [], []
+    if perf["completion_rate"] >= 0.7 and perf["promises_total_30d"] >= 3:
+        strengths.append("Strong follow-up discipline")
+    if perf["visits_vs_target"] >= 0.9:
+        strengths.append("Hitting visit cadence target")
+    if perf.get("high_priority_visited_pct") is not None and perf["high_priority_visited_pct"] >= 0.7:
+        strengths.append("Covering high-priority doctors well")
+    if perf.get("demos_booked", 0) >= 1 and perf.get("demo_completion_rate", 0) >= 0.7:
+        strengths.append("Closes the loop on demos")
+
+    if perf["completion_rate"] < 0.4 and perf["promises_total_30d"] >= 3:
+        weaknesses.append("Weak follow-up discipline")
+        suggestions.append("Block 30 min/day for promise closure before adding new commitments.")
+    if perf["high_priority_unvisited"] >= 3:
+        weaknesses.append("Avoiding high-value doctors")
+        suggestions.append("Pair with manager on next 2 high-priority visits.")
+    if perf["pct_visits_to_low_value"] >= 0.55 and perf["visits_month"] >= 4:
+        weaknesses.append("Over-visiting low-value doctors")
+        suggestions.append("Reallocate ~30% of Occasional-segment visits toward Engaged/Expert.")
+    if perf.get("demos_pending", 0) >= 2:
+        weaknesses.append("Demos booked but not completed")
+        suggestions.append("Confirm/reschedule pending demos this week.")
+    if perf.get("proposals_unfollowed", 0) >= 2:
+        weaknesses.append("Proposals sent without follow-up")
+        suggestions.append("Schedule follow-up call within 5 days of every proposal.")
+    if perf["sentiment_trend"] == "declining":
+        weaknesses.append("Sentiment declining recently")
+        suggestions.append("Investigate barriers from last 5 visits and surface pattern.")
+    if not weaknesses and not strengths:
+        weaknesses.append("Not enough activity to coach yet")
+    return {"strengths": strengths, "weaknesses": weaknesses, "suggestions": suggestions}
+
+
+# ====================================================
+# COMMERCIAL FUNNEL (manager view)
+# ====================================================
+@api.get("/dashboard/manager/commercial")
+async def manager_commercial(user=Depends(require_roles("Manager", "Admin"))):
+    team_q = {} if user["role"] == "Admin" else {"team_id": user.get("team_id")}
+    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    enriched = [await _enrich_doctor(d) for d in docs]
+    total = len(enriched) or 1
+
+    demo_discussed = sum(1 for d in enriched if d["commercial_state"]["demo_discussed"])
+    demo_booked = sum(1 for d in enriched if d["commercial_state"]["demo_booked"])
+    demo_completed = sum(1 for d in enriched if d["commercial_state"]["demo_completed"])
+    proposal_discussed = sum(1 for d in enriched if d["commercial_state"]["proposal_discussed"])
+    proposal_sent = sum(1 for d in enriched if d["commercial_state"]["proposal_sent"])
+    proposal_followed = sum(1 for d in enriched if d["commercial_state"]["proposal_sent"] and not d["commercial_state"]["proposal_unfollowed"])
+
+    boost = sum(1 for d in enriched if d["commercial_state"]["boost_discussed"])
+    trade_in = sum(1 for d in enriched if d["commercial_state"]["trade_in_discussed"])
+    growth = sum(1 for d in enriched if d["commercial_state"]["growth_program_explained"])
+
+    days_since = [d["commercial_state"]["days_since_proposal"] for d in enriched if d["commercial_state"]["days_since_proposal"] is not None]
+    avg_days_since_proposal = round(sum(days_since) / len(days_since), 1) if days_since else None
+
+    booking_rate = round(demo_booked / demo_discussed, 2) if demo_discussed else 0.0
+    completion_rate_demo = round(demo_completed / demo_booked, 2) if demo_booked else 0.0
+    follow_up_rate = round(proposal_followed / proposal_sent, 2) if proposal_sent else 0.0
+
+    drop_offs = []
+    if demo_booked and completion_rate_demo < 0.5:
+        drop_offs.append({"key": "low_demo_completion", "label": "Low demo completion rate",
+                          "detail": f"Only {int(completion_rate_demo*100)}% of booked demos were completed"})
+    if proposal_sent and follow_up_rate < 0.6:
+        drop_offs.append({"key": "low_proposal_followup", "label": "Low proposal follow-up rate",
+                          "detail": f"Only {int(follow_up_rate*100)}% of proposals had follow-up"})
+    if avg_days_since_proposal is not None and avg_days_since_proposal > 14:
+        drop_offs.append({"key": "stale_proposals", "label": "Proposals are aging",
+                          "detail": f"Average {avg_days_since_proposal} days since proposal sent"})
+
+    # Pricing context gaps lists
+    no_boost = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"], "assigned_tm_id": d.get("assigned_tm_id")}
+                for d in enriched if not d["commercial_state"]["boost_discussed"]][:20]
+    no_trade_in = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"], "assigned_tm_id": d.get("assigned_tm_id")}
+                   for d in enriched if not d["commercial_state"]["trade_in_discussed"]][:20]
+    no_growth = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"], "assigned_tm_id": d.get("assigned_tm_id")}
+                 for d in enriched if not d["commercial_state"]["growth_program_explained"]][:20]
+
+    # Barriers by stage
+    visits = await db.visits.find(team_q, {"_id": 0}).to_list(5000)
+    doc_state = {d["id"]: d["commercial_state"] for d in enriched}
+    pre_demo: dict = {}
+    post_demo: dict = {}
+    post_proposal: dict = {}
+    for v in visits:
+        cs = doc_state.get(v["doctor_id"]) or {}
+        bucket = "pre_demo"
+        if cs.get("proposal_sent"):
+            bucket = "post_proposal"
+        elif cs.get("demo_completed"):
+            bucket = "post_demo"
+        target_dict = pre_demo if bucket == "pre_demo" else post_demo if bucket == "post_demo" else post_proposal
+        for b in v.get("confirmed_barriers", []):
+            target_dict[b] = target_dict.get(b, 0) + 1
+    def top(d):
+        return [{"name": k, "count": v} for k, v in sorted(d.items(), key=lambda x: -x[1])[:6]]
+
+    return {
+        "totals": {"doctors": len(enriched)},
+        "demo_funnel": {
+            "discussed": demo_discussed,
+            "booked": demo_booked,
+            "completed": demo_completed,
+            "booking_rate": booking_rate,
+            "completion_rate": completion_rate_demo,
+        },
+        "proposal_funnel": {
+            "discussed": proposal_discussed,
+            "sent": proposal_sent,
+            "followed_up": proposal_followed,
+            "follow_up_rate": follow_up_rate,
+            "avg_days_since_proposal": avg_days_since_proposal,
+        },
+        "pricing_coverage": {
+            "boost_pct": round(boost / total, 2),
+            "trade_in_pct": round(trade_in / total, 2),
+            "growth_pct": round(growth / total, 2),
+            "no_boost": no_boost,
+            "no_trade_in": no_trade_in,
+            "no_growth": no_growth,
+        },
+        "drop_offs": drop_offs,
+        "barriers_by_stage": {
+            "pre_demo": top(pre_demo),
+            "post_demo": top(post_demo),
+            "post_proposal": top(post_proposal),
+        },
+    }
+
+
+# ====================================================
+# INTERVENTION (manager)
+# ====================================================
+@api.get("/dashboard/manager/interventions")
+async def manager_interventions(stale_proposal_days: int = 7, user=Depends(require_roles("Manager", "Admin"))):
+    team_q = {} if user["role"] == "Admin" else {"team_id": user.get("team_id")}
+    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    enriched = [await _enrich_doctor(d) for d in docs]
+    user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
+    tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
+    tm_name = {t["id"]: t["full_name"] for t in tms}
+
+    today = datetime.now(timezone.utc).date()
+
+    critical = []
+    at_risk = []
+    high_opportunity = []
+
+    for d in enriched:
+        cs = d["commercial_state"]
+        # CRITICAL
+        if cs["proposal_sent"] and cs["days_since_proposal"] is not None and cs["days_since_proposal"] > stale_proposal_days and not cs["proposal_follow_up_done"]:
+            critical.append({
+                "doctor_id": d["id"], "doctor_name": d["doctor_name"], "tm_id": d.get("assigned_tm_id"),
+                "tm_name": tm_name.get(d.get("assigned_tm_id"), "—"), "segment": d["segment"],
+                "issue": f"Proposal sent {cs['days_since_proposal']}d ago — no follow-up yet",
+                "suggested_action": "Schedule a follow-up call/visit this week",
+                "score": d["visit_priority_score"],
+            })
+        if cs["demo_booked"] and not cs["demo_completed"]:
+            critical.append({
+                "doctor_id": d["id"], "doctor_name": d["doctor_name"], "tm_id": d.get("assigned_tm_id"),
+                "tm_name": tm_name.get(d.get("assigned_tm_id"), "—"), "segment": d["segment"],
+                "issue": "Demo booked but not completed",
+                "suggested_action": "Confirm or reschedule the demo",
+                "score": d["visit_priority_score"],
+            })
+        if d["segment"] in ("Engaged", "Expert") and (d["days_since_last_visit"] is None or d["days_since_last_visit"] > d["cadence_target_days"] * 1.5):
+            critical.append({
+                "doctor_id": d["id"], "doctor_name": d["doctor_name"], "tm_id": d.get("assigned_tm_id"),
+                "tm_name": tm_name.get(d.get("assigned_tm_id"), "—"), "segment": d["segment"],
+                "issue": f"High-segment doctor ({d['segment']}) not visited in {d['days_since_last_visit'] or '∞'}d",
+                "suggested_action": "Plan a visit this week",
+                "score": d["visit_priority_score"],
+            })
+        # AT-RISK
+        if d["sentiment_trend"] == "declining":
+            at_risk.append({
+                "doctor_id": d["id"], "doctor_name": d["doctor_name"], "tm_id": d.get("assigned_tm_id"),
+                "tm_name": tm_name.get(d.get("assigned_tm_id"), "—"), "segment": d["segment"],
+                "issue": "Sentiment trending down",
+                "suggested_action": "Address recent barriers in next visit",
+                "score": d["visit_priority_score"],
+            })
+        if d["overdue_promises"] >= 2:
+            at_risk.append({
+                "doctor_id": d["id"], "doctor_name": d["doctor_name"], "tm_id": d.get("assigned_tm_id"),
+                "tm_name": tm_name.get(d.get("assigned_tm_id"), "—"), "segment": d["segment"],
+                "issue": f"{d['overdue_promises']} overdue promises piling up",
+                "suggested_action": "Close commitments before adding new ones",
+                "score": d["visit_priority_score"],
+            })
+        # HIGH-OPPORTUNITY
+        if cs["demo_completed"]:
+            try:
+                done = cs.get("demo_completed_date")
+                if done:
+                    d_done = datetime.fromisoformat(done).date()
+                    if (today - d_done).days <= 30 and not cs["proposal_sent"]:
+                        high_opportunity.append({
+                            "doctor_id": d["id"], "doctor_name": d["doctor_name"], "tm_id": d.get("assigned_tm_id"),
+                            "tm_name": tm_name.get(d.get("assigned_tm_id"), "—"), "segment": d["segment"],
+                            "issue": "Demo completed recently — proposal not yet sent",
+                            "suggested_action": "Send a tailored proposal within the week",
+                            "score": d["visit_priority_score"],
+                        })
+            except Exception:
+                pass
+        if d["current_sentiment"] in ("Positive", "Very Positive") and (cs["boost_discussed"] or cs["growth_program_explained"]) and not cs["proposal_sent"]:
+            high_opportunity.append({
+                "doctor_id": d["id"], "doctor_name": d["doctor_name"], "tm_id": d.get("assigned_tm_id"),
+                "tm_name": tm_name.get(d.get("assigned_tm_id"), "—"), "segment": d["segment"],
+                "issue": "Strong engagement + pricing context discussed — no follow-up yet",
+                "suggested_action": "Move to proposal or book demo",
+                "score": d["visit_priority_score"],
+            })
+
+    # de-duplicate by doctor + issue
+    def dedup(items):
+        seen = set()
+        out = []
+        for it in items:
+            k = (it["doctor_id"], it["issue"])
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(it)
+        return sorted(out, key=lambda x: -x["score"])
+
+    return {
+        "critical": dedup(critical),
+        "at_risk": dedup(at_risk),
+        "high_opportunity": dedup(high_opportunity),
+    }
 
 
 # ====================================================
@@ -1120,6 +1451,17 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
     if needing:
         insights.append(f"Plan visits to: {', '.join([n['doctor_name'] for n in needing[:3]])}.")
 
+    # Commercial momentum from this week's visits
+    demos_discussed = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("demo_discussed"))
+    demos_booked = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("demo_booked"))
+    demos_completed = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("demo_completed"))
+    proposals_sent = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("proposal_sent"))
+    proposals_followed = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("proposal_follow_up_done"))
+    if demos_completed:
+        insights.append(f"✓ {demos_completed} demo{'s' if demos_completed != 1 else ''} completed this week.")
+    if proposals_sent and not proposals_followed:
+        insights.append(f"⚠️ {proposals_sent} proposal{'s' if proposals_sent != 1 else ''} sent — schedule follow-ups.")
+
     content = {
         "visits_completed": len(visits),
         "doctors_visited": len(doctor_ids),
@@ -1132,6 +1474,11 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "key_insights": insights,
         "doctors_needing_attention": needing,
         "notes_from_tm": "",
+        "demos_discussed": demos_discussed,
+        "demos_booked": demos_booked,
+        "demos_completed": demos_completed,
+        "proposals_sent": proposals_sent,
+        "proposals_followed_up": proposals_followed,
     }
     return {
         "tm_user_id": tm_id,

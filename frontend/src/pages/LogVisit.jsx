@@ -38,6 +38,14 @@ export default function LogVisit() {
   const [promises, setPromises] = useState([]);
   const [saving, setSaving] = useState(false);
   const [skipAi, setSkipAi] = useState(false);
+  const [commercial, setCommercial] = useState({
+    demo_discussed: false, demo_booked: false, demo_booked_date: "",
+    demo_completed: false, demo_completed_date: "",
+    boost_discussed: false, trade_in_discussed: false, trade_in_interest: false,
+    growth_program_explained: false,
+    proposal_discussed: false, proposal_sent: false, proposal_sent_date: "",
+    proposal_follow_up_done: false,
+  });
 
   useEffect(() => {
     api.get("/doctors").then((r) => setDoctors(r.data));
@@ -58,6 +66,13 @@ export default function LogVisit() {
       setOpportunity(data.opportunity_state || "Unknown");
       setNextStep(data.suggested_next_action || "");
       setPromises((data.promises_detected || []).map((p) => ({ ...p, _accepted: true })));
+      if (data.commercial_actions) {
+        setCommercial({ ...commercial, ...data.commercial_actions,
+          demo_booked_date: data.commercial_actions.demo_booked_date || "",
+          demo_completed_date: data.commercial_actions.demo_completed_date || "",
+          proposal_sent_date: data.commercial_actions.proposal_sent_date || "",
+        });
+      }
       setStep(3);
     } catch (err) {
       toast.error("AI analysis failed — you can still save manually");
@@ -105,6 +120,12 @@ export default function LogVisit() {
           priority: p.priority || "Medium",
         })),
         ai_extraction: ai || null,
+        commercial_actions: {
+          ...commercial,
+          demo_booked_date: commercial.demo_booked_date || null,
+          demo_completed_date: commercial.demo_completed_date || null,
+          proposal_sent_date: commercial.proposal_sent_date || null,
+        },
       };
       const { data } = await api.post("/visits", payload);
       toast.success(`Visit saved · ${data.created_tasks.length} promise(s) tracked`);
@@ -321,6 +342,46 @@ export default function LogVisit() {
             </div>
           )}
 
+          <div className="rounded-md border p-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="commercial-actions-section">
+            <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Commercial actions</div>
+            <div className="font-display text-base font-medium mb-4" style={{ color: "var(--brand-primary)" }}>What execution moved today?</div>
+            <div className="grid sm:grid-cols-3 gap-5">
+              <div>
+                <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--brand-secondary)" }}>Demo</div>
+                <CommercialCheck label="Demo discussed" checked={commercial.demo_discussed} onChange={(v) => setCommercial({ ...commercial, demo_discussed: v })} testId="ca-demo-discussed" />
+                <CommercialCheck label="Demo booked" checked={commercial.demo_booked} onChange={(v) => setCommercial({ ...commercial, demo_booked: v })} testId="ca-demo-booked" />
+                {commercial.demo_booked && (
+                  <Input type="date" value={commercial.demo_booked_date} onChange={(e) => setCommercial({ ...commercial, demo_booked_date: e.target.value })} className="bg-white mt-1 mb-2 h-8 text-xs" data-testid="ca-demo-booked-date" />
+                )}
+                <CommercialCheck label="Demo completed" checked={commercial.demo_completed} onChange={(v) => setCommercial({ ...commercial, demo_completed: v })} testId="ca-demo-completed" />
+                {commercial.demo_completed && (
+                  <Input type="date" value={commercial.demo_completed_date} onChange={(e) => setCommercial({ ...commercial, demo_completed_date: e.target.value })} className="bg-white mt-1 h-8 text-xs" data-testid="ca-demo-completed-date" />
+                )}
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--brand-secondary)" }}>Pricing context</div>
+                <CommercialCheck label="Boost discussed" checked={commercial.boost_discussed} onChange={(v) => setCommercial({ ...commercial, boost_discussed: v })} testId="ca-boost" />
+                <CommercialCheck label="Trade-in discussed" checked={commercial.trade_in_discussed} onChange={(v) => setCommercial({ ...commercial, trade_in_discussed: v })} testId="ca-tradein" />
+                <CommercialCheck label="Trade-in interest" checked={commercial.trade_in_interest} onChange={(v) => setCommercial({ ...commercial, trade_in_interest: v })} testId="ca-tradein-interest" />
+                <CommercialCheck label="Growth program explained" checked={commercial.growth_program_explained} onChange={(v) => setCommercial({ ...commercial, growth_program_explained: v })} testId="ca-growth" />
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--brand-secondary)" }}>Proposal</div>
+                <CommercialCheck label="Proposal discussed" checked={commercial.proposal_discussed} onChange={(v) => setCommercial({ ...commercial, proposal_discussed: v })} testId="ca-prop-discussed" />
+                <CommercialCheck label="Proposal sent" checked={commercial.proposal_sent} onChange={(v) => setCommercial({ ...commercial, proposal_sent: v })} testId="ca-prop-sent" />
+                {commercial.proposal_sent && (
+                  <Input type="date" value={commercial.proposal_sent_date} onChange={(e) => setCommercial({ ...commercial, proposal_sent_date: e.target.value })} className="bg-white mt-1 mb-2 h-8 text-xs" data-testid="ca-prop-sent-date" />
+                )}
+                <CommercialCheck label="Follow-up done" checked={commercial.proposal_follow_up_done} onChange={(v) => setCommercial({ ...commercial, proposal_follow_up_done: v })} testId="ca-prop-followup" />
+              </div>
+            </div>
+            {ai?.commercial_actions && Object.values(ai.commercial_actions).some(Boolean) && (
+              <div className="text-xs italic mt-3 px-3 py-2 rounded" style={{ background: "var(--status-info-bg)", color: "var(--status-info)" }}>
+                <Brain className="inline w-3 h-3 mr-1" /> AI prefilled some checkboxes from your note. Confirm before saving.
+              </div>
+            )}
+          </div>
+
           <div className="flex justify-between items-center gap-2 pt-2">
             <Button variant="ghost" onClick={() => setStep(2)} data-testid="step3-back-btn">
               <ChevronLeft className="w-4 h-4 mr-1" /> Back to note
@@ -377,5 +438,23 @@ function ChipPicker({ selected, onChange, groups, testIdPrefix }) {
         </PopoverContent>
       </Popover>
     </div>
+  );
+}
+
+
+
+function CommercialCheck({ label, checked, onChange, testId }) {
+  return (
+    <label className="flex items-center gap-2 py-1.5 cursor-pointer" data-testid={testId}>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        className="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0"
+        style={{ background: checked ? "var(--brand-primary)" : "white", borderColor: checked ? "var(--brand-primary)" : "var(--border-default)" }}
+      >
+        {checked && <Check className="w-3 h-3 text-white" />}
+      </button>
+      <span className="text-sm" style={{ color: checked ? "var(--brand-primary)" : "var(--text-secondary)" }}>{label}</span>
+    </label>
   );
 }

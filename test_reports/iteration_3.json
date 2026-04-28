@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration-3 testing for Commercial Actions + Control Tower. Backend: 12/13 pytest cases PASSED in /app/backend/tests/test_commercial_and_control_tower.py. Verified manager_commercial shape + TM-403, manager_interventions shape + TM-403, manager_performance new fields (EQS, coaching, demos_booked/completed/pending, proposals_sent/unfollowed, proposal_followup_rate, high_priority_visited_pct) + sort asc by EQS, /visits/analyze returns commercial_actions object with all 13 keys, doctors list/detail enriched with commercial_state (16 keys), /reports/generate content has demos_discussed/booked/completed + proposals_sent/followed_up. Frontend (manager@field.io): nav shows only Dashboard/Intervention/Market Intel/Team/Reports (no Doctors/Tasks/Search/Admin/FAB). Dashboard has CONTROL TOWER caption + subheading, 4 stat cards, alerts-strip with alert-low_proposal_followup, demo-funnel with 3 progress rows, proposal-funnel (3 rows + follow-up 33% + avg 7.3d), market-pulse-card, 3 quick-link cards. Intervention page: 3 bucket-stat cards + 3 tabs + intervention items with doctor name, segment/TM, issue, suggested action; click item navigates to /doctors/{id}. Market Intel: barriers-by-stage (Pre/Post-demo/Post-proposal columns visible), pricing-coverage (Boost 30%, Trade-in 20%, Growth 30% with 3 columns of uncovered doctor lists). Team Performance: 2 tm-perf-row-{id}, eqs-{id} pill, flag-{id}-* pills, expand works, coaching-{id} panel shows STRENGTHS/WEAKNESSES/COACHING SUGGESTIONS. TM guard: tm1 hitting /intervention and /team-performance redirects to /. TM nav shows Dashboard/Doctors/Tasks/Reports/Search + log-visit-fab.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/visits", "issue": "Top-level `commercial_actions` submitted in request body is DROPPED — server only persists `ai_extraction.commercial_actions`. Contract said top-level field must persist and be returned by subsequent GET. Fix: include `'commercial_actions': body.commercial_actions.model_dump()` in the visit dict around server.py:588.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Market Intelligence", "issues": ["Market pulse block is rendered but does not expose data-testid='market-pulse-card' on this page (testid is only on Dashboard). Add the testid here too for test coverage parity."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_commercial_and_control_tower.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [
+    "Fix POST /api/visits to persist top-level `commercial_actions` in the visits collection and return it in the response/GET (currently only ai_extraction.commercial_actions survives).",
+    "(minor) Add data-testid='market-pulse-card' to MarketIntelligence.jsx pulse section.",
+    "(tech-debt) server.py is now ~1757 lines — past the 700-line threshold; split into routers (reports, dashboards, visits, doctors)."
+  ],
+  "critical_code_review_comments": [
+    "VisitCreate.commercial_actions is defined in the Pydantic model but the POST /api/visits handler does not copy it into the inserted document (server.py:575-592). Visual: ai_extraction.commercial_actions persists because the whole ai_extraction dict is dumped. Top-level access path visit['commercial_actions'] is unreliable.",
+    "server.py grew from 1411 -> 1757 lines this iteration. Split /reports, /dashboards/manager, /visits into routers before iter-4.",
+    "manager_interventions + manager_commercial + _aggregate_commercial do multiple sequential Mongo finds — consider $facet aggregation for team-level fanout.",
+    "`days_since_proposal` is computed at enrichment time on every GET /doctors — cache on visit write or compute in aggregation to avoid N+1 on list endpoint.",
+    "Intervention UI lists don't expose `score` field (backend emits it). Consider showing/sorting by score.",
+    "Same-week report draft is idempotent by (tm_user_id, week_start) (good), but edit-after-submit returns 400 where 409 Conflict is more semantic (carried-over from iter-2).",
+    "TM role guard on /intervention, /team-performance, /market-intelligence is frontend-only; backend already returns 403 on dashboard/manager/* which is correct — confirmed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_commercial_and_control_tower.py (created)"
+  ],
+  "success_rate": {"backend": "92% (12/13)", "frontend": "100% of verified flows (LogVisit step-2 commercial-actions-section not end-to-end verified via UI due to routing timing, but testids & code present and backend analyze returns the payload)"},
+  "test_credentials": "admin@field.io/admin123, manager@field.io/manager123, tm1@field.io/tm123 (Tina TM), tm2@field.io/tm123 (Theo TM)",
+  "seed_data_creation": "Created one TEST_iter3 visit for tm1 via POST /api/visits to validate persistence. Used existing seeded commercial data (4 discussed / 3 booked / 2 completed demos, 3/3/1 proposal funnel).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && REACT_APP_BACKEND_URL=https://territory-intel-8.preview.emergentagent.com python -m pytest tests/ -v. Iter-3 tests at tests/test_commercial_and_control_tower.py (13). Iter-2 tests still pass. Known backend bug: top-level commercial_actions dropped on POST /visits — test_create_visit_persists_commercial fails; main agent needs to patch server.py create_visit handler. Known frontend gap: could not complete LogVisit step-2 via Playwright due to /log-visit route + step wizard flow (Next button requires doctor selected, doctor-option-* selector needs check). LogVisit commercial-actions-section testids exist in LogVisit.jsx — recommend main agent self-test for this flow.",
+  "rca of the issue": "POST /api/visits bug RCA — in server.py:575-592 the visit dict is assembled by cherry-picking fields from VisitCreate; while ai_extraction is dumped into the doc, `commercial_actions` (also on VisitCreate) is never copied. Mitigation: add `'commercial_actions': body.commercial_actions.model_dump() if body.commercial_actions else None,` to the visit dict. Doctor enrichment + manager dashboards currently read commercial state from ai_extraction.commercial_actions so aggregate dashboards still work; only the direct-field API contract is violated."
+}
