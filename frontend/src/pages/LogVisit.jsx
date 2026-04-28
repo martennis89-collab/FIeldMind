@@ -222,7 +222,7 @@ export default function LogVisit() {
                   <CommandList className="max-h-72">
                     <CommandEmpty>No doctors</CommandEmpty>
                     {doctors.map((d) => (
-                      <CommandItem key={d.id} onSelect={() => { setDoctorId(d.id); setDocPickerOpen(false); }} data-testid={`pick-doctor-${d.id}`}>
+                      <CommandItem key={d.id} onSelect={() => { setDoctorId(d.id); setDocPickerOpen(false); }} data-testid={`doctor-option-${d.id}`}>
                         <div className="flex flex-col">
                           <span className="font-medium">{d.doctor_name}</span>
                           <span className="text-xs" style={{ color: "var(--text-muted)" }}>{d.clinic_name} · {d.city} · {d.segment}</span>
@@ -277,8 +277,8 @@ export default function LogVisit() {
               <ChevronLeft className="w-4 h-4 mr-1" /> Back
             </Button>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={skipToReview} data-testid="skip-ai-btn">Skip AI</Button>
-              <Button onClick={runAi} disabled={analyzing || !note.trim()} data-testid="analyze-btn" style={{ background: "var(--brand-primary)", color: "white" }}>
+              <Button variant="outline" onClick={skipToReview} data-testid="step2-skip-ai-btn">Skip AI</Button>
+              <Button onClick={runAi} disabled={analyzing || !note.trim()} data-testid="step2-analyze-btn" style={{ background: "var(--brand-primary)", color: "white" }}>
                 <Sparkles className="w-4 h-4 mr-1" />
                 {analyzing ? "Analyzing…" : "Analyze with AI"}
               </Button>

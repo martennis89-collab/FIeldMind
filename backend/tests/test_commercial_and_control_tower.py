@@ -14,9 +14,8 @@ CREDS = {
 }
 
 COMMERCIAL_KEYS = [
-    "demo_discussed", "demo_booked", "demo_booked_date", "demo_completed", "demo_completed_date",
     "boost_discussed", "trade_in_discussed", "trade_in_interest",
-    "growth_program_explained", "proposal_discussed", "proposal_sent",
+    "proposal_discussed", "proposal_sent",
     "proposal_sent_date", "proposal_follow_up_done",
 ]
 
@@ -152,15 +151,9 @@ class TestVisitsCommercialActions:
         doc_id = docs[0]["id"]
 
         ca = {
-            "demo_discussed": True,
-            "demo_booked": True,
-            "demo_booked_date": "2026-01-20",
-            "demo_completed": False,
-            "demo_completed_date": None,
             "boost_discussed": True,
             "trade_in_discussed": True,
             "trade_in_interest": True,
-            "growth_program_explained": True,
             "proposal_discussed": True,
             "proposal_sent": False,
             "proposal_sent_date": None,
@@ -188,17 +181,18 @@ class TestVisitsCommercialActions:
         assert visit.get("commercial_actions")
         for k in COMMERCIAL_KEYS:
             assert k in visit["commercial_actions"], f"missing {k} in created visit"
-        assert visit["commercial_actions"]["demo_booked"] is True
+        assert visit["commercial_actions"]["boost_discussed"] is True
 
-        # GET and verify persistence
-        rg = requests.get(f"{API}/visits/{visit['id']}", headers=H(tokens["tm1"]), timeout=10)
+        # Verify persistence via doctor visits endpoint
+        rg = requests.get(f"{API}/doctors/{doc_id}/visits", headers=H(tokens["tm1"]), timeout=10)
         assert rg.status_code == 200
-        vg_raw = rg.json()
-        vg = vg_raw.get("visit", vg_raw)
-        assert vg["commercial_actions"]["demo_booked"] is True
-        assert vg["commercial_actions"]["boost_discussed"] is True
-        # ai_extraction preservation
-        assert vg.get("ai_extraction", {}).get("commercial_actions", {}).get("growth_program_explained") is True
+        vlist = rg.json()
+        if isinstance(vlist, dict):
+            vlist = vlist.get("visits", [])
+        match = next((v for v in vlist if v.get("id") == visit["id"]), None)
+        assert match is not None, "created visit not found in doctor visits list"
+        assert match["commercial_actions"]["boost_discussed"] is True
+        assert match["commercial_actions"]["trade_in_interest"] is True
 
 
 # ========= Doctors enriched with commercial_state =========

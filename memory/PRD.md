@@ -49,6 +49,21 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 - **Log Visit (TM)**: review step now includes a "Commercial actions" section with three columns (Demo / Pricing context / Proposal) of checkboxes. AI pre-fills any detected booleans; user confirms/edits before save.
 - **Reports updated**: Auto draft includes `demos_discussed/booked/completed` + `proposals_sent/proposals_followed_up`. Auto insights include "✓ N demo completed this week" / "⚠️ N proposal sent — schedule follow-ups".
 
+## Iteration 4 (Feb 2026) — iTero ↔ Invisalign strict separation
+- **Visit schema**: added `track_type` enum (`ITERO` / `INVISALIGN` / `BOTH`), `itero_actions` (demo funnel, scanner_interest_level, scanner_concerns) and `invisalign_actions` (growth_program_explained, certification_interest, tps_discussed, p2p_suggested, staff_training_needed, clinical_confidence, business_confidence, patient_affordability_perception). Track-agnostic pricing/proposal stays in `commercial_actions`.
+- **AI extraction split**: Claude now returns `track_types[]`, `itero_actions{}`, `invisalign_actions{}` alongside legacy commercial_actions for back-compat.
+- **New endpoints (manager + TM)**: `GET /api/dashboard/manager/itero`, `/manager/invisalign`, `/manager/cross-sell`, `/tm/itero`, `/tm/invisalign` — strict track filtering at the query level (Invisalign-only visits never affect iTero demo funnel and vice-versa).
+- **Doctor enrichment**: now exposes `itero_state` + `invisalign_state` (9 keys each) alongside the legacy `commercial_state`.
+- **Manager nav**: Dashboard / iTero / Invisalign / Intervention / Team / Reports (Market Intel / Doctors / Tasks / Search removed).
+- **TM nav**: Dashboard / iTero / Invisalign / Doctors / Tasks / Reports.
+- **Manager Control Tower**: cross-sell panel (3 columns: iTero only, Invisalign only, Both) + quick-link tiles to /itero and /invisalign. Dedicated pages render: scanner demo funnel + alerts + by-TM (iTero) / coverage + confidence + by-segment + growth-opps (Invisalign).
+- **TM /itero & /invisalign**: track-specific dashboards (discussed/booked/completed for iTero; certification interest, TPS needs, confidence barriers for Invisalign).
+- **Log Visit Step 3**: track selector (iTero / Invisalign / Both) toggles iTero block + Invisalign block. AI pre-fills both.
+
+## Iteration 4 polish (Feb 2026)
+- Renamed test ids for Playwright reliability: `pick-doctor-{id}` → `doctor-option-{id}`; `skip-ai-btn` → `step2-skip-ai-btn`; `analyze-btn` → `step2-analyze-btn`.
+- Updated legacy iter-3 pytest suite (`test_commercial_and_control_tower.py`) to match new commercial_actions shape (demo_* moved to itero_actions; growth_program_explained moved to invisalign_actions). All 58 backend tests pass.
+
 ## Iteration 2 (Feb 2026) — Manager Control Dashboard + Reports- Replaced TM-style dashboard view for managers with **Manager Control Dashboard**
 - Added **TM Performance Table** with: visits vs target (cadence-derived), avg visits/day, overdue count, promise completion rate (30d), high-priority doctors not visited (priority ≥ 55), sentiment trend per TM (recent vs prior 30d)
 - Auto **performance flags**: Low visit activity / Rising or High overdue tasks / Poor follow-up discipline / Avoidance of high-priority doctors — color-coded chips
@@ -62,14 +77,16 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 **P1**
 - Voice-to-text note capture for mobile field use
 - Weekly report generator with PDF/CSV export
-- Advanced market intelligence dashboard with date/segment/city filters and trend charts
 - Editable Admin taxonomy (custom topics & barriers per region)
+- Expense tracking module with receipt photo upload + OCR (deferred per user request)
 
 **P2**
-- Expense tracking module with receipt photo upload + OCR (deferred per user request)
 - Configurable cadence per team
 - Soft-delete + archive for inactive doctors
 - view_sensitive / export audit action types
 - Doctor assignment bulk operations
-- Refactor `server.py` (~950 lines) into routers (auth/doctors/visits/tasks/dashboards/admin)
-- Aggregation pipelines for `_enrich_doctor` to scale beyond a few hundred doctors
+- Refactor `server.py` (~2100 lines) into routers (auth/doctors/visits/tasks/dashboards/reports/admin)
+- Switch doctor enrichment to `$facet` aggregation (currently N+1)
+- `/reports` edit-after-submit → return `409 Conflict` instead of `400`
+- Remove legacy `commercial_actions.demo_*` / `growth_program_explained` back-compat shim once migration is fully verified
+- Advanced Admin Audit logs UI integration
