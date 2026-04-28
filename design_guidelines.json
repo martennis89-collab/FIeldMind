@@ -1,0 +1,119 @@
+{
+  "theme": "light",
+  "archetype": "1 - Organic & Earthy",
+  "design_philosophy": "A secure, warm, and field-friendly 'second brain' for dental/medical Territory Managers. Avoid the cold, rigid corporate CRM look. Use earthy tones that evoke trust, growth, and calm. Prioritize mobile-first, thumb-driven layouts for fast on-the-go interaction.",
+  "colors": {
+    "background": {
+      "default": "#FDFBF7",
+      "paper": "#F4F1EA",
+      "muted": "#EBE6DE"
+    },
+    "brand": {
+      "primary": "#274035",
+      "primary_hover": "#1E332A",
+      "secondary": "#C26D53",
+      "accent": "#7CA1B4"
+    },
+    "text": {
+      "primary": "#1A1A1A",
+      "secondary": "#5C5C5C",
+      "muted": "#8A8A8A",
+      "inverse": "#FFFFFF"
+    },
+    "border": {
+      "default": "#E2DCD0",
+      "focus": "#7CA1B4"
+    },
+    "status": {
+      "success": "#3A6851",
+      "success_bg": "#E8F0EB",
+      "warning": "#D19C4C",
+      "warning_bg": "#FDF5E6",
+      "danger": "#A6433F",
+      "danger_bg": "#FDECEA",
+      "info": "#4A6E82",
+      "info_bg": "#EAF1F5"
+    }
+  },
+  "typography": {
+    "font_families": {
+      "headings": "Outfit, sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-light text-primary",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-medium text-primary",
+      "h3": "text-xl sm:text-2xl font-medium text-primary",
+      "h4": "text-lg sm:text-xl font-medium text-primary",
+      "body": "text-base leading-relaxed text-text-primary",
+      "small": "text-sm text-text-secondary",
+      "overline": "text-xs tracking-[0.2em] uppercase text-text-muted font-bold"
+    },
+    "rules": [
+      "No Inter or generic sans for headings.",
+      "Use font-light or font-black for headings to create tension.",
+      "Do not exceed text-6xl for maximum heading size."
+    ]
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "p-2, p-4, p-6, p-8, p-12",
+    "grid_system": {
+      "desktop": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+      "mobile": "grid-cols-1 gap-4",
+      "style": "The 'Control Room' Grid for dashboards. Dense, data-correlated, scanable."
+    },
+    "rules": [
+      "Mobile-first responsive always. Use thumb-zone interface planning (bottom navigation, easily reachable CTAs).",
+      "Containers with borders must have internal padding (p-6 or p-8) to prevent text collision.",
+      "Images must not exceed 80vh on mobile."
+    ]
+  },
+  "surfaces_and_components": {
+    "cards": "Flat solid background, 1px subtle border (border-[#E2DCD0]), max 8px border-radius (rounded-md). NO drop shadows by default. Hover state: slight lift (-translate-y-1) and shadow-sm.",
+    "glassmorphism": "Avoid glassmorphism for health apps data views. Use Solid Backgrounds to prevent visual refraction of clinical data.",
+    "buttons": "Primary: Solid #274035 with white text. Secondary: Solid #F4F1EA with #274035 text. Hover must explicitly set lighter background and ensure contrast.",
+    "forms": "Use Shadcn components heavily customized to earthy colors. Never use native inputs.",
+    "navigation": "Header must have solid background. Mobile should favor bottom tab bars or thumb-friendly floating action buttons.",
+    "icons": "Use lucide-react. Keep stroke width consistent."
+  },
+  "motion_and_interaction": {
+    "hover_states": "Always explicitly set text color on hover. Use transition-all duration-200 ease-in-out.",
+    "focus_states": "Must have higher contrast. focus:ring-2 focus:ring-accent focus:outline-none.",
+    "page_transitions": "Staggered entrance for list items. Micro-interactions for saving or logging visits (<60s feedback loop)."
+  },
+  "accessibility": {
+    "contrast": "Ensure minimum 4.5:1 for text, 3:1 for large text and interactive elements.",
+    "testing_attributes": "All interactive and key informational elements MUST include a 'data-testid' attribute (e.g., data-testid='log-visit-btn')."
+  },
+  "media_and_images": {
+    "rules": [
+      "Use real photos or high-quality abstract backgrounds. No placeholder services (via.placeholder.com).",
+      "Hero image overlays max opacity bg-black/40 or bg-white/40."
+    ],
+    "image_urls": {
+      "login_background": {
+        "url": "https://images.pexels.com/photos/29390707/pexels-photo-29390707.jpeg",
+        "description": "Soft flowing abstract 3D shapes with a warm neutral tone, ideal for login background."
+      },
+      "doctor_profile_placeholder": {
+        "url": "https://images.pexels.com/photos/5452190/pexels-photo-5452190.jpeg",
+        "description": "Medical professionals discussing matters in natural light."
+      },
+      "clinic_placeholder": {
+        "url": "https://images.pexels.com/photos/4269276/pexels-photo-4269276.jpeg",
+        "description": "Contemporary dental office interior with stylish design."
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "Design a Field Intelligence Platform, NOT a CRM. It should feel like a 'secure second brain'.",
+    "Focus on a mobile-first TM Dashboard with a prominent quick 'Log Visit' button.",
+    "Use Shadcn UI components but strip the Vercel look. Apply the earthy, flat styling defined in surfaces_and_components.",
+    "Implement progressive data summarization: show customer status at the top with a single indicator (e.g., sentiment).",
+    "Ensure the 'Log Visit' flow is optimized for <60 seconds completion on mobile.",
+    "Add 'data-testid' attributes to ALL interactive elements.",
+    "Apply Archetype 1 (Organic & Earthy) colors strictly. No generic SaaS blue or tech mint.",
+    "Use pure HTML + Tailwind for creative layouts, but rely on Shadcn for interactive logic (Forms, Dialogs)."
+  ]
+}
