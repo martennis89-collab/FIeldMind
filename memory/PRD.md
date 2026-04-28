@@ -64,6 +64,11 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 - Renamed test ids for Playwright reliability: `pick-doctor-{id}` → `doctor-option-{id}`; `skip-ai-btn` → `step2-skip-ai-btn`; `analyze-btn` → `step2-analyze-btn`.
 - Updated legacy iter-3 pytest suite (`test_commercial_and_control_tower.py`) to match new commercial_actions shape (demo_* moved to itero_actions; growth_program_explained moved to invisalign_actions). All 58 backend tests pass.
 
+## Iteration 5 (Feb 2026) — Voice-to-text dictation for TM visits
+- **New endpoint**: `POST /api/visits/transcribe` (auth required) — accepts multipart `audio` field (webm/mp3/m4a/wav/mp4/mpga/mpeg, ≤25 MB) and returns `{text}`. Powered by OpenAI Whisper-1 via Emergent Universal LLM Key (`emergentintegrations.llm.openai.OpenAISpeechToText`).
+- **Frontend**: LogVisit Step 2 now has a "Voice note" mic button beside the textarea. Browser MediaRecorder (audio/webm) records, auto-stops at ~110s, uploads to `/visits/transcribe`, and **appends** transcribed text into the existing note (TM can dictate multiple chunks). Live elapsed timer + "Transcribing…" spinner state. Graceful fallbacks: unsupported device, mic permission denied, empty transcription.
+- Test coverage: 6/6 backend tests for the endpoint + 29/29 regression (iter-3 + iter-4) all green.
+
 ## Iteration 2 (Feb 2026) — Manager Control Dashboard + Reports- Replaced TM-style dashboard view for managers with **Manager Control Dashboard**
 - Added **TM Performance Table** with: visits vs target (cadence-derived), avg visits/day, overdue count, promise completion rate (30d), high-priority doctors not visited (priority ≥ 55), sentiment trend per TM (recent vs prior 30d)
 - Auto **performance flags**: Low visit activity / Rising or High overdue tasks / Poor follow-up discipline / Avoidance of high-priority doctors — color-coded chips
@@ -75,7 +80,6 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 
 ## Backlog (next phases)
 **P1**
-- Voice-to-text note capture for mobile field use
 - Weekly report generator with PDF/CSV export
 - Editable Admin taxonomy (custom topics & barriers per region)
 - Expense tracking module with receipt photo upload + OCR (deferred per user request)

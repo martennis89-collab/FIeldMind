@@ -688,9 +688,9 @@ async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get
         stt = OpenAISpeechToText(api_key=os.environ["EMERGENT_LLM_KEY"])
         response = await stt.transcribe(file=buf, model="whisper-1", response_format="json")
         text = getattr(response, "text", "") or ""
-    except Exception as e:
+    except Exception:
         logging.exception("Whisper transcription failed")
-        raise HTTPException(status_code=502, detail=f"Transcription failed: {e}")
+        raise HTTPException(status_code=502, detail="Transcription service unavailable")
 
     await _audit(user, "transcribe", "visit", "audio", new={"chars": len(text)})
     return {"text": text.strip()}
