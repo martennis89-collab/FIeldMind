@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import {
   Activity, AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, Flame, MapPin, TrendingDown, TrendingUp, Users,
+  Sparkles, ChevronRight, ChevronDown, Target,
 } from "lucide-react";
 
 function StatCard({ label, value, sub, icon: Icon, kind = "muted", testId }) {
@@ -80,7 +81,110 @@ function PriorityCard({ d, idx }) {
   );
 }
 
-function ManagerView({ data }) {
+function TMPerformanceTable({ performance }) {
+  const [expanded, setExpanded] = React.useState(null);
+  const rows = performance?.rows || [];
+  return (
+    <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="tm-performance-table">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Team performance</div>
+          <h3 className="font-display text-xl font-medium" style={{ color: "var(--brand-primary)" }}>How each TM is doing</h3>
+        </div>
+        <span className="text-xs" style={{ color: "var(--text-muted)" }}>Last 30 days</span>
+      </div>
+      {rows.length === 0 && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
+
+      <div className="space-y-2">
+        {rows.map((r) => {
+          const isOpen = expanded === r.tm_id;
+          const targetRatio = r.visits_vs_target;
+          const ratioKind = targetRatio >= 0.9 ? "success" : targetRatio >= 0.6 ? "warning" : "danger";
+          const completionPct = Math.round(r.completion_rate * 100);
+          const completionKind = r.promises_total_30d < 3 ? "muted" : completionPct >= 70 ? "success" : completionPct >= 40 ? "warning" : "danger";
+          const sentTrendIcon = r.sentiment_trend === "improving" ? <TrendingUp className="w-3 h-3" /> : r.sentiment_trend === "declining" ? <TrendingDown className="w-3 h-3" /> : null;
+          const sentKind = r.sentiment_trend === "improving" ? "success" : r.sentiment_trend === "declining" ? "danger" : "muted";
+
+          return (
+            <div key={r.tm_id} className="rounded-md border" style={{ borderColor: "var(--border-default)" }} data-testid={`tm-perf-row-${r.tm_id}`}>
+              <button
+                onClick={() => setExpanded(isOpen ? null : r.tm_id)}
+                className="w-full text-left p-3 hover:bg-[var(--bg-paper)] rounded-md transition-colors"
+                data-testid={`expand-tm-${r.tm_id}`}
+              >
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium" style={{ color: "var(--text-primary)" }}>{r.tm_name}</div>
+                    <div className="text-xs" style={{ color: "var(--text-muted)" }}>{r.doctors} doctors</div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <StatusPill kind={ratioKind} testId={`metric-target-${r.tm_id}`}>
+                      <Target className="w-3 h-3" />{r.visits_month}/{r.visits_target_month} visits
+                    </StatusPill>
+                    <StatusPill kind="muted">{r.avg_visits_per_day}/day</StatusPill>
+                    {r.overdue_count > 0 && <StatusPill kind="danger"><AlertTriangle className="w-3 h-3" />{r.overdue_count} overdue</StatusPill>}
+                    {r.promises_total_30d >= 3 && <StatusPill kind={completionKind}><CheckCircle2 className="w-3 h-3" />{completionPct}% closed</StatusPill>}
+                    {r.high_priority_unvisited > 0 && <StatusPill kind="warning"><Flame className="w-3 h-3" />{r.high_priority_unvisited} priority unvisited</StatusPill>}
+                    {sentTrendIcon && <StatusPill kind={sentKind}>{sentTrendIcon}{r.sentiment_trend}</StatusPill>}
+                  </div>
+                  {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                </div>
+                {(r.flags || []).length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {r.flags.map((f) => (
+                      <span key={f.key} className={f.severity === "danger" ? "pill pill-danger" : "pill pill-warning"} data-testid={`flag-${r.tm_id}-${f.key}`}>
+                        <AlertTriangle className="w-3 h-3" />{f.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </button>
+
+              {isOpen && (
+                <div className="border-t p-4 space-y-3" style={{ borderColor: "var(--border-default)", background: "var(--bg-paper)" }}>
+                  {(r.insights || []).length > 0 && (
+                    <div>
+                      <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>Behavioral insights</div>
+                      <div className="space-y-1.5">
+                        {r.insights.map((ins, i) => (
+                          <div key={i} className="text-sm flex items-start gap-2" data-testid={`insight-${r.tm_id}-${i}`}>
+                            <span className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0`} style={{ background: ins.kind === "positive" ? "var(--status-success)" : "var(--status-danger)" }} />
+                            <div>
+                              <span className="font-medium" style={{ color: ins.kind === "positive" ? "var(--status-success)" : "var(--status-danger)" }}>{ins.label}</span>
+                              <span style={{ color: "var(--text-secondary)" }}> — {ins.detail}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(r.high_priority_unvisited_doctors || []).length > 0 && (
+                    <div>
+                      <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>High-priority doctors not visited (last 30d)</div>
+                      <div className="space-y-1">
+                        {r.high_priority_unvisited_doctors.map((d) => (
+                          <Link key={d.id} to={`/doctors/${d.id}`} className="flex items-center justify-between text-sm hover:underline">
+                            <span style={{ color: "var(--text-primary)" }}>{d.doctor_name} <span style={{ color: "var(--text-muted)" }}>· {d.segment}</span></span>
+                            <span className="pill pill-danger">priority {d.score}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(r.flags || []).length === 0 && (r.insights || []).length === 0 && (
+                    <div className="text-xs" style={{ color: "var(--text-muted)" }}>No flags. This TM is performing within expected ranges.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ManagerView({ data, performance }) {
   if (!data) return null;
   const sentTotal = Object.values(data.sentiment_distribution || {}).reduce((a, b) => a + b, 0) || 1;
   return (
@@ -152,26 +256,9 @@ function ManagerView({ data }) {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6 mb-6">
-        <div className="rounded-md border p-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
-          <h3 className="font-display text-lg font-medium mb-4" style={{ color: "var(--brand-primary)" }}>Activity by TM</h3>
-          <div className="space-y-3">
-            {(data.by_tm || []).map((tm) => (
-              <div key={tm.tm_id} className="flex items-center justify-between text-sm" data-testid={`tm-row-${tm.tm_id}`}>
-                <div>
-                  <div className="font-medium" style={{ color: "var(--text-primary)" }}>{tm.name}</div>
-                  <div className="text-xs" style={{ color: "var(--text-muted)" }}>{tm.doctors} doctors</div>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <StatusPill kind="info">{tm.visits_week} this week</StatusPill>
-                  {tm.overdue > 0 && <StatusPill kind="danger">{tm.overdue} overdue</StatusPill>}
-                </div>
-              </div>
-            ))}
-            {(data.by_tm || []).length === 0 && <div className="text-xs" style={{ color: "var(--text-muted)" }}>No TMs found in this team.</div>}
-          </div>
-        </div>
+      <TMPerformanceTable performance={performance} />
 
+      <div className="grid lg:grid-cols-2 gap-6 mb-6 mt-6">
         <div className="rounded-md border p-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
           <h3 className="font-display text-lg font-medium mb-4" style={{ color: "var(--brand-primary)" }}>Under-visited high-segment doctors</h3>
           <div className="space-y-2">
@@ -185,6 +272,29 @@ function ManagerView({ data }) {
               </Link>
             ))}
             {(data.under_visited_high_segment || []).length === 0 && <div className="text-xs" style={{ color: "var(--text-muted)" }}>All high-segment doctors are well covered.</div>}
+          </div>
+        </div>
+
+        <div className="rounded-md border p-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
+          <h3 className="font-display text-lg font-medium mb-4" style={{ color: "var(--brand-primary)" }}>Opportunity state mix (30d)</h3>
+          <div className="space-y-2">
+            {Object.entries(data.opportunity_distribution || {}).map(([k, v]) => {
+              const total = Object.values(data.opportunity_distribution || {}).reduce((a, b) => a + b, 0) || 1;
+              const pct = Math.round((v / total) * 100);
+              const color = k === "Advancing" ? "var(--status-success)" : k === "Stuck" ? "var(--status-warning)" : k === "Blocked" ? "var(--status-danger)" : "var(--status-info)";
+              return (
+                <div key={k}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span style={{ color: "var(--text-secondary)" }}>{k}</span>
+                    <span style={{ color: "var(--text-muted)" }}>{v} · {pct}%</span>
+                  </div>
+                  <div className="h-2 rounded-full" style={{ background: "var(--bg-muted)" }}>
+                    <div className="h-2 rounded-full" style={{ width: `${pct}%`, background: color }} />
+                  </div>
+                </div>
+              );
+            })}
+            {Object.keys(data.opportunity_distribution || {}).length === 0 && <div className="text-xs" style={{ color: "var(--text-muted)" }}>No data yet.</div>}
           </div>
         </div>
       </div>
@@ -253,6 +363,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [tmData, setTmData] = useState(null);
   const [mgrData, setMgrData] = useState(null);
+  const [perfData, setPerfData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -262,8 +373,12 @@ export default function Dashboard() {
         const tm = await api.get("/dashboard/tm");
         setTmData(tm.data);
         if (user.role === "Manager" || user.role === "Admin") {
-          const mgr = await api.get("/dashboard/manager");
+          const [mgr, perf] = await Promise.all([
+            api.get("/dashboard/manager"),
+            api.get("/dashboard/manager/performance"),
+          ]);
           setMgrData(mgr.data);
+          setPerfData(perf.data);
         }
       } finally {
         setLoading(false);
@@ -285,8 +400,8 @@ export default function Dashboard() {
 
       {loading && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
 
-      {(user.role === "Manager" || user.role === "Admin") && <ManagerView data={mgrData} />}
-      <TMView data={tmData} />
+      {(user.role === "Manager" || user.role === "Admin") && <ManagerView data={mgrData} performance={perfData} />}
+      {user.role === "TM" && <TMView data={tmData} />}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import DoctorProfile from "@/pages/DoctorProfile";
 import LogVisit from "@/pages/LogVisit";
 import Tasks from "@/pages/Tasks";
 import Search from "@/pages/Search";
+import Reports from "@/pages/Reports";
 import Admin from "@/pages/Admin";
 
 export default function App() {
@@ -66,6 +67,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout><Search /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reports"
+            element={
+              <ProtectedRoute>
+                <Layout><Reports /></Layout>
               </ProtectedRoute>
             }
           />

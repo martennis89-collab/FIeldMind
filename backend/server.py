@@ -38,6 +38,11 @@ from models import (
     TaskUpdate,
     Task,
     AIExtraction,
+    WeeklyReport,
+    ReportCreate,
+    ReportUpdate,
+    ReportContent,
+    ReportComment,
 )
 from ai import analyze_note as ai_analyze_note
 from seed import seed_demo
@@ -893,6 +898,454 @@ async def taxonomy(user=Depends(get_current_user)):
     }
 
 
+
+# ====================================================
+# TM PERFORMANCE (manager view)
+# ====================================================
+def _week_bounds(now=None):
+    n = now or datetime.now(timezone.utc)
+    monday = (n - timedelta(days=n.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday = monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    return monday, sunday
+
+
+def _classify_flags(perf: dict) -> List[dict]:
+    flags = []
+    target = perf["visits_target_month"] or 1
+    if perf["visits_month"] < 0.5 * target:
+        flags.append({"key": "low_activity", "severity": "danger", "label": "Low visit activity",
+                      "detail": f"Logged {perf['visits_month']} visits vs target ~{target} (last 30d)"})
+    if perf["overdue_count"] >= 5:
+        flags.append({"key": "high_overdue", "severity": "danger", "label": "High overdue tasks",
+                      "detail": f"{perf['overdue_count']} promises past due"})
+    elif perf["overdue_count"] >= 2:
+        flags.append({"key": "rising_overdue", "severity": "warning", "label": "Rising overdue tasks",
+                      "detail": f"{perf['overdue_count']} promises past due"})
+    cr = perf["completion_rate"]
+    if perf["promises_total_30d"] >= 3 and cr < 0.4:
+        flags.append({"key": "poor_followup", "severity": "danger", "label": "Poor follow-up discipline",
+                      "detail": f"Only {int(cr*100)}% of promises completed in 30d"})
+    if perf["high_priority_unvisited"] >= 3:
+        flags.append({"key": "avoiding_priority", "severity": "warning", "label": "Avoidance of high-priority doctors",
+                      "detail": f"{perf['high_priority_unvisited']} high-priority doctors not visited in 30d"})
+    return flags
+
+
+def _classify_insights(perf: dict) -> List[dict]:
+    insights = []
+    cr = perf["completion_rate"]
+    if perf["promises_total_30d"] >= 3 and cr >= 0.8:
+        insights.append({"kind": "positive", "label": "Strong follow-up habits",
+                         "detail": f"{int(cr*100)}% promises completed in 30d"})
+    elif perf["promises_total_30d"] >= 3 and cr < 0.4:
+        insights.append({"kind": "negative", "label": "Weak follow-up habits",
+                         "detail": f"Only {int(cr*100)}% promises completed in 30d"})
+    if perf["pct_visits_to_low_value"] >= 0.55 and perf["visits_month"] >= 4:
+        insights.append({"kind": "negative", "label": "Over-visiting low-value doctors",
+                         "detail": f"{int(perf['pct_visits_to_low_value']*100)}% of visits to Occasional segment"})
+    if perf["high_priority_unvisited"] >= 3:
+        insights.append({"kind": "negative", "label": "Under-visiting high-opportunity doctors",
+                         "detail": f"{perf['high_priority_unvisited']} high-priority doctors not visited in 30d"})
+    if perf["sentiment_trend"] == "improving":
+        insights.append({"kind": "positive", "label": "Sentiment trending up",
+                         "detail": "Recent visits feel more positive than the prior period"})
+    elif perf["sentiment_trend"] == "declining":
+        insights.append({"kind": "negative", "label": "Sentiment trending down",
+                         "detail": "Recent visits feel more negative than the prior period"})
+    return insights
+
+
+@api.get("/dashboard/manager/performance")
+async def manager_performance(user=Depends(require_roles("Manager", "Admin"))):
+    team_q = {} if user["role"] == "Admin" else {"team_id": user.get("team_id")}
+    user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
+    tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
+    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    visits = await db.visits.find(team_q, {"_id": 0}).to_list(5000)
+    tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(5000)
+
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    month_start = (now - timedelta(days=30)).isoformat()
+    prev_month_start = (now - timedelta(days=60)).isoformat()
+
+    sentiment_score = {"Very Negative": 1, "Negative": 2, "Neutral": 3, "Positive": 4, "Very Positive": 5}
+
+    rows = []
+    for tm in tms:
+        my_docs = [d for d in docs if d.get("assigned_tm_id") == tm["id"]]
+        my_visits = [v for v in visits if v.get("tm_user_id") == tm["id"]]
+        my_visits_30 = [v for v in my_visits if v.get("visit_date", "") >= month_start]
+        my_visits_prev = [v for v in my_visits if prev_month_start <= v.get("visit_date", "") < month_start]
+        my_tasks = [t for t in tasks if t.get("tm_user_id") == tm["id"]]
+        my_tasks_30 = [t for t in my_tasks if t.get("created_at", "") >= month_start]
+
+        # target ≈ Σ 30/cadence(seg) over assigned doctors
+        target = 0.0
+        for d in my_docs:
+            target += 30.0 / max(DEFAULT_CADENCE.get(d.get("segment", "Occasional"), 45), 1)
+        target_int = max(int(round(target)), 1)
+
+        avg_per_day = round(len(my_visits_30) / 30.0, 2)
+        overdue_count = sum(1 for t in my_tasks if t.get("status") in ("Open", "Overdue") and t.get("due_date") and t["due_date"] < today)
+        completed_30 = sum(1 for t in my_tasks if t.get("status") == "Completed" and (t.get("completed_at") or "") >= month_start)
+        promises_total_30 = max(len(my_tasks_30), completed_30)
+        completion_rate = round(completed_30 / promises_total_30, 2) if promises_total_30 else 0.0
+
+        # sentiment (last 30 vs previous 30)
+        sent_recent_vals = [sentiment_score.get(v.get("sentiment", "Neutral"), 3) for v in my_visits_30]
+        sent_prev_vals = [sentiment_score.get(v.get("sentiment", "Neutral"), 3) for v in my_visits_prev]
+        sent_recent = round(sum(sent_recent_vals) / len(sent_recent_vals), 2) if sent_recent_vals else None
+        sent_prev = round(sum(sent_prev_vals) / len(sent_prev_vals), 2) if sent_prev_vals else None
+        if sent_recent is None or sent_prev is None:
+            sent_trend = "stable"
+        elif sent_recent > sent_prev + 0.3:
+            sent_trend = "improving"
+        elif sent_recent < sent_prev - 0.3:
+            sent_trend = "declining"
+        else:
+            sent_trend = "stable"
+
+        # high-priority unvisited (priority>=55, not visited in 30d)
+        recently_visited_ids = {v["doctor_id"] for v in my_visits_30}
+        enriched_my = [await _enrich_doctor(d) for d in my_docs]
+        high_pri_unvisited = [d for d in enriched_my if d["visit_priority_score"] >= 55 and d["id"] not in recently_visited_ids]
+
+        # over-visit low-value (Occasional segment) ratio
+        occ_visits = sum(1 for v in my_visits_30 if next((d for d in my_docs if d["id"] == v["doctor_id"]), {}).get("segment") == "Occasional")
+        pct_low = round(occ_visits / len(my_visits_30), 2) if my_visits_30 else 0.0
+
+        perf = {
+            "tm_id": tm["id"],
+            "tm_name": tm["full_name"],
+            "tm_email": tm["email"],
+            "doctors": len(my_docs),
+            "visits_month": len(my_visits_30),
+            "visits_target_month": target_int,
+            "visits_vs_target": round((len(my_visits_30) / target_int), 2) if target_int else 0,
+            "avg_visits_per_day": avg_per_day,
+            "overdue_count": overdue_count,
+            "completion_rate": completion_rate,
+            "promises_total_30d": promises_total_30,
+            "promises_completed_30d": completed_30,
+            "high_priority_unvisited": len(high_pri_unvisited),
+            "high_priority_unvisited_doctors": [
+                {"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"], "score": d["visit_priority_score"]}
+                for d in high_pri_unvisited[:5]
+            ],
+            "sentiment_recent": sent_recent,
+            "sentiment_prev": sent_prev,
+            "sentiment_trend": sent_trend,
+            "pct_visits_to_low_value": pct_low,
+        }
+        perf["flags"] = _classify_flags(perf)
+        perf["insights"] = _classify_insights(perf)
+        rows.append(perf)
+
+    rows.sort(key=lambda r: (-len(r["flags"]), -r["overdue_count"], -r["high_priority_unvisited"]))
+    return {"rows": rows}
+
+
+# ====================================================
+# WEEKLY REPORTS
+# ====================================================
+async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -> dict:
+    tm_id = tm_user["id"]
+    visits = await db.visits.find({
+        "tm_user_id": tm_id,
+        "visit_date": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
+    }, {"_id": 0}).to_list(2000)
+    tasks_created = await db.tasks.find({
+        "tm_user_id": tm_id,
+        "created_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
+    }, {"_id": 0}).to_list(2000)
+    tasks_completed = await db.tasks.find({
+        "tm_user_id": tm_id,
+        "status": "Completed",
+        "completed_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
+    }, {"_id": 0}).to_list(2000)
+    today = datetime.now(timezone.utc).date().isoformat()
+    overdue = await db.tasks.count_documents({
+        "tm_user_id": tm_id,
+        "status": {"$in": ["Open", "Overdue"]},
+        "due_date": {"$lt": today},
+    })
+
+    doctor_ids = {v["doctor_id"] for v in visits}
+    topic_counts: dict = {}
+    barrier_counts: dict = {}
+    sentiment_counts: dict = {}
+    for v in visits:
+        for t in v.get("confirmed_topics", []):
+            topic_counts[t] = topic_counts.get(t, 0) + 1
+        for b in v.get("confirmed_barriers", []):
+            barrier_counts[b] = barrier_counts.get(b, 0) + 1
+        s = v.get("sentiment") or "Neutral"
+        sentiment_counts[s] = sentiment_counts.get(s, 0) + 1
+    top_topics = [k for k, _ in sorted(topic_counts.items(), key=lambda x: -x[1])[:6]]
+    top_barriers = [k for k, _ in sorted(barrier_counts.items(), key=lambda x: -x[1])[:6]]
+
+    # doctors needing attention next week
+    my_docs = await db.doctors.find({"assigned_tm_id": tm_id}, {"_id": 0}).to_list(500)
+    enriched = [await _enrich_doctor(d) for d in my_docs]
+    enriched.sort(key=lambda d: d["visit_priority_score"], reverse=True)
+    needing = [
+        {"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],
+         "reason": (d.get("suggested_next_action") or _suggested_reason(d, [])), "score": d["visit_priority_score"]}
+        for d in enriched if d["visit_priority_score"] >= 55
+    ][:6]
+
+    # auto summary
+    parts = []
+    parts.append(f"{len(visits)} visit{'s' if len(visits)!=1 else ''} across {len(doctor_ids)} doctor{'s' if len(doctor_ids)!=1 else ''} this week.")
+    if top_barriers:
+        parts.append("Most-heard barriers: " + ", ".join(top_barriers[:3]) + ".")
+    if top_topics:
+        parts.append("Most-discussed topics: " + ", ".join(top_topics[:3]) + ".")
+    parts.append(f"{len(tasks_created)} promise{'s' if len(tasks_created)!=1 else ''} created, {len(tasks_completed)} completed, {overdue} overdue.")
+    if needing:
+        parts.append(f"{len(needing)} high-priority doctor{'s' if len(needing)!=1 else ''} need attention next week.")
+
+    insights = []
+    if overdue >= 3:
+        insights.append(f"⚠️ {overdue} overdue promises — close these before adding new commitments.")
+    if len(tasks_created) > 0:
+        completion_pct = int((len(tasks_completed) / max(len(tasks_created), 1)) * 100)
+        if completion_pct >= 80:
+            insights.append(f"✓ Strong follow-up week — {completion_pct}% of new promises closed.")
+        elif completion_pct < 40 and len(tasks_created) >= 3:
+            insights.append(f"⚠️ Low closure rate — only {completion_pct}% of new promises closed.")
+    if top_barriers and "Patient affordability concern" in top_barriers:
+        insights.append("Affordability concern keeps coming up — consider growth-program coaching next week.")
+    if needing:
+        insights.append(f"Plan visits to: {', '.join([n['doctor_name'] for n in needing[:3]])}.")
+
+    content = {
+        "visits_completed": len(visits),
+        "doctors_visited": len(doctor_ids),
+        "topics_discussed": top_topics,
+        "barriers_heard": top_barriers,
+        "promises_created": len(tasks_created),
+        "promises_completed": len(tasks_completed),
+        "overdue_promises": overdue,
+        "sentiment_summary": sentiment_counts,
+        "key_insights": insights,
+        "doctors_needing_attention": needing,
+        "notes_from_tm": "",
+    }
+    return {
+        "tm_user_id": tm_id,
+        "tm_name": tm_user["full_name"],
+        "team_id": tm_user.get("team_id"),
+        "week_start": week_start_iso,
+        "week_end": week_end_iso,
+        "auto_summary": " ".join(parts),
+        "content": content,
+        "notes_from_tm": "",
+    }
+
+
+@api.post("/reports/generate")
+async def generate_report(user=Depends(get_current_user)):
+    if user["role"] != "TM":
+        # Admin/Manager can preview their own (no-op)
+        raise HTTPException(status_code=403, detail="Only TMs generate reports")
+    monday, sunday = _week_bounds()
+    draft = await _build_report_draft(user, monday.date().isoformat(), sunday.date().isoformat())
+    return draft
+
+
+@api.post("/reports")
+async def create_report(body: ReportCreate, user=Depends(get_current_user)):
+    if user["role"] != "TM":
+        raise HTTPException(status_code=403, detail="Only TMs create reports")
+    # Reuse existing draft for the same week if any
+    existing = await db.reports.find_one({
+        "tm_user_id": user["id"],
+        "week_start": body.week_start,
+        "status": "Draft",
+    }, {"_id": 0})
+    if existing:
+        update = {
+            "auto_summary": body.auto_summary,
+            "content": body.content.model_dump(),
+            "notes_from_tm": body.notes_from_tm,
+            "updated_at": _now_iso(),
+        }
+        await db.reports.update_one({"id": existing["id"]}, {"$set": update})
+        new = await db.reports.find_one({"id": existing["id"]}, {"_id": 0})
+        return new
+
+    doc = WeeklyReport(
+        tm_user_id=user["id"],
+        tm_name=user["full_name"],
+        team_id=user.get("team_id"),
+        week_start=body.week_start,
+        week_end=body.week_end,
+        status="Draft",
+        auto_summary=body.auto_summary,
+        content=body.content,
+        notes_from_tm=body.notes_from_tm,
+    ).model_dump()
+    await db.reports.insert_one(doc)
+    await _audit(user, "create", "report", doc["id"], new={"week_start": body.week_start})
+    _strip_id(doc)
+    return doc
+
+
+@api.put("/reports/{report_id}")
+async def update_report(report_id: str, body: ReportUpdate, user=Depends(get_current_user)):
+    r = await db.reports.find_one({"id": report_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if r["tm_user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if r["status"] != "Draft":
+        raise HTTPException(status_code=400, detail="Cannot edit a submitted report")
+    update = body.model_dump(exclude_none=True)
+    if "content" in update and update["content"] is not None:
+        # already a dict from model_dump
+        pass
+    update["updated_at"] = _now_iso()
+    await db.reports.update_one({"id": report_id}, {"$set": update})
+    new = await db.reports.find_one({"id": report_id}, {"_id": 0})
+    return new
+
+
+@api.post("/reports/{report_id}/submit")
+async def submit_report(report_id: str, user=Depends(get_current_user)):
+    r = await db.reports.find_one({"id": report_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if r["tm_user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if r["status"] == "Submitted":
+        return r
+    await db.reports.update_one({"id": report_id}, {"$set": {
+        "status": "Submitted",
+        "submitted_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }})
+    await _audit(user, "update", "report", report_id, prev={"status": r["status"]}, new={"status": "Submitted"})
+    return await db.reports.find_one({"id": report_id}, {"_id": 0})
+
+
+@api.post("/reports/{report_id}/comment")
+async def comment_report(report_id: str, body: dict, user=Depends(require_roles("Manager", "Admin"))):
+    r = await db.reports.find_one({"id": report_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if user["role"] == "Manager" and r.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty comment")
+    import uuid
+    comment = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user["full_name"],
+        "text": text[:1000],
+        "created_at": _now_iso(),
+    }
+    await db.reports.update_one({"id": report_id}, {
+        "$push": {"comments": comment},
+        "$set": {"status": "Reviewed", "reviewed_at": _now_iso(), "updated_at": _now_iso()},
+    })
+    await _audit(user, "update", "report", report_id, new={"comment_added": True})
+    return await db.reports.find_one({"id": report_id}, {"_id": 0})
+
+
+@api.get("/reports")
+async def list_reports(
+    bucket: Optional[str] = Query(None, description="submitted|pending|overdue|all|mine"),
+    user=Depends(get_current_user),
+):
+    """Reports listing.
+
+    - TM: sees own reports (all statuses).
+    - Manager/Admin: sees team reports. `bucket` can be:
+        - submitted: status in (Submitted, Reviewed)
+        - pending: TMs in scope who have NOT submitted for current week (synthesized rows with status=Pending)
+        - overdue: TMs in scope who did NOT submit for previous week (synthesized rows with status=Overdue)
+        - all: submitted+reviewed reports for the team
+    """
+    if user["role"] == "TM":
+        q = {"tm_user_id": user["id"]}
+        reports = await db.reports.find(q, {"_id": 0}).sort("week_start", -1).to_list(200)
+        return {"reports": reports}
+
+    team_q = {} if user["role"] == "Admin" else {"team_id": user.get("team_id")}
+    user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
+    tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
+
+    monday, sunday = _week_bounds()
+    cur_week_start = monday.date().isoformat()
+    prev_monday = monday - timedelta(days=7)
+    prev_week_start = prev_monday.date().isoformat()
+    prev_week_end = (prev_monday + timedelta(days=6)).date().isoformat()
+
+    if bucket == "pending":
+        # current week, not submitted
+        submitted = await db.reports.find({**team_q, "week_start": cur_week_start, "status": {"$in": ["Submitted", "Reviewed"]}}, {"_id": 0}).to_list(500)
+        submitted_ids = {r["tm_user_id"] for r in submitted}
+        result = []
+        for tm in tms:
+            if tm["id"] in submitted_ids:
+                continue
+            result.append({
+                "synthetic": True,
+                "tm_user_id": tm["id"],
+                "tm_name": tm["full_name"],
+                "tm_email": tm["email"],
+                "team_id": tm.get("team_id"),
+                "week_start": cur_week_start,
+                "week_end": sunday.date().isoformat(),
+                "status": "Pending",
+            })
+        return {"reports": result}
+
+    if bucket == "overdue":
+        # previous week, not submitted
+        submitted = await db.reports.find({**team_q, "week_start": prev_week_start, "status": {"$in": ["Submitted", "Reviewed"]}}, {"_id": 0}).to_list(500)
+        submitted_ids = {r["tm_user_id"] for r in submitted}
+        result = []
+        for tm in tms:
+            if tm["id"] in submitted_ids:
+                continue
+            result.append({
+                "synthetic": True,
+                "tm_user_id": tm["id"],
+                "tm_name": tm["full_name"],
+                "tm_email": tm["email"],
+                "team_id": tm.get("team_id"),
+                "week_start": prev_week_start,
+                "week_end": prev_week_end,
+                "status": "Overdue",
+            })
+        return {"reports": result}
+
+    # default & "submitted" & "all": real reports for team
+    q = {**team_q}
+    if bucket == "submitted":
+        q["status"] = {"$in": ["Submitted", "Reviewed"]}
+    reports = await db.reports.find(q, {"_id": 0}).sort("submitted_at", -1).to_list(500)
+    return {"reports": reports}
+
+
+@api.get("/reports/{report_id}")
+async def get_report(report_id: str, user=Depends(get_current_user)):
+    r = await db.reports.find_one({"id": report_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if user["role"] == "TM" and r["tm_user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "Manager" and r.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return r
+
+
+
 # ====================================================
 # AUDIT
 # ====================================================
@@ -946,6 +1399,9 @@ async def on_startup():
     await db.tasks.create_index([("tm_user_id", 1), ("status", 1)])
     await db.tasks.create_index([("team_id", 1)])
     await db.audit_logs.create_index([("timestamp", -1)])
+    await db.reports.create_index("id", unique=True)
+    await db.reports.create_index([("tm_user_id", 1), ("week_start", -1)])
+    await db.reports.create_index([("team_id", 1), ("status", 1)])
     logger.info("Field Intelligence Platform started.")
 
 

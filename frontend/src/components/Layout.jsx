@@ -11,6 +11,7 @@ import {
   LogOut,
   Plus,
   Brain,
+  FileText,
 } from "lucide-react";
 import { Button } from "./ui/button";
 
@@ -18,6 +19,7 @@ const TABS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
   { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
+  { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
   { to: "/search", label: "Search", icon: Search, testId: "nav-search" },
 ];
 
@@ -97,7 +99,7 @@ export default function Layout({ children }) {
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
-        <div className="grid grid-cols-5 h-16">
+        <div className="grid grid-cols-6 h-16">
           {TABS.map((t) => (
             <NavLink
               key={t.to}
@@ -105,7 +107,7 @@ export default function Layout({ children }) {
               end={t.to === "/"}
               data-testid={`mobile-${t.testId}`}
               className={({ isActive }) =>
-                `flex flex-col items-center justify-center gap-1 text-[11px] ${
+                `flex flex-col items-center justify-center gap-1 text-[10px] ${
                   isActive ? "text-[var(--brand-primary)]" : "text-[var(--text-muted)]"
                 }`
               }
@@ -117,7 +119,7 @@ export default function Layout({ children }) {
           <button
             onClick={() => navigate("/log-visit")}
             data-testid="mobile-log-visit-btn"
-            className="flex flex-col items-center justify-center gap-1 text-[11px] text-[var(--brand-secondary)] font-semibold"
+            className="flex flex-col items-center justify-center gap-1 text-[10px] text-[var(--brand-secondary)] font-semibold"
           >
             <Plus className="w-5 h-5" />
             Log

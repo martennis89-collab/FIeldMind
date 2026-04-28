@@ -247,3 +247,63 @@ class AuditLog(BaseModel):
     previous_value: Optional[dict] = None
     new_value: Optional[dict] = None
     ip: Optional[str] = None
+
+
+
+# ---------- WEEKLY REPORTS ----------
+ReportStatus = Literal["Draft", "Submitted", "Reviewed"]
+
+
+class ReportContent(BaseModel):
+    visits_completed: int = 0
+    doctors_visited: int = 0
+    topics_discussed: List[str] = []
+    barriers_heard: List[str] = []
+    promises_created: int = 0
+    promises_completed: int = 0
+    overdue_promises: int = 0
+    sentiment_summary: dict = {}
+    key_insights: List[str] = []
+    doctors_needing_attention: List[dict] = []  # [{id, doctor_name, reason}]
+    notes_from_tm: str = ""
+
+
+class ReportComment(BaseModel):
+    id: str = Field(default_factory=_uuid)
+    user_id: str
+    user_name: str
+    text: str
+    created_at: str = Field(default_factory=_now_iso)
+
+
+class ReportCreate(BaseModel):
+    week_start: str  # ISO date Monday
+    week_end: str  # ISO date Sunday
+    auto_summary: str = ""
+    content: ReportContent
+    notes_from_tm: str = ""
+
+
+class ReportUpdate(BaseModel):
+    auto_summary: Optional[str] = None
+    content: Optional[ReportContent] = None
+    notes_from_tm: Optional[str] = None
+
+
+class WeeklyReport(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    tm_user_id: str
+    tm_name: str = ""
+    team_id: Optional[str] = None
+    week_start: str
+    week_end: str
+    status: ReportStatus = "Draft"
+    auto_summary: str = ""
+    content: ReportContent = ReportContent()
+    notes_from_tm: str = ""
+    submitted_at: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    comments: List[ReportComment] = []
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)

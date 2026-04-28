@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration-2 testing for Manager Performance + Weekly Reports. Backend: 8/8 new pytest cases PASSED in /app/backend/tests/test_reports_and_performance.py (manager performance shape & RBAC, report generate draft, create-idempotent-same-week, owner-only update, post-submit lock 400, idempotent submit, GET RBAC, list buckets submitted/pending/overdue with synthetic rows, comment by manager flips status to Reviewed, TM/non-team forbidden). Frontend: TM Performance Table renders 2 rows (Tina/Theo) with chips + flag pills + behavioral insights on expand; priority cards correctly removed from Manager view; Reports nav visible; TM /reports → Generate weekly → editor opens with auto_summary populated, can edit summary/insights/notes, Save draft → modal closes with Draft row; Continue editing → re-opens; Submit → status flips to Submitted; Manager /reports tabs (Submitted/Pending/Overdue) render with counts, opening a Submitted row opens drawer with drawer-auto-summary (correctly shows TM-edited text), posting a comment flips status to Reviewed and TM sees the manager comment under their report.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Manager /reports tab labels", "issues": ["Initial render shows 'Submitted (·) / Pending (·) / Overdue (·)' until each tab is opened — counts populate per-tab on click rather than upfront. Minor: pre-fetch counts so badges are immediately accurate."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_reports_and_performance.py",
+    "/app/test_reports/pytest/iter2_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~1411 lines and combines 8+ resource domains (auth/users/teams/doctors/visits/tasks/dashboards/reports/audit). Split into routers (e.g., /app/backend/routers/reports.py, dashboards.py) to keep files <700 lines.",
+    "_build_report_draft is sync-blocking inside async — multiple sequential db.find calls per TM; for larger orgs aggregate with a single $facet pipeline.",
+    "POST /api/reports comment endpoint accepts `body: dict` (no Pydantic) — replace with a CommentCreate model for input validation (currently only checks empty text post-strip).",
+    "`_classify_flags`/`_classify_insights` thresholds (visits_vs_target<0.6, completion_rate<0.4, pct_low>0.5) are hard-coded — externalize to settings/constants for tunability.",
+    "manager_performance loops `_enrich_doctor` per doctor per TM (O(N*M) round-trips). For >50 doctors this becomes slow; precompute enrichment once.",
+    "Report edit-after-submit returns 400 — semantically should be 409 Conflict (state) rather than 400 (validation). Minor.",
+    "/api/reports/{id}/comment auto-sets status='Reviewed' on every comment; if a manager posts a 2nd comment after status was bumped to Reviewed it still stays Reviewed (fine), but no audit trail of multiple reviews.",
+    "Frontend Reports.jsx tab counts use `counts.submitted ?? '·'` — counts only fetched per-active-tab so other tab badges show '·' until clicked. Pre-fetch the 3 buckets in parallel on mount."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reports_and_performance.py (created)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (all flows verified)"},
+  "test_credentials": "admin@field.io/admin123, manager@field.io/manager123, tm1@field.io/tm123 (=Tina TM), tm2@field.io/tm123 (=Theo TM)",
+  "seed_data_creation": "Used existing seed. Created TEST_-prefixed report drafts and comments via the test flow (left in DB, namespaced).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend covered by /app/backend/tests/test_field_intelligence.py (21 cases iter1) + /app/backend/tests/test_reports_and_performance.py (8 cases iter2). Run both: cd /app/backend && python -m pytest tests/ -v. Frontend testids of note: tm-performance-table, tm-perf-row-{id}, expand-tm-{id}, flag-{id}-{key}, insight-{id}-{i}; nav-reports, generate-report-btn, auto-summary-textarea, insight-{i}, add-insight-btn, remove-insight-{i}, tm-notes-textarea, save-draft-btn, submit-report-btn, edit-report-{id}, view-report-{id}, status-{Status}; tab-submitted/pending/overdue, mgr-report-row-{id|tm_user_id}, report-drawer, drawer-auto-summary, manager-comment-textarea, post-comment-btn. Note: tm1 = Tina TM, tm2 = Theo TM (UI shows full name).",
+  "rca of the issue": "N/A — no defects observed."
+}
