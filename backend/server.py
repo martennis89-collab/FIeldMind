@@ -1071,17 +1071,121 @@ BARRIERS_DEFAULT = {
 }
 
 
+async def _ensure_taxonomy_seeded():
+    """Idempotent: if the taxonomy_terms collection is empty, populate from defaults."""
+    import uuid
+    count = await db.taxonomy_terms.count_documents({})
+    if count > 0:
+        return
+    docs = []
+    now = _now_iso()
+    for cat, items in TOPICS_DEFAULT.items():
+        for term in items:
+            docs.append({"id": str(uuid.uuid4()), "kind": "topic", "category": cat,
+                         "term": term, "active": True, "created_at": now, "updated_at": now})
+    for cat, items in BARRIERS_DEFAULT.items():
+        for term in items:
+            docs.append({"id": str(uuid.uuid4()), "kind": "barrier", "category": cat,
+                         "term": term, "active": True, "created_at": now, "updated_at": now})
+    if docs:
+        await db.taxonomy_terms.insert_many(docs)
+
+
+async def _read_taxonomy_groups():
+    """Return {topics: {cat: [term, ...]}, barriers: {cat: [term, ...]}} from DB."""
+    await _ensure_taxonomy_seeded()
+    rows = await db.taxonomy_terms.find({"active": True}, {"_id": 0}).to_list(2000)
+    topics: dict = {}
+    barriers: dict = {}
+    for r in rows:
+        bucket = topics if r["kind"] == "topic" else barriers
+        bucket.setdefault(r["category"], []).append(r["term"])
+    # stable ordering: alpha within each category
+    for d in (topics, barriers):
+        for k in d:
+            d[k] = sorted(d[k])
+    return topics, barriers
+
+
 @api.get("/taxonomy")
 async def taxonomy(user=Depends(get_current_user)):
+    topics, barriers = await _read_taxonomy_groups()
     return {
-        "topics": TOPICS_DEFAULT,
-        "barriers": BARRIERS_DEFAULT,
+        "topics": topics,
+        "barriers": barriers,
         "sentiments": ["Very Negative", "Negative", "Neutral", "Positive", "Very Positive"],
         "opportunity_states": ["Blocked", "Stuck", "Advancing", "Unknown"],
         "visit_types": ["In-person visit", "Phone call", "Online meeting", "Event conversation", "Training/session", "Other"],
         "segments": ["Occasional", "Active", "Engaged", "Expert"],
         "cadence": DEFAULT_CADENCE,
     }
+
+
+# ----- Admin: editable taxonomy CRUD -----
+@api.get("/admin/taxonomy")
+async def admin_list_taxonomy(user=Depends(require_roles("Admin"))):
+    await _ensure_taxonomy_seeded()
+    rows = await db.taxonomy_terms.find({}, {"_id": 0}).sort([("kind", 1), ("category", 1), ("term", 1)]).to_list(2000)
+    return {"terms": rows}
+
+
+@api.post("/admin/taxonomy")
+async def admin_create_taxonomy(body: dict, user=Depends(require_roles("Admin"))):
+    import uuid
+    kind = (body.get("kind") or "").lower().strip()
+    category = (body.get("category") or "").strip()
+    term = (body.get("term") or "").strip()
+    if kind not in ("topic", "barrier"):
+        raise HTTPException(status_code=400, detail="kind must be 'topic' or 'barrier'")
+    if not category or not term:
+        raise HTTPException(status_code=400, detail="category and term are required")
+    dup = await db.taxonomy_terms.find_one({"kind": kind, "term": term})
+    if dup:
+        raise HTTPException(status_code=409, detail="Term already exists")
+    doc = {"id": str(uuid.uuid4()), "kind": kind, "category": category,
+           "term": term, "active": True, "created_at": _now_iso(), "updated_at": _now_iso()}
+    await db.taxonomy_terms.insert_one(doc)
+    await _audit(user, "create", "taxonomy_term", doc["id"], new={"kind": kind, "category": category, "term": term})
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/taxonomy/{term_id}")
+async def admin_update_taxonomy(term_id: str, body: dict, user=Depends(require_roles("Admin"))):
+    existing = await db.taxonomy_terms.find_one({"id": term_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Term not found")
+    update = {}
+    for field in ("category", "term"):
+        v = body.get(field)
+        if v is not None:
+            v = str(v).strip()
+            if not v:
+                raise HTTPException(status_code=400, detail=f"{field} cannot be empty")
+            update[field] = v
+    if "active" in body:
+        update["active"] = bool(body["active"])
+    if not update:
+        return existing
+    if "term" in update and update["term"] != existing["term"]:
+        dup = await db.taxonomy_terms.find_one({"kind": existing["kind"], "term": update["term"], "id": {"$ne": term_id}})
+        if dup:
+            raise HTTPException(status_code=409, detail="Term already exists")
+    update["updated_at"] = _now_iso()
+    await db.taxonomy_terms.update_one({"id": term_id}, {"$set": update})
+    await _audit(user, "update", "taxonomy_term", term_id, prev=existing, new=update)
+    fresh = await db.taxonomy_terms.find_one({"id": term_id}, {"_id": 0})
+    return fresh
+
+
+@api.delete("/admin/taxonomy/{term_id}")
+async def admin_delete_taxonomy(term_id: str, user=Depends(require_roles("Admin"))):
+    existing = await db.taxonomy_terms.find_one({"id": term_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Term not found")
+    await db.taxonomy_terms.delete_one({"id": term_id})
+    await _audit(user, "delete", "taxonomy_term", term_id, prev=existing)
+    return {"ok": True, "id": term_id}
 
 
 

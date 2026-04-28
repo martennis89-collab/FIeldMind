@@ -75,6 +75,17 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 - **Audit**: every export records an audit_log entry (`action=export`, `entity=report`, with `format`).
 - Test coverage: 6/6 new tests in `tests/test_report_export.py` (PDF magic bytes, CSV header, 400 invalid format, 401 no-auth, manager same-team allowed, other-TM 403). Total backend now 70/70 green.
 
+## Iteration 7 (Feb 2026) — Editable Admin taxonomy
+- **DB-backed taxonomy**: replaced hardcoded TOPICS_DEFAULT/BARRIERS_DEFAULT with a `taxonomy_terms` MongoDB collection (`{id, kind, category, term, active, created_at, updated_at}`). `GET /api/taxonomy` now reads from DB (idempotent first-run seed from defaults).
+- **New admin endpoints** (Admin role only):
+  - `GET /api/admin/taxonomy` — list every term (active + inactive) sorted by kind/category/term.
+  - `POST /api/admin/taxonomy` — add a term `{kind, category, term}` (409 on duplicate within same kind, 400 on missing fields or invalid kind).
+  - `PUT /api/admin/taxonomy/{id}` — rename / recategorize / toggle active.
+  - `DELETE /api/admin/taxonomy/{id}` — remove a term (existing visits keep their stored label — no cascade).
+- **Admin UI**: new **Taxonomy** tab with Topic / Barrier toggle, grouped by category, inline rename + delete, "Add" form with category autocomplete (datalist).
+- All mutations write to the audit log (`taxonomy_term` entity).
+- Test coverage: 6/6 new tests in `tests/test_taxonomy_editable.py` (RBAC, CRUD lifecycle, duplicate detection, validation, public endpoint reflects DB). Total backend now 76/76 green.
+
 ## Iteration 2 (Feb 2026) — Manager Control Dashboard + Reports- Replaced TM-style dashboard view for managers with **Manager Control Dashboard**
 - Added **TM Performance Table** with: visits vs target (cadence-derived), avg visits/day, overdue count, promise completion rate (30d), high-priority doctors not visited (priority ≥ 55), sentiment trend per TM (recent vs prior 30d)
 - Auto **performance flags**: Low visit activity / Rising or High overdue tasks / Poor follow-up discipline / Avoidance of high-priority doctors — color-coded chips
@@ -86,7 +97,7 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 
 ## Backlog (next phases)
 **P1**
-- Editable Admin taxonomy (custom topics & barriers per region)
+- Per-region scoping for taxonomy terms (currently global; users.region exists but not yet enforced)
 - Expense tracking module with receipt photo upload + OCR (deferred per user request)
 
 **P2**

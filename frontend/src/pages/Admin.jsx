@@ -7,7 +7,7 @@ import { Label } from "../components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { Plus, Shield, Users as UsersIcon, Briefcase, Activity } from "lucide-react";
+import { Plus, Shield, Users as UsersIcon, Briefcase, Activity, BookOpen, Pencil, Trash2 } from "lucide-react";
 
 const ALL = "__ALL__";
 
@@ -24,10 +24,12 @@ export default function Admin() {
         <TabsList className="bg-[var(--bg-paper)]">
           <TabsTrigger value="users" data-testid="admin-tab-users"><UsersIcon className="w-4 h-4 mr-1" />Users</TabsTrigger>
           <TabsTrigger value="teams" data-testid="admin-tab-teams"><Briefcase className="w-4 h-4 mr-1" />Teams</TabsTrigger>
+          <TabsTrigger value="taxonomy" data-testid="admin-tab-taxonomy"><BookOpen className="w-4 h-4 mr-1" />Taxonomy</TabsTrigger>
           <TabsTrigger value="audit" data-testid="admin-tab-audit"><Shield className="w-4 h-4 mr-1" />Audit log</TabsTrigger>
         </TabsList>
         <TabsContent value="users"><Users /></TabsContent>
         <TabsContent value="teams"><Teams /></TabsContent>
+        <TabsContent value="taxonomy"><Taxonomy /></TabsContent>
         <TabsContent value="audit"><Audit /></TabsContent>
       </Tabs>
     </div>
@@ -205,6 +207,164 @@ function Audit() {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function Taxonomy() {
+  const [terms, setTerms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeKind, setActiveKind] = useState("topic");
+  const [adding, setAdding] = useState(false);
+  const [newCat, setNewCat] = useState("");
+  const [newTerm, setNewTerm] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editCat, setEditCat] = useState("");
+  const [editTerm, setEditTerm] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/admin/taxonomy");
+      setTerms(data.terms || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const grouped = terms
+    .filter((t) => t.kind === activeKind)
+    .reduce((acc, t) => {
+      (acc[t.category] = acc[t.category] || []).push(t);
+      return acc;
+    }, {});
+  const categories = Object.keys(grouped).sort();
+
+  const create = async () => {
+    const cat = newCat.trim();
+    const term = newTerm.trim();
+    if (!cat || !term) { toast.error("Category and term required"); return; }
+    try {
+      await api.post("/admin/taxonomy", { kind: activeKind, category: cat, term });
+      toast.success(`Added "${term}"`);
+      setNewCat(""); setNewTerm(""); setAdding(false);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not add term");
+    }
+  };
+
+  const startEdit = (t) => {
+    setEditingId(t.id);
+    setEditCat(t.category);
+    setEditTerm(t.term);
+  };
+  const saveEdit = async (id) => {
+    try {
+      await api.put(`/admin/taxonomy/${id}`, { category: editCat.trim(), term: editTerm.trim() });
+      toast.success("Updated");
+      setEditingId(null);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update");
+    }
+  };
+  const remove = async (t) => {
+    if (!window.confirm(`Delete "${t.term}"? Existing visits referencing this term will keep their label.`)) return;
+    try {
+      await api.delete(`/admin/taxonomy/${t.id}`);
+      toast.success("Deleted");
+      load();
+    } catch {
+      toast.error("Could not delete");
+    }
+  };
+
+  return (
+    <div data-testid="taxonomy-tab" className="mt-4 space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex gap-1 rounded-full p-1" style={{ background: "var(--bg-paper)" }}>
+          {[{ v: "topic", label: "Topics" }, { v: "barrier", label: "Barriers" }].map((opt) => (
+            <button
+              key={opt.v}
+              type="button"
+              onClick={() => setActiveKind(opt.v)}
+              data-testid={`taxonomy-kind-${opt.v}`}
+              className="px-4 py-1.5 text-sm rounded-full transition-all"
+              style={{
+                background: activeKind === opt.v ? "var(--brand-primary)" : "transparent",
+                color: activeKind === opt.v ? "white" : "var(--text-secondary)",
+                fontWeight: activeKind === opt.v ? 500 : 400,
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {!adding && (
+          <Button size="sm" onClick={() => setAdding(true)} data-testid="taxonomy-add-btn"
+                  style={{ background: "var(--brand-primary)", color: "white" }}>
+            <Plus className="w-3 h-3 mr-1" /> Add {activeKind}
+          </Button>
+        )}
+      </div>
+
+      {adding && (
+        <div className="rounded-md border p-4 grid sm:grid-cols-3 gap-2 items-end" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }} data-testid="taxonomy-add-form">
+          <div>
+            <Label className="mb-1 block text-xs">Category</Label>
+            <Input value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="e.g. Clinical" className="bg-white" data-testid="taxonomy-new-category" list="taxonomy-cat-suggest" />
+            <datalist id="taxonomy-cat-suggest">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+          </div>
+          <div>
+            <Label className="mb-1 block text-xs">Term</Label>
+            <Input value={newTerm} onChange={(e) => setNewTerm(e.target.value)} placeholder="e.g. Insurance navigation" className="bg-white" data-testid="taxonomy-new-term" />
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={create} data-testid="taxonomy-save-new" style={{ background: "var(--brand-primary)", color: "white" }}>Save</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setAdding(false); setNewCat(""); setNewTerm(""); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>Loading…</div>
+      ) : categories.length === 0 ? (
+        <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>No {activeKind}s yet. Add the first one above.</div>
+      ) : (
+        <div className="space-y-3">
+          {categories.map((cat) => (
+            <div key={cat} className="rounded-md border" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }} data-testid={`taxonomy-cat-${cat}`}>
+              <div className="px-4 py-2 border-b text-xs uppercase tracking-widest font-medium" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+                {cat} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· {grouped[cat].length}</span>
+              </div>
+              <ul>
+                {grouped[cat].map((t) => (
+                  <li key={t.id} className="px-4 py-2 flex items-center justify-between border-b last:border-b-0 gap-2" style={{ borderColor: "var(--border-default)" }} data-testid={`taxonomy-row-${t.id}`}>
+                    {editingId === t.id ? (
+                      <div className="flex flex-1 gap-2">
+                        <Input value={editCat} onChange={(e) => setEditCat(e.target.value)} className="bg-white h-8 text-sm" data-testid={`taxonomy-edit-cat-${t.id}`} />
+                        <Input value={editTerm} onChange={(e) => setEditTerm(e.target.value)} className="bg-white h-8 text-sm" data-testid={`taxonomy-edit-term-${t.id}`} />
+                        <Button size="sm" onClick={() => saveEdit(t.id)} data-testid={`taxonomy-save-${t.id}`} style={{ background: "var(--brand-primary)", color: "white" }}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="text-sm" style={{ color: "var(--text-primary)" }}>{t.term}</span>
+                        <div className="flex gap-1">
+                          <button onClick={() => startEdit(t)} data-testid={`taxonomy-edit-${t.id}`} className="p-1.5 rounded hover:bg-[var(--bg-paper)]" title="Rename"><Pencil className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} /></button>
+                          <button onClick={() => remove(t)} data-testid={`taxonomy-delete-${t.id}`} className="p-1.5 rounded hover:bg-[var(--bg-paper)]" title="Delete"><Trash2 className="w-3.5 h-3.5" style={{ color: "var(--status-danger)" }} /></button>
+                        </div>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
