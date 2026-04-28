@@ -47,6 +47,9 @@ from models import (
     ReportContent,
     ReportComment,
     ExpenseUpdate,
+    Meeting,
+    MeetingCreate,
+    MeetingUpdate,
 )
 from ai import analyze_note as ai_analyze_note
 from seed import seed_demo, seed_owner
@@ -1090,6 +1093,15 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
     await db.visits.insert_one(visit)
     await _audit(user, "create", "visit", visit["id"], new={"doctor_id": body.doctor_id, "sentiment": body.sentiment})
 
+    # Auto-link meeting -> Completed when visit logged from a booked meeting
+    if body.meeting_id:
+        m = await db.meetings.find_one({"id": body.meeting_id, "tm_user_id": user["id"]}, {"_id": 0})
+        if m and m.get("status") == "Scheduled":
+            await db.meetings.update_one(
+                {"id": body.meeting_id},
+                {"$set": {"status": "Completed", "visit_id": visit["id"], "updated_at": _now_iso()}},
+            )
+
     # auto-create tasks from confirmed promises
     created_tasks = []
     today = datetime.now(timezone.utc).date()
@@ -1138,6 +1150,97 @@ async def list_visits(
         q["tm_user_id"] = tm_user_id
     visits = await db.visits.find(q, {"_id": 0}).sort("visit_date", -1).to_list(500)
     return visits
+
+
+# ====================================================
+# MEETINGS  (lightweight scheduler; not a calendar integration)
+# ====================================================
+@api.post("/meetings", response_model=Meeting)
+async def create_meeting(body: MeetingCreate, user=Depends(get_current_user)):
+    if user["role"] != "TM":
+        raise HTTPException(status_code=403, detail="Only TMs can book meetings")
+    doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
+    if not doctor or not await _can_access_doctor(user, doctor):
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    import uuid
+    m = Meeting(
+        id=str(uuid.uuid4()),
+        doctor_id=body.doctor_id,
+        doctor_name=doctor.get("doctor_name", ""),
+        clinic_name=doctor.get("clinic_name"),
+        city=doctor.get("city"),
+        tm_user_id=user["id"],
+        tm_name=user.get("full_name", ""),
+        team_id=user.get("team_id") or doctor.get("team_id"),
+        scheduled_at=body.scheduled_at,
+        duration_minutes=body.duration_minutes or 30,
+        subject=body.subject,
+        status="Scheduled",
+    ).model_dump()
+    await db.meetings.insert_one(m)
+    await _audit(user, "create", "meeting", m["id"],
+                 new={"doctor_id": body.doctor_id, "scheduled_at": body.scheduled_at})
+    return m
+
+
+@api.get("/meetings")
+async def list_meetings(
+    when: Optional[str] = Query(None, description="upcoming | past | all"),
+    user=Depends(get_current_user),
+):
+    q: dict = {}
+    if user["role"] == "TM":
+        q["tm_user_id"] = user["id"]
+    elif user["role"] == "Manager":
+        q["team_id"] = user.get("team_id")
+    # Admin/Owner sees all
+    now = _now_iso()
+    if when == "upcoming":
+        q["scheduled_at"] = {"$gte": now}
+        q["status"] = "Scheduled"
+    elif when == "past":
+        q["$or"] = [{"scheduled_at": {"$lt": now}}, {"status": {"$in": ["Completed", "Cancelled"]}}]
+    rows = await db.meetings.find(q, {"_id": 0}).sort("scheduled_at", 1).to_list(2000)
+    return rows
+
+
+@api.get("/meetings/{meeting_id}", response_model=Meeting)
+async def get_meeting(meeting_id: str, user=Depends(get_current_user)):
+    m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if user["role"] == "TM" and m["tm_user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "Manager" and m.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return m
+
+
+@api.put("/meetings/{meeting_id}", response_model=Meeting)
+async def update_meeting(meeting_id: str, body: MeetingUpdate, user=Depends(get_current_user)):
+    m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if m["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    update["updated_at"] = _now_iso()
+    await db.meetings.update_one({"id": meeting_id}, {"$set": update})
+    new = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+    await _audit(user, "update", "meeting", meeting_id, new=update)
+    return new
+
+
+@api.delete("/meetings/{meeting_id}")
+async def delete_meeting(meeting_id: str, user=Depends(get_current_user)):
+    m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if m["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await db.meetings.delete_one({"id": meeting_id})
+    await _audit(user, "delete", "meeting", meeting_id, prev=m)
+    return {"ok": True, "id": meeting_id}
 
 
 # ====================================================
@@ -3396,6 +3499,10 @@ async def on_startup():
     await db.expenses.create_index([("tm_user_id", 1), ("expense_date", -1)])
     await db.expenses.create_index([("team_id", 1), ("expense_date", -1)])
     await db.expenses.create_index([("receipt_hash", 1), ("tm_user_id", 1)])
+    await db.meetings.create_index("id", unique=True)
+    await db.meetings.create_index([("tm_user_id", 1), ("scheduled_at", 1)])
+    await db.meetings.create_index([("doctor_id", 1)])
+    await db.meetings.create_index([("team_id", 1), ("scheduled_at", 1)])
     # Migration: normalise legacy approval statuses (no-op on fresh DBs)
     await db.expenses.update_many(
         {"status": {"$in": ["Approved", "Rejected"]}},

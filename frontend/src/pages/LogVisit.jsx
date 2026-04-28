@@ -20,6 +20,7 @@ export default function LogVisit() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const initialDoctorId = params.get("doctor") || params.get("doctor_id");
+  const meetingId = params.get("meeting_id");
 
   const [step, setStep] = useState(1); // 1 doctor, 2 note, 3 review
   const [doctors, setDoctors] = useState([]);
@@ -226,6 +227,7 @@ export default function LogVisit() {
           ...commercial,
           proposal_sent_date: commercial.proposal_sent_date || null,
         },
+        meeting_id: meetingId || undefined,
       };
       const { data } = await api.post("/visits", payload);
       toast.success(`Visit saved · ${data.created_tasks.length} promise(s) tracked`);

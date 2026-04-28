@@ -230,6 +230,7 @@ class VisitCreate(BaseModel):
     itero_actions: IteroActions = IteroActions()
     invisalign_actions: InvisalignActions = InvisalignActions()
     commercial_actions: CommercialActions = CommercialActions()
+    meeting_id: Optional[str] = None  # if logged from a booked meeting, marks it Completed
 
 
 class Visit(BaseModel):
@@ -410,5 +411,43 @@ class Expense(BaseModel):
     ocr: Optional[dict] = None
     status: ExpenseStatus = "Draft"
     submitted_at: Optional[str] = None
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+
+
+
+# ---------- MEETINGS ----------
+MeetingStatus = Literal["Scheduled", "Completed", "Cancelled"]
+
+
+class MeetingCreate(BaseModel):
+    doctor_id: str
+    scheduled_at: str  # ISO datetime
+    duration_minutes: int = 30
+    subject: Optional[str] = None
+
+
+class MeetingUpdate(BaseModel):
+    scheduled_at: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    subject: Optional[str] = None
+    status: Optional[MeetingStatus] = None
+
+
+class Meeting(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    doctor_id: str
+    doctor_name: str = ""
+    clinic_name: Optional[str] = None
+    city: Optional[str] = None
+    tm_user_id: str
+    tm_name: str = ""
+    team_id: Optional[str] = None
+    scheduled_at: str
+    duration_minutes: int = 30
+    subject: Optional[str] = None
+    status: MeetingStatus = "Scheduled"
+    visit_id: Optional[str] = None
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)

@@ -196,6 +196,25 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 15 (Feb 2026) — Book a meeting (lightweight scheduler)
+- **New `meetings` collection** (`{id, doctor_id, doctor_name, clinic_name, city, tm_user_id, tm_name, team_id, scheduled_at, duration_minutes, subject, status, visit_id, created_at, updated_at}`).
+- **Endpoints** (TM-only create; RBAC-scoped reads/edits):
+  - `POST /api/meetings` — `{doctor_id, scheduled_at, duration_minutes?, subject?}`. Verifies the TM owns/can-access the doctor; auto-fills `doctor_name/clinic_name/city`.
+  - `GET /api/meetings?when=upcoming|past|all` — TM sees own; Manager sees team; Admin/Owner sees all.
+  - `GET /api/meetings/{id}`, `PUT`, `DELETE` — same scope rules.
+  - `POST /api/visits` accepts new optional `meeting_id` body field — when present, the linked meeting flips to `status="Completed"` with `visit_id` populated.
+- **Frontend pages**:
+  - `/meetings` — Upcoming / Past / All tabs. Sections grouped Today / This week / Later (Past for the Past tab). Each card: doctor name (links to profile), datetime + duration, clinic·city, optional subject, "Log visit" + "Cancel" buttons. Completed/Cancelled show a status pill instead of actions.
+  - `/meetings/book` — TM-only. Doctor search-and-pick (name / clinic / city), `<input type="datetime-local">` with default = tomorrow 10:00, duration (default 30 min, step 5), optional subject. Single primary button. Pre-selects the doctor when navigated with `?doctor_id=…`.
+- **Shortcuts surfaced**:
+  - TM top nav: new "Meetings" tab between Doctors and Tasks.
+  - TM mobile More-sheet: Meetings entry.
+  - TM `+ Add` bottom sheet: "Book a meeting" between "Log a visit" and "Add an expense".
+  - Doctor profile: secondary outline "Book meeting" button next to "Log Visit".
+  - Meeting card "Log visit" button navigates to `/log-visit?doctor_id=…&meeting_id=…`; the existing visit form forwards `meeting_id` so the meeting flips to Completed automatically on save.
+- Indexes added on `meetings.id`, `(tm_user_id, scheduled_at)`, `(doctor_id)`, `(team_id, scheduled_at)`.
+- Test coverage: 5 new tests in `tests/test_meetings.py` (TM create + list, Manager-403 on create, other-TM-can't-book-for-not-mine, delete+404, **visit-with-meeting_id auto-completes meeting**). All green.
+
 ## Iteration 14 (Feb 2026) — Per-doctor breakdown in reports + TM mobile "More" sheet
 - **TM mobile bottom-nav reshuffle**: replaced the 5th slot (was iTero) with a "**More**" sheet (slide-up panel). The sheet contains: iTero, Invisalign, Reports, Expenses. TM nav becomes: Home · Doctors · ＋ Add · Tasks · More.
 - **Per-doctor breakdown in reports** (`ReportContent.doctor_breakdown`): one row per doctor visited that week, with `visits_count`, `last_visit_date`, accumulated `topics`, `barriers`, latest `sentiment`, list of `promises` opened, and a 220-char excerpt of the latest free-text note. Sorted by visits-desc / last-visit-desc.

@@ -4,7 +4,7 @@ import api from "../lib/api";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
-import { ArrowLeft, ClipboardList, CalendarClock, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 function formatDate(s) {
@@ -82,14 +82,25 @@ export default function DoctorProfile() {
               {doctor.current_sentiment && <StatusPill kind={sentimentKind(doctor.current_sentiment)}>{doctor.current_sentiment} ({doctor.sentiment_trend})</StatusPill>}
             </div>
           </div>
-          <Button
-            onClick={() => navigate(`/log-visit?doctor=${doctor.id}`)}
-            data-testid="log-visit-from-profile-btn"
-            style={{ background: "var(--brand-secondary)", color: "white" }}
-            className="font-medium"
-          >
-            <ClipboardList className="w-4 h-4 mr-2" /> Log Visit
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => navigate(`/log-visit?doctor=${doctor.id}`)}
+              data-testid="log-visit-from-profile-btn"
+              style={{ background: "var(--brand-secondary)", color: "white" }}
+              className="font-medium"
+            >
+              <ClipboardList className="w-4 h-4 mr-2" /> Log Visit
+            </Button>
+            <Button
+              onClick={() => navigate(`/meetings/book?doctor_id=${doctor.id}`)}
+              data-testid="book-meeting-from-profile-btn"
+              variant="outline"
+              className="font-medium"
+              style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}
+            >
+              <CalendarPlus className="w-4 h-4 mr-2" /> Book meeting
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-6">

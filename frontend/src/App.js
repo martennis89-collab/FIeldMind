@@ -22,6 +22,8 @@ import Expenses from "@/pages/Expenses";
 import LogExpense from "@/pages/LogExpense";
 import ImportDoctors from "@/pages/ImportDoctors";
 import AddDoctor from "@/pages/AddDoctor";
+import Meetings from "@/pages/Meetings";
+import BookMeeting from "@/pages/BookMeeting";
 
 export default function App() {
   return (
@@ -68,6 +70,22 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout><Tasks /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/meetings"
+            element={
+              <ProtectedRoute>
+                <Layout><Meetings /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/meetings/book"
+            element={
+              <ProtectedRoute roles={["TM"]}>
+                <Layout><BookMeeting /></Layout>
               </ProtectedRoute>
             }
           />

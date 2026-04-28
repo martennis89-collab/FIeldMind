@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import {
+  CalendarPlus,
+  Calendar,
   LayoutDashboard,
   Users,
   ClipboardList,
@@ -28,6 +30,7 @@ const TM_TOP = [
   { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
   { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
+  { to: "/meetings", label: "Meetings", icon: Calendar, testId: "nav-meetings" },
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
@@ -55,6 +58,7 @@ const TM_BOTTOM = [
 const TM_MORE = [
   { to: "/itero", label: "iTero", icon: ScanLine, testId: "more-itero" },
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "more-invisalign" },
+  { to: "/meetings", label: "Meetings", icon: Calendar, testId: "more-meetings" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
 ];
@@ -191,6 +195,7 @@ export default function Layout({ children }) {
             <BottomSheet onClose={() => setTmAddOpen(false)} testId="tm-add-sheet">
               <SheetTitle>Add</SheetTitle>
               <SheetItem icon={ClipboardList} label="Log a visit" onClick={() => { setTmAddOpen(false); navigate("/log-visit"); }} testId="add-log-visit" />
+              <SheetItem icon={CalendarPlus} label="Book a meeting" onClick={() => { setTmAddOpen(false); navigate("/meetings/book"); }} testId="add-book-meeting" />
               <SheetItem icon={Receipt} label="Add an expense" onClick={() => { setTmAddOpen(false); navigate("/expenses/log"); }} testId="add-expense" />
               <SheetItem icon={Users} label="Add a doctor" onClick={() => { setTmAddOpen(false); navigate("/doctors/add"); }} testId="add-doctor" />
               <SheetItem icon={Layers} label="Import doctors" onClick={() => { setTmAddOpen(false); navigate("/doctors/import"); }} testId="add-doctor-import" subtitle="From a spreadsheet" />
