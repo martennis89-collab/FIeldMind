@@ -827,13 +827,49 @@ async def update_doctor(doctor_id: str, body: DoctorUpdate, user=Depends(require
 
 
 @api.delete("/doctors/{doctor_id}")
-async def delete_doctor(doctor_id: str, user=Depends(require_roles("Admin"))):
+async def delete_doctor(doctor_id: str, user=Depends(require_roles("Admin", "TM"))):
     existing = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Doctor not found")
+    # TM can only delete doctors assigned to them
+    if user["role"] == "TM" and existing.get("assigned_tm_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="You can only delete your own doctors")
     await db.doctors.delete_one({"id": doctor_id})
+    # Cascade-clean owned visits & tasks so they don't orphan
+    await db.visits.delete_many({"doctor_id": doctor_id})
+    await db.tasks.update_many(
+        {"doctor_id": doctor_id, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]},
+        {"$set": {"deleted_at": _now_iso(), "deleted_by": user["id"]}},
+    )
     await _audit(user, "delete", "doctor", doctor_id, prev=existing)
     return {"ok": True, "id": doctor_id}
+
+
+@api.post("/doctors/bulk-delete")
+async def bulk_delete_doctors(body: dict, user=Depends(require_roles("Admin", "TM"))):
+    """Delete multiple doctors in one go. TM can only delete doctors assigned to them."""
+    ids = (body or {}).get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="ids must be a non-empty list")
+    if len(ids) > 1000:
+        raise HTTPException(status_code=400, detail="Too many ids (max 1000)")
+    q = {"id": {"$in": ids}}
+    if user["role"] == "TM":
+        q["assigned_tm_id"] = user["id"]
+    existing = await db.doctors.find(q, {"_id": 0}).to_list(1000)
+    deletable_ids = [d["id"] for d in existing]
+    if not deletable_ids:
+        return {"deleted_count": 0, "deleted_ids": [], "skipped_ids": ids}
+    await db.doctors.delete_many({"id": {"$in": deletable_ids}})
+    await db.visits.delete_many({"doctor_id": {"$in": deletable_ids}})
+    await db.tasks.update_many(
+        {"doctor_id": {"$in": deletable_ids}, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]},
+        {"$set": {"deleted_at": _now_iso(), "deleted_by": user["id"]}},
+    )
+    for d in existing:
+        await _audit(user, "delete", "doctor", d["id"], prev=d)
+    skipped = [i for i in ids if i not in deletable_ids]
+    return {"deleted_count": len(deletable_ids), "deleted_ids": deletable_ids, "skipped_ids": skipped}
 
 
 @api.get("/doctors/{doctor_id}/visits")

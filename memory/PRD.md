@@ -196,6 +196,14 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 12 (Feb 2026) — Doctor list view + delete UX
+- **List ⇄ Cards toggle** on `/doctors` (saved in `localStorage.doctors_view`, default = list). List shows: name, clinic·city, segment, cadence, sentiment, last-visit days; Cards keep the original visual richness (priority pills, top barriers, etc.).
+- **Per-row delete** button (red trash icon) on every row/card, with `window.confirm` and toast feedback. Visits + tasks for that doctor are cascade-removed (visits hard-deleted, tasks soft-deleted) so the data stays consistent.
+- **Bulk delete**: row-level checkboxes + sticky action bar showing "{N} selected · Clear · Delete N". Single API call to `POST /api/doctors/bulk-delete` (cap 1 000 ids/request).
+- **Backend RBAC widened**: `DELETE /api/doctors/{id}` now allows `Admin` **or** `TM` (TM may only delete doctors where `assigned_tm_id == user.id`; otherwise 403). Manager still forbidden.
+- **New endpoint**: `POST /api/doctors/bulk-delete` `{ids: [...]}` — TM-scoped automatically (out-of-scope ids return in `skipped_ids`); cascades visits + tasks; full audit trail per doctor.
+- Test coverage: 5 new tests in `tests/test_doctor_delete.py` (TM-self-delete, TM-cannot-delete-other-TM, Manager-403, bulk-delete-TM-scope with mixed ownership, bulk-delete-validation). **All 5 green.**
+
 ## Iteration 11 (Feb 2026) — Doctor import refinements + "New" / "Lapsed" segments
 - **Split-name import**: Doctor import now accepts `first_name` + `last_name` columns; `imports.validate_and_project()` auto-merges them into `doctor_name` when no explicit full-name column is mapped. Required-name validation passes when first+last is provided.
 - **Updated import template**: `/api/doctors/import/template` (csv & xlsx) now ships with `first_name,last_name,…` columns + sample row "Ivan, Ivanov".
