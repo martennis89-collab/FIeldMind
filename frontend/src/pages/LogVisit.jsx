@@ -38,6 +38,26 @@ export default function LogVisit() {
   const [promises, setPromises] = useState([]);
   const [saving, setSaving] = useState(false);
   const [skipAi, setSkipAi] = useState(false);
+  const [trackType, setTrackType] = useState("BOTH");
+  const [iteroActions, setIteroActions] = useState({
+    demo_discussed: false,
+    demo_booked: false,
+    demo_completed: false,
+    demo_booked_date: null,
+    demo_completed_date: null,
+    scanner_interest_level: "None",
+    scanner_concerns: [],
+  });
+  const [invisalignActions, setInvisalignActions] = useState({
+    growth_program_explained: false,
+    certification_interest: false,
+    tps_discussed: false,
+    p2p_suggested: false,
+    staff_training_needed: false,
+    clinical_confidence: "Unknown",
+    business_confidence: "Unknown",
+    patient_affordability_perception: "Unknown",
+  });
   const [commercial, setCommercial] = useState({
     demo_discussed: false, demo_booked: false, demo_booked_date: "",
     demo_completed: false, demo_completed_date: "",
@@ -68,10 +88,24 @@ export default function LogVisit() {
       setPromises((data.promises_detected || []).map((p) => ({ ...p, _accepted: true })));
       if (data.commercial_actions) {
         setCommercial({ ...commercial, ...data.commercial_actions,
-          demo_booked_date: data.commercial_actions.demo_booked_date || "",
-          demo_completed_date: data.commercial_actions.demo_completed_date || "",
           proposal_sent_date: data.commercial_actions.proposal_sent_date || "",
         });
+      }
+      if (data.itero_actions) {
+        setIteroActions({ ...iteroActions, ...data.itero_actions,
+          demo_booked_date: data.itero_actions.demo_booked_date || "",
+          demo_completed_date: data.itero_actions.demo_completed_date || "",
+          scanner_concerns: data.itero_actions.scanner_concerns || [],
+        });
+      }
+      if (data.invisalign_actions) {
+        setInvisalignActions({ ...invisalignActions, ...data.invisalign_actions });
+      }
+      if (Array.isArray(data.track_types) && data.track_types.length > 0) {
+        const ts = data.track_types;
+        if (ts.includes("ITERO") && ts.includes("INVISALIGN")) setTrackType("BOTH");
+        else if (ts.includes("ITERO")) setTrackType("ITERO");
+        else if (ts.includes("INVISALIGN")) setTrackType("INVISALIGN");
       }
       setStep(3);
     } catch (err) {
@@ -120,10 +154,15 @@ export default function LogVisit() {
           priority: p.priority || "Medium",
         })),
         ai_extraction: ai || null,
+        track_type: trackType,
+        itero_actions: trackType === "INVISALIGN" ? undefined : {
+          ...iteroActions,
+          demo_booked_date: iteroActions.demo_booked_date || null,
+          demo_completed_date: iteroActions.demo_completed_date || null,
+        },
+        invisalign_actions: trackType === "ITERO" ? undefined : invisalignActions,
         commercial_actions: {
           ...commercial,
-          demo_booked_date: commercial.demo_booked_date || null,
-          demo_completed_date: commercial.demo_completed_date || null,
           proposal_sent_date: commercial.proposal_sent_date || null,
         },
       };
@@ -342,31 +381,111 @@ export default function LogVisit() {
             </div>
           )}
 
-          <div className="rounded-md border p-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="commercial-actions-section">
-            <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Commercial actions</div>
-            <div className="font-display text-base font-medium mb-4" style={{ color: "var(--brand-primary)" }}>What execution moved today?</div>
-            <div className="grid sm:grid-cols-3 gap-5">
-              <div>
-                <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--brand-secondary)" }}>Demo</div>
-                <CommercialCheck label="Demo discussed" checked={commercial.demo_discussed} onChange={(v) => setCommercial({ ...commercial, demo_discussed: v })} testId="ca-demo-discussed" />
-                <CommercialCheck label="Demo booked" checked={commercial.demo_booked} onChange={(v) => setCommercial({ ...commercial, demo_booked: v })} testId="ca-demo-booked" />
-                {commercial.demo_booked && (
-                  <Input type="date" value={commercial.demo_booked_date} onChange={(e) => setCommercial({ ...commercial, demo_booked_date: e.target.value })} className="bg-white mt-1 mb-2 h-8 text-xs" data-testid="ca-demo-booked-date" />
-                )}
-                <CommercialCheck label="Demo completed" checked={commercial.demo_completed} onChange={(v) => setCommercial({ ...commercial, demo_completed: v })} testId="ca-demo-completed" />
-                {commercial.demo_completed && (
-                  <Input type="date" value={commercial.demo_completed_date} onChange={(e) => setCommercial({ ...commercial, demo_completed_date: e.target.value })} className="bg-white mt-1 h-8 text-xs" data-testid="ca-demo-completed-date" />
-                )}
+          <div className="rounded-md border p-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="track-selector">
+            <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>What did this visit cover?</div>
+            <div className="flex gap-2 flex-wrap">
+              {[
+                { v: "ITERO", label: "iTero only", color: "var(--brand-accent)" },
+                { v: "INVISALIGN", label: "Invisalign only", color: "var(--brand-secondary)" },
+                { v: "BOTH", label: "Both tracks", color: "var(--brand-primary)" },
+              ].map((opt) => {
+                const active = trackType === opt.v;
+                return (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setTrackType(opt.v)}
+                    data-testid={`track-${opt.v.toLowerCase()}`}
+                    className="px-4 py-2 rounded-md text-sm font-medium transition-all"
+                    style={{
+                      background: active ? opt.color : "white",
+                      color: active ? "white" : "var(--text-secondary)",
+                      border: `1px solid ${active ? opt.color : "var(--border-default)"}`,
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>iTero fields appear only for iTero/Both. Invisalign fields appear only for Invisalign/Both.</div>
+          </div>
+
+          {(trackType === "ITERO" || trackType === "BOTH") && (
+            <div className="rounded-md border p-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="itero-actions-section">
+              <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--brand-accent)" }}>iTero · scanner</div>
+              <div className="font-display text-base font-medium mb-4" style={{ color: "var(--brand-primary)" }}>Demo & engagement</div>
+              <div className="grid sm:grid-cols-2 gap-5">
+                <div>
+                  <CommercialCheck label="Demo discussed" checked={iteroActions.demo_discussed} onChange={(v) => setIteroActions({ ...iteroActions, demo_discussed: v })} testId="ca-demo-discussed" />
+                  <CommercialCheck label="Demo booked" checked={iteroActions.demo_booked} onChange={(v) => setIteroActions({ ...iteroActions, demo_booked: v })} testId="ca-demo-booked" />
+                  {iteroActions.demo_booked && (
+                    <Input type="date" value={iteroActions.demo_booked_date} onChange={(e) => setIteroActions({ ...iteroActions, demo_booked_date: e.target.value })} className="bg-white mt-1 mb-2 h-8 text-xs" data-testid="ca-demo-booked-date" />
+                  )}
+                  <CommercialCheck label="Demo completed" checked={iteroActions.demo_completed} onChange={(v) => setIteroActions({ ...iteroActions, demo_completed: v })} testId="ca-demo-completed" />
+                  {iteroActions.demo_completed && (
+                    <Input type="date" value={iteroActions.demo_completed_date} onChange={(e) => setIteroActions({ ...iteroActions, demo_completed_date: e.target.value })} className="bg-white mt-1 h-8 text-xs" data-testid="ca-demo-completed-date" />
+                  )}
+                </div>
+                <div>
+                  <Label className="mb-2 block">Scanner interest level</Label>
+                  <Select value={iteroActions.scanner_interest_level} onValueChange={(v) => setIteroActions({ ...iteroActions, scanner_interest_level: v })}>
+                    <SelectTrigger className="bg-white" data-testid="scanner-interest-select"><SelectValue /></SelectTrigger>
+                    <SelectContent>{["None", "Low", "Medium", "High"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
               </div>
+            </div>
+          )}
+
+          {(trackType === "INVISALIGN" || trackType === "BOTH") && (
+            <div className="rounded-md border p-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="invisalign-actions-section">
+              <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--brand-secondary)" }}>Invisalign · growth</div>
+              <div className="font-display text-base font-medium mb-4" style={{ color: "var(--brand-primary)" }}>Programs, certification & confidence</div>
+              <div className="grid sm:grid-cols-2 gap-5">
+                <div>
+                  <CommercialCheck label="Growth program explained" checked={invisalignActions.growth_program_explained} onChange={(v) => setInvisalignActions({ ...invisalignActions, growth_program_explained: v })} testId="ca-growth" />
+                  <CommercialCheck label="Certification interest" checked={invisalignActions.certification_interest} onChange={(v) => setInvisalignActions({ ...invisalignActions, certification_interest: v })} testId="ca-cert" />
+                  <CommercialCheck label="TPS discussed" checked={invisalignActions.tps_discussed} onChange={(v) => setInvisalignActions({ ...invisalignActions, tps_discussed: v })} testId="ca-tps" />
+                  <CommercialCheck label="P2P suggested" checked={invisalignActions.p2p_suggested} onChange={(v) => setInvisalignActions({ ...invisalignActions, p2p_suggested: v })} testId="ca-p2p" />
+                  <CommercialCheck label="Staff training needed" checked={invisalignActions.staff_training_needed} onChange={(v) => setInvisalignActions({ ...invisalignActions, staff_training_needed: v })} testId="ca-training" />
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <Label className="mb-1 block text-xs">Clinical confidence</Label>
+                    <Select value={invisalignActions.clinical_confidence} onValueChange={(v) => setInvisalignActions({ ...invisalignActions, clinical_confidence: v })}>
+                      <SelectTrigger className="bg-white h-9" data-testid="clinical-conf-select"><SelectValue /></SelectTrigger>
+                      <SelectContent>{["Unknown", "Low", "Medium", "High"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="mb-1 block text-xs">Business confidence</Label>
+                    <Select value={invisalignActions.business_confidence} onValueChange={(v) => setInvisalignActions({ ...invisalignActions, business_confidence: v })}>
+                      <SelectTrigger className="bg-white h-9" data-testid="business-conf-select"><SelectValue /></SelectTrigger>
+                      <SelectContent>{["Unknown", "Low", "Medium", "High"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="mb-1 block text-xs">Patient affordability perception</Label>
+                    <Select value={invisalignActions.patient_affordability_perception} onValueChange={(v) => setInvisalignActions({ ...invisalignActions, patient_affordability_perception: v })}>
+                      <SelectTrigger className="bg-white h-9" data-testid="affordability-select"><SelectValue /></SelectTrigger>
+                      <SelectContent>{["Unknown", "Concerned", "Neutral", "Confident"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-md border p-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="commercial-actions-section">
+            <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Pricing & proposal (track-agnostic)</div>
+            <div className="grid sm:grid-cols-2 gap-5">
               <div>
-                <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--brand-secondary)" }}>Pricing context</div>
                 <CommercialCheck label="Boost discussed" checked={commercial.boost_discussed} onChange={(v) => setCommercial({ ...commercial, boost_discussed: v })} testId="ca-boost" />
                 <CommercialCheck label="Trade-in discussed" checked={commercial.trade_in_discussed} onChange={(v) => setCommercial({ ...commercial, trade_in_discussed: v })} testId="ca-tradein" />
                 <CommercialCheck label="Trade-in interest" checked={commercial.trade_in_interest} onChange={(v) => setCommercial({ ...commercial, trade_in_interest: v })} testId="ca-tradein-interest" />
-                <CommercialCheck label="Growth program explained" checked={commercial.growth_program_explained} onChange={(v) => setCommercial({ ...commercial, growth_program_explained: v })} testId="ca-growth" />
               </div>
               <div>
-                <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--brand-secondary)" }}>Proposal</div>
                 <CommercialCheck label="Proposal discussed" checked={commercial.proposal_discussed} onChange={(v) => setCommercial({ ...commercial, proposal_discussed: v })} testId="ca-prop-discussed" />
                 <CommercialCheck label="Proposal sent" checked={commercial.proposal_sent} onChange={(v) => setCommercial({ ...commercial, proposal_sent: v })} testId="ca-prop-sent" />
                 {commercial.proposal_sent && (
@@ -375,11 +494,6 @@ export default function LogVisit() {
                 <CommercialCheck label="Follow-up done" checked={commercial.proposal_follow_up_done} onChange={(v) => setCommercial({ ...commercial, proposal_follow_up_done: v })} testId="ca-prop-followup" />
               </div>
             </div>
-            {ai?.commercial_actions && Object.values(ai.commercial_actions).some(Boolean) && (
-              <div className="text-xs italic mt-3 px-3 py-2 rounded" style={{ background: "var(--status-info-bg)", color: "var(--status-info)" }}>
-                <Brain className="inline w-3 h-3 mr-1" /> AI prefilled some checkboxes from your note. Confirm before saving.
-              </div>
-            )}
           </div>
 
           <div className="flex justify-between items-center gap-2 pt-2">

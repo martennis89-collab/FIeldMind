@@ -15,6 +15,8 @@ import Reports from "@/pages/Reports";
 import Intervention from "@/pages/Intervention";
 import MarketIntelligence from "@/pages/MarketIntelligence";
 import TeamPerformance from "@/pages/TeamPerformance";
+import Itero from "@/pages/Itero";
+import Invisalign from "@/pages/Invisalign";
 import Admin from "@/pages/Admin";
 
 export default function App() {
@@ -102,6 +104,22 @@ export default function App() {
             element={
               <ProtectedRoute roles={["Manager", "Admin"]}>
                 <Layout><TeamPerformance /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/itero"
+            element={
+              <ProtectedRoute>
+                <Layout><Itero /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/invisalign"
+            element={
+              <ProtectedRoute>
+                <Layout><Invisalign /></Layout>
               </ProtectedRoute>
             }
           />

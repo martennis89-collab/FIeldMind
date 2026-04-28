@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration-4 testing: STRICT iTero/Invisalign separation. Backend: 16/16 pytest cases PASSED in /app/backend/tests/test_iter4_itero_invisalign.py — manager/itero, manager/invisalign, manager/cross-sell, tm/itero, tm/invisalign all return correct shapes; TM gets 403 on manager-* and Manager/Admin get 403 on tm-*. Visit POST persists track_type + itero_actions + invisalign_actions + commercial_actions; INVISALIGN-only visit with all itero false does NOT change /dashboard/manager/itero demo_funnel counts (strict separation confirmed). Doctors list/detail enriched with itero_state (9 keys) + invisalign_state (9 keys). AI /visits/analyze on note 'Demoed iTero today, doctor wants P2P training and clinical confidence is low' returns track_types=[ITERO,INVISALIGN], itero_actions.demo_discussed=true, invisalign_actions.p2p_suggested=true, clinical_confidence='Low'. Frontend: Manager nav shows Dashboard/iTero/Invisalign/Intervention/Team/Reports (no Market Intel/Doctors/Tasks/Search). TM nav shows Dashboard/iTero/Invisalign/Doctors/Tasks/Reports (no Market Intel/Search/Intervention/Team). Cross-sell-panel + 3 columns + quick-link-itero/invisalign present on Manager Dashboard. /itero (manager) renders itero-page/itero-demo-funnel/itero-alerts/itero-by-tm + 'Scanner' heading. /invisalign (manager) renders invisalign-coverage/confidence/by-segment/growth-opps. TM /itero shows tm-itero-discussed/booked/completed; TM /invisalign shows tm-cert-interest/tm-tps-needs/tm-conf-barriers. CRITICAL bug found+fixed: LogVisit step 3 threw 'ReferenceError: trackType is not defined' (missing useState declaration) — added useState for trackType, iteroActions, invisalignActions in LogVisit.jsx. After fix: track-selector + track-itero/invisalign/both + itero-actions-section + invisalign-actions-section + scanner-interest-select/clinical-conf-select/business-conf-select/affordability-select + ca-cert/ca-tps/ca-p2p/ca-training/ca-growth all render. Toggling ITERO hides invisalign block, INVISALIGN hides iTero block, BOTH shows both. All 6 expected/forbidden nav-items match for both roles.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "LogVisit (step 3)", "issue": "FIXED by tester. trackType/iteroActions/invisalignActions useState declarations were missing in LogVisit.jsx — references on lines 86-88,137-143,372-377,394,421 caused 'ReferenceError: trackType is not defined' crash when stepping into step 3 via Skip-AI. Added useState initializations (default trackType='BOTH', empty action objects). Step 3 now renders and toggles correctly.", "selector": "[data-testid='track-selector']", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter4_itero_invisalign.py",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [
+    "Verify the LogVisit.jsx fix (added useState for trackType, iteroActions, invisalignActions) is consistent with the rest of the form's reset/initial behavior — recommend resetting these states after a successful save (alongside other reset calls).",
+    "(tech-debt carried) server.py is still ~1900+ lines — split into routers (reports, dashboards, visits, doctors).",
+    "(tech-debt carried) /reports edit-after-submit returns 400 where 409 Conflict is more semantic.",
+    "(minor) `_aggregate_itero` falls back to `commercial_actions.demo_*` for back-compat; ensure new visits never silently mix when frontend sends only itero block (verified backend honors track_type filter for funnel)."
+  ],
+  "critical_code_review_comments": [
+    "LogVisit.jsx had a hard runtime crash in step 3 due to missing useState — should have a CI-level lint/build gate that catches undeclared identifiers (eslint no-undef).",
+    "Doctor option list in LogVisit doctor picker has no data-testid='doctor-option-{id}' — Playwright tests had to fall back to text=Dr. Dimitrova. Add data-testid for each option.",
+    "Step1 next-button is data-testid='step1-next-btn' but step2 advance is button text 'Skip AI'/'Analyze with AI' (no testid). Add data-testid='step2-skip-ai-btn' and 'step2-analyze-btn' for testability.",
+    "_aggregate_itero / _aggregate_invisalign read legacy commercial_actions.demo_* / growth_program_explained as a back-compat shim — long term remove this once migration is fully verified.",
+    "manager_itero / manager_invisalign / manager_cross_sell each enrich every doctor (N+1 reads). Consider $facet aggregation for scaling.",
+    "track_type defaults to 'BOTH' on the visit doc when omitted — fine, but the visit creation handler does not validate the enum strictly when sent (relies on Pydantic in body); confirmed Pydantic enforces it."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter4_itero_invisalign.py (created)",
+    "/app/frontend/src/pages/LogVisit.jsx (fixed missing useState for trackType/iteroActions/invisalignActions)"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% of verified flows after LogVisit fix"},
+  "test_credentials": "admin@field.io/admin123, manager@field.io/manager123, tm1@field.io/tm123, tm2@field.io/tm123",
+  "seed_data_creation": "Tests created TEST_iter4 visits via POST /api/visits to validate persistence and strict-separation invariant. Used existing seed otherwise.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests/ -v. Iter-4 tests at tests/test_iter4_itero_invisalign.py (16 cases, all pass). Iter-2 + iter-3 prior tests still in tests/ — re-run to verify no regression. Frontend critical fix applied to /app/frontend/src/pages/LogVisit.jsx (added useState for trackType, iteroActions, invisalignActions); main agent should review and confirm reset-after-save resets these too. Strict-separation invariant validated by test_invisalign_only_visit_does_not_affect_itero_funnel.",
+  "rca of the issue": "LogVisit.jsx Iter-4 introduced trackType/iteroActions/invisalignActions references (lines 86-88, 137-143, 372-377, 394, 421) but the corresponding useState declarations were never added — only the original commercial useState remained. React rendered step 1 fine (the variables aren't accessed there), but stepping to step 3 evaluated the .map of track options which read `trackType` and threw 'ReferenceError: trackType is not defined'. Mitigation: added `const [trackType, setTrackType] = useState('BOTH'); const [iteroActions, setIteroActions] = useState({...defaults}); const [invisalignActions, setInvisalignActions] = useState({...defaults});` near other useState calls. Verified step 3 now renders track-selector + iTero/Invisalign blocks and toggles correctly."
+}

@@ -199,12 +199,9 @@ function FunnelRow({ label, value, max, color, testId }) {
   );
 }
 
-function ManagerView({ data, performance, commercial, interventions }) {
+function ManagerView({ data, performance, commercial, interventions, crossSell }) {
   const navigate = useNavigate();
   if (!data) return null;
-  const c = commercial;
-  const dmax = c ? Math.max(c.demo_funnel.discussed, c.demo_funnel.booked, c.demo_funnel.completed, 1) : 1;
-  const pmax = c ? Math.max(c.proposal_funnel.discussed, c.proposal_funnel.sent, c.proposal_funnel.followed_up, 1) : 1;
   const critCount = (interventions?.critical || []).length;
   const atRiskCount = (interventions?.at_risk || []).length;
   const oppCount = (interventions?.high_opportunity || []).length;
@@ -218,59 +215,31 @@ function ManagerView({ data, performance, commercial, interventions }) {
         <StatCard label="High opportunity" value={oppCount} icon={Sparkles} kind="success" testId="stat-opportunity" />
       </div>
 
-      {/* Alerts strip */}
-      {(c?.drop_offs || []).length > 0 && (
+      {(commercial?.drop_offs || []).length > 0 && (
         <div className="rounded-md border p-4 mb-6" style={{ background: "var(--status-danger-bg)", borderColor: "var(--status-danger)" }} data-testid="alerts-strip">
           <div className="flex items-center gap-2 mb-2 text-xs uppercase tracking-widest" style={{ color: "var(--status-danger)" }}>
             <AlertTriangle className="w-4 h-4" /> Alerts
           </div>
           <div className="flex flex-wrap gap-2">
-            {c.drop_offs.map((d) => (
-              <span key={d.key} className="pill pill-danger" data-testid={`alert-${d.key}`}>
-                {d.label} — {d.detail}
-              </span>
+            {commercial.drop_offs.map((d) => (
+              <span key={d.key} className="pill pill-danger" data-testid={`alert-${d.key}`}>{d.label} — {d.detail}</span>
             ))}
           </div>
         </div>
       )}
 
-      <div className="grid lg:grid-cols-2 gap-6 mb-6">
-        <div className="rounded-md border p-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="demo-funnel">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Demo funnel</div>
-              <h3 className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>Discussed → booked → completed</h3>
-            </div>
-            <div className="text-xs text-right" style={{ color: "var(--text-muted)" }}>
-              {c ? <>booking {Math.round(c.demo_funnel.booking_rate * 100)}%<br />completion {Math.round(c.demo_funnel.completion_rate * 100)}%</> : "—"}
-            </div>
+      {/* Cross-sell — combined insights — only here on the combined dashboard */}
+      <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="cross-sell-panel">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Cross-sell insights</div>
+            <h3 className="font-display text-xl font-medium" style={{ color: "var(--brand-primary)" }}>Where iTero and Invisalign meet</h3>
           </div>
-          {c && (
-            <div className="space-y-3">
-              <FunnelRow label="Discussed" value={c.demo_funnel.discussed} max={dmax} color="var(--status-info)" testId="funnel-demo-discussed" />
-              <FunnelRow label="Booked" value={c.demo_funnel.booked} max={dmax} color="var(--brand-accent)" testId="funnel-demo-booked" />
-              <FunnelRow label="Completed" value={c.demo_funnel.completed} max={dmax} color="var(--status-success)" testId="funnel-demo-completed" />
-            </div>
-          )}
         </div>
-
-        <div className="rounded-md border p-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="proposal-funnel">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Proposal funnel</div>
-              <h3 className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>Sent → followed up</h3>
-            </div>
-            <div className="text-xs text-right" style={{ color: "var(--text-muted)" }}>
-              {c ? <>follow-up {Math.round(c.proposal_funnel.follow_up_rate * 100)}%<br />avg {c.proposal_funnel.avg_days_since_proposal ?? "—"}d</> : "—"}
-            </div>
-          </div>
-          {c && (
-            <div className="space-y-3">
-              <FunnelRow label="Discussed" value={c.proposal_funnel.discussed} max={pmax} color="var(--status-info)" testId="funnel-prop-discussed" />
-              <FunnelRow label="Sent" value={c.proposal_funnel.sent} max={pmax} color="var(--brand-accent)" testId="funnel-prop-sent" />
-              <FunnelRow label="Followed up" value={c.proposal_funnel.followed_up} max={pmax} color="var(--status-success)" testId="funnel-prop-followed" />
-            </div>
-          )}
+        <div className="grid md:grid-cols-3 gap-4">
+          <CrossBucket label="Invisalign strong, no iTero" items={crossSell?.invisalign_strong_no_itero || []} kind="info" testId="cross-inv-no-itero" />
+          <CrossBucket label="iTero present, low Invisalign" items={crossSell?.itero_present_low_invisalign || []} kind="warning" testId="cross-itero-low-inv" />
+          <CrossBucket label="High opportunity for both" items={crossSell?.high_opportunity_both || []} kind="success" testId="cross-high-both" />
         </div>
       </div>
 
@@ -279,8 +248,18 @@ function ManagerView({ data, performance, commercial, interventions }) {
         <p className="text-sm mt-1 leading-relaxed" data-testid="market-pulse" style={{ color: "var(--text-primary)" }}>{data.market_pulse}</p>
       </div>
 
-      {/* Quick links */}
+      {/* Quick links to track-specific dashboards */}
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
+        <button onClick={() => navigate("/itero")} data-testid="quick-link-itero" className="rounded-md border p-5 text-left card-lift" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
+          <div className="text-xs uppercase tracking-widest flex items-center gap-1" style={{ color: "var(--brand-accent)" }}>iTero</div>
+          <div className="font-display text-2xl font-medium mt-1" style={{ color: "var(--brand-primary)" }}>scanner</div>
+          <div className="text-xs" style={{ color: "var(--text-muted)" }}>demo funnel · drop-offs · TM perf →</div>
+        </button>
+        <button onClick={() => navigate("/invisalign")} data-testid="quick-link-invisalign" className="rounded-md border p-5 text-left card-lift" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
+          <div className="text-xs uppercase tracking-widest flex items-center gap-1" style={{ color: "var(--brand-secondary)" }}>Invisalign</div>
+          <div className="font-display text-2xl font-medium mt-1" style={{ color: "var(--brand-primary)" }}>aligners</div>
+          <div className="text-xs" style={{ color: "var(--text-muted)" }}>growth · confidence · barriers →</div>
+        </button>
         <button onClick={() => navigate("/intervention")} data-testid="quick-link-intervention" className="rounded-md border p-5 text-left card-lift" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
           <div className="text-xs uppercase tracking-widest flex items-center gap-1" style={{ color: "var(--status-danger)" }}>
             <AlertTriangle className="w-3 h-3" /> Intervention
@@ -288,22 +267,27 @@ function ManagerView({ data, performance, commercial, interventions }) {
           <div className="font-display text-2xl font-medium mt-1" style={{ color: "var(--brand-primary)" }}>{critCount + atRiskCount}</div>
           <div className="text-xs" style={{ color: "var(--text-muted)" }}>doctors needing attention →</div>
         </button>
-        <button onClick={() => navigate("/team-performance")} data-testid="quick-link-team" className="rounded-md border p-5 text-left card-lift" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
-          <div className="text-xs uppercase tracking-widest flex items-center gap-1" style={{ color: "var(--status-info)" }}>
-            <TrendingUp className="w-3 h-3" /> Team performance
-          </div>
-          <div className="font-display text-2xl font-medium mt-1" style={{ color: "var(--brand-primary)" }}>{performance?.rows?.length || 0}</div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>TMs · execution scores →</div>
-        </button>
-        <button onClick={() => navigate("/market-intelligence")} data-testid="quick-link-market" className="rounded-md border p-5 text-left card-lift" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
-          <div className="text-xs uppercase tracking-widest flex items-center gap-1" style={{ color: "var(--status-success)" }}>
-            <Sparkles className="w-3 h-3" /> Market intelligence
-          </div>
-          <div className="font-display text-2xl font-medium mt-1" style={{ color: "var(--brand-primary)" }}>{data.top_barriers?.length || 0}</div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>top barriers · stage breakdown →</div>
-        </button>
       </div>
     </>
+  );
+}
+
+function CrossBucket({ label, items, kind, testId }) {
+  const color = kind === "success" ? "var(--status-success)" : kind === "warning" ? "var(--status-warning)" : "var(--status-info)";
+  return (
+    <div data-testid={testId}>
+      <div className="text-xs uppercase tracking-widest mb-2" style={{ color }}>{label}</div>
+      <div className="space-y-1">
+        {items.length === 0 && <div className="text-xs" style={{ color: "var(--text-muted)" }}>None.</div>}
+        {items.slice(0, 5).map((d) => (
+          <Link key={d.id} to={`/doctors/${d.id}`} className="block rounded p-2 hover:bg-[var(--bg-paper)]">
+            <div className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{d.doctor_name}</div>
+            <div className="text-xs" style={{ color: "var(--text-secondary)" }}>{d.reason}</div>
+            <div className="text-xs italic mt-0.5" style={{ color }}>→ {d.suggested_action}</div>
+          </Link>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -371,6 +355,7 @@ export default function Dashboard() {
   const [perfData, setPerfData] = useState(null);
   const [commercialData, setCommercialData] = useState(null);
   const [interventionsData, setInterventionsData] = useState(null);
+  const [crossSellData, setCrossSellData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -378,16 +363,18 @@ export default function Dashboard() {
       setLoading(true);
       try {
         if (user.role === "Manager" || user.role === "Admin") {
-          const [mgr, perf, com, inter] = await Promise.all([
+          const [mgr, perf, com, inter, cross] = await Promise.all([
             api.get("/dashboard/manager"),
             api.get("/dashboard/manager/performance"),
             api.get("/dashboard/manager/commercial"),
             api.get("/dashboard/manager/interventions"),
+            api.get("/dashboard/manager/cross-sell"),
           ]);
           setMgrData(mgr.data);
           setPerfData(perf.data);
           setCommercialData(com.data);
           setInterventionsData(inter.data);
+          setCrossSellData(cross.data);
         } else {
           const tm = await api.get("/dashboard/tm");
           setTmData(tm.data);
@@ -413,7 +400,7 @@ export default function Dashboard() {
       {loading && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
 
       {(user.role === "Manager" || user.role === "Admin") && (
-        <ManagerView data={mgrData} performance={perfData} commercial={commercialData} interventions={interventionsData} />
+        <ManagerView data={mgrData} performance={perfData} commercial={commercialData} interventions={interventionsData} crossSell={crossSellData} />
       )}
       {user.role === "TM" && <TMView data={tmData} />}
     </div>

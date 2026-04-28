@@ -15,21 +15,25 @@ import {
   AlertOctagon,
   TrendingUp,
   BarChart3,
+  ScanLine,
+  Smile,
 } from "lucide-react";
 import { Button } from "./ui/button";
 
 const TM_TABS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
+  { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
+  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
   { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
-  { to: "/search", label: "Search", icon: Search, testId: "nav-search" },
 ];
 
 const MANAGER_TABS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
+  { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
+  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
   { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
-  { to: "/market-intelligence", label: "Market Intel", icon: BarChart3, testId: "nav-market-intel" },
   { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
 ];
@@ -112,7 +116,7 @@ export default function Layout({ children }) {
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
-        <div className="grid grid-cols-6 h-16">
+        <div className={`grid ${isManager ? "grid-cols-6" : "grid-cols-7"} h-16`}>
           {TABS.map((t) => (
             <NavLink
               key={t.to}

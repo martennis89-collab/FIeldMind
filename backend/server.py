@@ -39,6 +39,8 @@ from models import (
     Task,
     AIExtraction,
     CommercialActions,
+    IteroActions,
+    InvisalignActions,
     WeeklyReport,
     ReportCreate,
     ReportUpdate,
@@ -246,6 +248,10 @@ async def _enrich_doctor(doctor: dict) -> dict:
 
     # Commercial state derived across all visits for this doctor
     commercial = _aggregate_commercial(recent)
+    itero_visits = [v for v in recent if v.get("track_type", "BOTH") in ("ITERO", "BOTH")]
+    invisalign_visits = [v for v in recent if v.get("track_type", "BOTH") in ("INVISALIGN", "BOTH")]
+    itero_state = _aggregate_itero(itero_visits)
+    invisalign_state = _aggregate_invisalign(invisalign_visits)
 
     enriched = {
         **doctor,
@@ -264,8 +270,95 @@ async def _enrich_doctor(doctor: dict) -> dict:
         "visit_priority_label": _priority_label(score),
         "suggested_next_action": last_visit.get("next_step") if last_visit else None,
         "commercial_state": commercial,
+        "itero_state": itero_state,
+        "invisalign_state": invisalign_state,
     }
     return enriched
+
+
+def _aggregate_itero(visits: list) -> dict:
+    """Track iTero-only state: demo funnel + scanner interest/concerns."""
+    state = {
+        "demo_discussed": False,
+        "demo_booked": False,
+        "demo_completed": False,
+        "demo_booked_date": None,
+        "demo_completed_date": None,
+        "demo_pending": False,
+        "scanner_interest_level": "None",
+        "scanner_concerns": [],
+        "has_itero_activity": False,
+    }
+    interest_rank = {"None": 0, "Low": 1, "Medium": 2, "High": 3}
+    best_rank = 0
+    concerns_set: set = set()
+    for v in visits or []:
+        ia = v.get("itero_actions") or {}
+        # Backward-compat: some old visits stored demo_* on commercial_actions
+        legacy = v.get("commercial_actions") or {}
+        for k in ("demo_discussed", "demo_booked", "demo_completed"):
+            if ia.get(k) or legacy.get(k):
+                state[k] = True
+                state["has_itero_activity"] = True
+        for k in ("demo_booked_date", "demo_completed_date"):
+            d = ia.get(k) or legacy.get(k)
+            if d and not state[k]:
+                state[k] = d
+        sil = ia.get("scanner_interest_level") or "None"
+        if interest_rank.get(sil, 0) > best_rank:
+            best_rank = interest_rank[sil]
+            state["scanner_interest_level"] = sil
+        for c in (ia.get("scanner_concerns") or []):
+            concerns_set.add(c)
+    state["scanner_concerns"] = list(concerns_set)[:8]
+    state["demo_pending"] = state["demo_booked"] and not state["demo_completed"]
+    return state
+
+
+def _aggregate_invisalign(visits: list) -> dict:
+    """Track Invisalign-only state: growth/certification/TPS/P2P/training/confidence."""
+    state = {
+        "growth_program_explained": False,
+        "certification_interest": False,
+        "tps_discussed": False,
+        "p2p_suggested": False,
+        "staff_training_needed": False,
+        "clinical_confidence": "Unknown",
+        "business_confidence": "Unknown",
+        "patient_affordability_perception": "Unknown",
+        "has_invisalign_activity": False,
+    }
+    conf_rank = {"Unknown": 0, "Low": 1, "Medium": 2, "High": 3}
+    aff_rank = {"Unknown": 0, "Concerned": 1, "Neutral": 2, "Confident": 3}
+    best_clin = 0
+    best_biz = 0
+    best_aff = 0
+    for v in visits or []:
+        inv = v.get("invisalign_actions") or {}
+        legacy = v.get("commercial_actions") or {}
+        # Booleans
+        for k in ("growth_program_explained", "certification_interest", "tps_discussed",
+                  "p2p_suggested", "staff_training_needed"):
+            if inv.get(k) or legacy.get(k):
+                state[k] = True
+                state["has_invisalign_activity"] = True
+        # Confidence (take latest highest-known)
+        cc = inv.get("clinical_confidence")
+        if cc and conf_rank.get(cc, 0) > best_clin:
+            best_clin = conf_rank[cc]
+            state["clinical_confidence"] = cc
+            state["has_invisalign_activity"] = True
+        bc = inv.get("business_confidence")
+        if bc and conf_rank.get(bc, 0) > best_biz:
+            best_biz = conf_rank[bc]
+            state["business_confidence"] = bc
+            state["has_invisalign_activity"] = True
+        ap = inv.get("patient_affordability_perception")
+        if ap and aff_rank.get(ap, 0) > best_aff:
+            best_aff = aff_rank[ap]
+            state["patient_affordability_perception"] = ap
+            state["has_invisalign_activity"] = True
+    return state
 
 
 def _aggregate_commercial(visits: list) -> dict:
@@ -580,6 +673,7 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
         "team_id": user.get("team_id") or doctor.get("team_id"),
         "visit_date": vdate,
         "visit_type": body.visit_type,
+        "track_type": body.track_type or "BOTH",
         "free_text_note": body.free_text_note,
         "confirmed_topics": body.confirmed_topics,
         "confirmed_barriers": body.confirmed_barriers,
@@ -587,6 +681,8 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
         "opportunity_state": body.opportunity_state,
         "next_step": body.next_step,
         "ai_extraction": body.ai_extraction.model_dump() if body.ai_extraction else None,
+        "itero_actions": body.itero_actions.model_dump() if body.itero_actions else IteroActions().model_dump(),
+        "invisalign_actions": body.invisalign_actions.model_dump() if body.invisalign_actions else InvisalignActions().model_dump(),
         "commercial_actions": body.commercial_actions.model_dump() if body.commercial_actions else CommercialActions().model_dump(),
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
@@ -1375,6 +1471,272 @@ async def manager_interventions(stale_proposal_days: int = 7, user=Depends(requi
         "critical": dedup(critical),
         "at_risk": dedup(at_risk),
         "high_opportunity": dedup(high_opportunity),
+    }
+
+
+# ====================================================
+# iTero TRACK DASHBOARDS
+# ====================================================
+def _track_filter_visits(track: str):
+    """Return mongo filter for visits scoped to a track."""
+    if track == "ITERO":
+        return {"track_type": {"$in": ["ITERO", "BOTH"]}}
+    if track == "INVISALIGN":
+        return {"track_type": {"$in": ["INVISALIGN", "BOTH"]}}
+    return {}
+
+
+@api.get("/dashboard/manager/itero")
+async def manager_itero(user=Depends(require_roles("Manager", "Admin"))):
+    team_q = {} if user["role"] == "Admin" else {"team_id": user.get("team_id")}
+    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    enriched = [await _enrich_doctor(d) for d in docs]
+
+    discussed = sum(1 for d in enriched if d["itero_state"]["demo_discussed"])
+    booked = sum(1 for d in enriched if d["itero_state"]["demo_booked"])
+    completed = sum(1 for d in enriched if d["itero_state"]["demo_completed"])
+    pending = sum(1 for d in enriched if d["itero_state"]["demo_pending"])
+    booking_rate = round(booked / discussed, 2) if discussed else 0.0
+    completion_rate = round(completed / booked, 2) if booked else 0.0
+
+    interest_buckets: dict = {"High": 0, "Medium": 0, "Low": 0, "None": 0}
+    concerns_counts: dict = {}
+    for d in enriched:
+        s = d["itero_state"]
+        interest_buckets[s["scanner_interest_level"]] = interest_buckets.get(s["scanner_interest_level"], 0) + 1
+        for c in s["scanner_concerns"]:
+            concerns_counts[c] = concerns_counts.get(c, 0) + 1
+    top_concerns = [{"name": k, "count": v} for k, v in sorted(concerns_counts.items(), key=lambda x: -x[1])[:6]]
+
+    drop_offs = []
+    if booked and completion_rate < 0.5:
+        drop_offs.append({"key": "low_demo_completion", "label": "Low demo completion rate",
+                          "detail": f"Only {int(completion_rate*100)}% of booked demos were completed"})
+    if discussed and booking_rate < 0.5:
+        drop_offs.append({"key": "low_demo_booking", "label": "Low demo booking rate",
+                          "detail": f"Only {int(booking_rate*100)}% of demos discussed got booked"})
+    if pending >= 2:
+        drop_offs.append({"key": "demos_pending", "label": "Demos booked but not completed",
+                          "detail": f"{pending} demos awaiting completion"})
+
+    # TM performance in demos (track-restricted)
+    by_tm = {}
+    visits = await db.visits.find({**team_q, **_track_filter_visits("ITERO")}, {"_id": 0}).to_list(5000)
+    for v in visits:
+        ia = v.get("itero_actions") or {}
+        legacy = v.get("commercial_actions") or {}
+        if not (ia.get("demo_discussed") or legacy.get("demo_discussed") or ia.get("demo_booked") or legacy.get("demo_booked") or ia.get("demo_completed") or legacy.get("demo_completed")):
+            continue
+        tm = v["tm_user_id"]
+        b = by_tm.setdefault(tm, {"tm_id": tm, "demos_discussed": 0, "demos_booked": 0, "demos_completed": 0})
+        if ia.get("demo_discussed") or legacy.get("demo_discussed"):
+            b["demos_discussed"] += 1
+        if ia.get("demo_booked") or legacy.get("demo_booked"):
+            b["demos_booked"] += 1
+        if ia.get("demo_completed") or legacy.get("demo_completed"):
+            b["demos_completed"] += 1
+    user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
+    tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
+    name_map = {t["id"]: t["full_name"] for t in tms}
+    tm_perf = [{**v, "tm_name": name_map.get(v["tm_id"], "—")} for v in by_tm.values()]
+    tm_perf.sort(key=lambda r: -r["demos_completed"])
+
+    return {
+        "demo_funnel": {"discussed": discussed, "booked": booked, "completed": completed,
+                        "pending": pending, "booking_rate": booking_rate, "completion_rate": completion_rate},
+        "scanner_interest": interest_buckets,
+        "top_concerns": top_concerns,
+        "drop_offs": drop_offs,
+        "by_tm": tm_perf,
+        "totals": {"doctors": len(enriched)},
+    }
+
+
+@api.get("/dashboard/manager/invisalign")
+async def manager_invisalign(user=Depends(require_roles("Manager", "Admin"))):
+    team_q = {} if user["role"] == "Admin" else {"team_id": user.get("team_id")}
+    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    enriched = [await _enrich_doctor(d) for d in docs]
+    total = len(enriched) or 1
+
+    counts = {
+        "growth_program_explained": 0, "certification_interest": 0, "tps_discussed": 0,
+        "p2p_suggested": 0, "staff_training_needed": 0,
+    }
+    clin_buckets = {"High": 0, "Medium": 0, "Low": 0, "Unknown": 0}
+    biz_buckets = {"High": 0, "Medium": 0, "Low": 0, "Unknown": 0}
+    aff_buckets = {"Confident": 0, "Neutral": 0, "Concerned": 0, "Unknown": 0}
+    barriers_by_segment: dict = {}
+    growth_opportunities = []
+
+    for d in enriched:
+        s = d["invisalign_state"]
+        for k in counts.keys():
+            if s.get(k):
+                counts[k] += 1
+        clin_buckets[s["clinical_confidence"]] = clin_buckets.get(s["clinical_confidence"], 0) + 1
+        biz_buckets[s["business_confidence"]] = biz_buckets.get(s["business_confidence"], 0) + 1
+        aff_buckets[s["patient_affordability_perception"]] = aff_buckets.get(s["patient_affordability_perception"], 0) + 1
+        seg = d.get("segment", "Occasional")
+        bs = barriers_by_segment.setdefault(seg, {})
+        for b in (d.get("top_barriers") or []):
+            bs[b] = bs.get(b, 0) + 1
+        # Growth opportunities — Invisalign-leaning signals
+        if d["current_sentiment"] in ("Positive", "Very Positive") and (s["certification_interest"] or s["growth_program_explained"]):
+            growth_opportunities.append({
+                "id": d["id"], "doctor_name": d["doctor_name"], "segment": seg,
+                "reason": "Positive sentiment + interested in certification/growth program",
+                "score": d["visit_priority_score"],
+            })
+        elif s["staff_training_needed"] and d["segment"] in ("Active", "Engaged", "Expert"):
+            growth_opportunities.append({
+                "id": d["id"], "doctor_name": d["doctor_name"], "segment": seg,
+                "reason": "Asked for staff training — book TPS",
+                "score": d["visit_priority_score"],
+            })
+
+    # Doctors lacking growth program explanation (gap)
+    no_growth = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"]}
+                 for d in enriched if not d["invisalign_state"]["growth_program_explained"]][:20]
+    low_clin_conf = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"]}
+                     for d in enriched if d["invisalign_state"]["clinical_confidence"] == "Low"][:20]
+    low_biz_conf = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"]}
+                    for d in enriched if d["invisalign_state"]["business_confidence"] == "Low"][:20]
+
+    # Barriers by segment normalised to top 5 each
+    segment_barriers = {}
+    for seg, bs in barriers_by_segment.items():
+        segment_barriers[seg] = [{"name": k, "count": v} for k, v in sorted(bs.items(), key=lambda x: -x[1])[:5]]
+
+    return {
+        "totals": {"doctors": total},
+        "coverage": {
+            "growth_program_pct": round(counts["growth_program_explained"] / total, 2),
+            "certification_pct": round(counts["certification_interest"] / total, 2),
+            "tps_pct": round(counts["tps_discussed"] / total, 2),
+            "p2p_pct": round(counts["p2p_suggested"] / total, 2),
+            "training_pct": round(counts["staff_training_needed"] / total, 2),
+            "no_growth": no_growth,
+        },
+        "confidence": {
+            "clinical": clin_buckets,
+            "business": biz_buckets,
+            "low_clinical_doctors": low_clin_conf,
+            "low_business_doctors": low_biz_conf,
+        },
+        "affordability": aff_buckets,
+        "barriers_by_segment": segment_barriers,
+        "growth_opportunities": sorted(growth_opportunities, key=lambda x: -x["score"])[:10],
+    }
+
+
+@api.get("/dashboard/manager/cross-sell")
+async def manager_cross_sell(user=Depends(require_roles("Manager", "Admin"))):
+    team_q = {} if user["role"] == "Admin" else {"team_id": user.get("team_id")}
+    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    enriched = [await _enrich_doctor(d) for d in docs]
+
+    inv_strong_no_itero = []
+    itero_low_invisalign = []
+    high_both = []
+    for d in enriched:
+        i = d["itero_state"]
+        v = d["invisalign_state"]
+        # Invisalign strong + no iTero activity
+        if (v["growth_program_explained"] or v["certification_interest"] or d["segment"] in ("Engaged", "Expert")) and not i["has_itero_activity"]:
+            inv_strong_no_itero.append({
+                "id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],
+                "reason": "Strong Invisalign engagement — no iTero discussion yet",
+                "suggested_action": "Introduce iTero scanner — start with demo discussion",
+                "score": d["visit_priority_score"],
+            })
+        # iTero present but low Invisalign usage
+        if i["has_itero_activity"] and (v["clinical_confidence"] == "Low" or not v["growth_program_explained"]):
+            itero_low_invisalign.append({
+                "id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],
+                "reason": "Has iTero traction but Invisalign confidence/usage is low",
+                "suggested_action": "Book P2P or TPS to grow Invisalign side",
+                "score": d["visit_priority_score"],
+            })
+        # High opportunity for both
+        if d["current_sentiment"] in ("Positive", "Very Positive") and i["demo_completed"] and v["growth_program_explained"]:
+            high_both.append({
+                "id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],
+                "reason": "Positive on both tracks — demo completed AND growth program explained",
+                "suggested_action": "Move both tracks to proposal stage",
+                "score": d["visit_priority_score"],
+            })
+
+    def s(x): return sorted(x, key=lambda i: -i["score"])
+    return {
+        "invisalign_strong_no_itero": s(inv_strong_no_itero)[:20],
+        "itero_present_low_invisalign": s(itero_low_invisalign)[:20],
+        "high_opportunity_both": s(high_both)[:20],
+    }
+
+
+@api.get("/dashboard/tm/itero")
+async def tm_itero(user=Depends(get_current_user)):
+    if user["role"] != "TM":
+        raise HTTPException(status_code=403, detail="TM only")
+    docs = await db.doctors.find({"assigned_tm_id": user["id"]}, {"_id": 0}).to_list(500)
+    enriched = [await _enrich_doctor(d) for d in docs]
+    # demos awaiting follow-up
+    follow_ups = []
+    for d in enriched:
+        s = d["itero_state"]
+        if s["demo_pending"]:
+            follow_ups.append({"id": d["id"], "doctor_name": d["doctor_name"],
+                               "issue": "Demo booked — confirm and complete",
+                               "suggested_action": "Confirm or reschedule the demo this week",
+                               "score": d["visit_priority_score"]})
+        elif s["demo_completed"] and s.get("demo_completed_date"):
+            try:
+                ddone = datetime.fromisoformat(s["demo_completed_date"]).date()
+                if (datetime.now(timezone.utc).date() - ddone).days <= 14:
+                    follow_ups.append({"id": d["id"], "doctor_name": d["doctor_name"],
+                                       "issue": "Demo completed recently — drive next step",
+                                       "suggested_action": "Send follow-up materials / book a check-in",
+                                       "score": d["visit_priority_score"]})
+            except Exception:
+                pass
+    discussed = sum(1 for d in enriched if d["itero_state"]["demo_discussed"])
+    booked = sum(1 for d in enriched if d["itero_state"]["demo_booked"])
+    completed = sum(1 for d in enriched if d["itero_state"]["demo_completed"])
+    interest = {"High": 0, "Medium": 0, "Low": 0, "None": 0}
+    for d in enriched:
+        interest[d["itero_state"]["scanner_interest_level"]] = interest.get(d["itero_state"]["scanner_interest_level"], 0) + 1
+    high_interest_doctors = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"]}
+                             for d in enriched if d["itero_state"]["scanner_interest_level"] in ("Medium", "High")][:10]
+    return {
+        "demo_funnel": {"discussed": discussed, "booked": booked, "completed": completed},
+        "scanner_interest": interest,
+        "follow_ups": sorted(follow_ups, key=lambda x: -x["score"])[:20],
+        "high_interest_doctors": high_interest_doctors,
+    }
+
+
+@api.get("/dashboard/tm/invisalign")
+async def tm_invisalign(user=Depends(get_current_user)):
+    if user["role"] != "TM":
+        raise HTTPException(status_code=403, detail="TM only")
+    docs = await db.doctors.find({"assigned_tm_id": user["id"]}, {"_id": 0}).to_list(500)
+    enriched = [await _enrich_doctor(d) for d in docs]
+    cert_interest = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"]}
+                     for d in enriched if d["invisalign_state"]["certification_interest"]][:15]
+    needs_tps_p2p = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],
+                      "reason": "TPS discussed" if d["invisalign_state"]["tps_discussed"] else "P2P suggested" if d["invisalign_state"]["p2p_suggested"] else "Staff training needed"}
+                     for d in enriched if d["invisalign_state"]["tps_discussed"] or d["invisalign_state"]["p2p_suggested"] or d["invisalign_state"]["staff_training_needed"]][:15]
+    confidence_barriers = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],
+                            "issue": "Low clinical confidence" if d["invisalign_state"]["clinical_confidence"] == "Low" else "Low business confidence"}
+                           for d in enriched if d["invisalign_state"]["clinical_confidence"] == "Low" or d["invisalign_state"]["business_confidence"] == "Low"][:15]
+    growth_explained = sum(1 for d in enriched if d["invisalign_state"]["growth_program_explained"])
+    return {
+        "totals": {"doctors": len(enriched)},
+        "growth_program_explained_count": growth_explained,
+        "certification_interest_doctors": cert_interest,
+        "needs_tps_p2p_training": needs_tps_p2p,
+        "confidence_barriers": confidence_barriers,
     }
 
 

@@ -52,10 +52,26 @@ PROMISES: actionable follow-ups the TM committed to (e.g., "send certification i
 
 MARKET_SIGNALS: short string observations relevant to market intelligence (e.g., "Doctor cited competitor X in city Y", "Affordability concern raised by Active segment").
 
-COMMERCIAL_ACTIONS — detect execution-layer signals from the note. All booleans default false. Only flip true if explicitly mentioned. Dates are ISO YYYY-MM-DD. Fields:
+TRACK_TYPES — detect which product tracks the visit covered. Return a list with any of: "ITERO" (scanner/iTero/digital scan), "INVISALIGN" (aligners/clear aligners/Invisalign-specific). Empty list if neither — defaults to BOTH downstream.
+
+ITERO_ACTIONS — scanner-only execution signals from the note. Booleans default false; only flip true if explicitly mentioned. Dates ISO YYYY-MM-DD. Fields:
 - demo_discussed, demo_booked, demo_booked_date, demo_completed, demo_completed_date
-- boost_discussed (any mention of "boost" pricing), trade_in_discussed, trade_in_interest, growth_program_explained
+- scanner_interest_level: one of "Low" | "Medium" | "High" | "None"
+- scanner_concerns: list of short scanner-specific concern phrases (e.g., "price", "training", "ROI")
+
+INVISALIGN_ACTIONS — aligner-only execution signals. Booleans default false:
+- growth_program_explained, certification_interest, tps_discussed, p2p_suggested, staff_training_needed
+- clinical_confidence: "Low" | "Medium" | "High" | "Unknown"
+- business_confidence: "Low" | "Medium" | "High" | "Unknown"
+- patient_affordability_perception: "Concerned" | "Neutral" | "Confident" | "Unknown"
+
+COMMERCIAL_ACTIONS — track-agnostic pricing/proposal:
+- boost_discussed, trade_in_discussed, trade_in_interest
 - proposal_discussed, proposal_sent, proposal_sent_date, proposal_follow_up_done
+
+Strict separation:
+- Never put demo_* under invisalign_actions.
+- Never put growth/certification/TPS/P2P/confidence under itero_actions.
 
 OUTPUT FORMAT — ALWAYS return ONLY a single JSON object, no prose, no markdown fences:
 {
@@ -70,11 +86,20 @@ OUTPUT FORMAT — ALWAYS return ONLY a single JSON object, no prose, no markdown
   "suggested_next_action": "",
   "market_signals": [],
   "privacy_warnings": [],
-  "commercial_actions": {
+  "track_types": [],
+  "itero_actions": {
     "demo_discussed": false, "demo_booked": false, "demo_booked_date": null,
     "demo_completed": false, "demo_completed_date": null,
+    "scanner_interest_level": "None", "scanner_concerns": []
+  },
+  "invisalign_actions": {
+    "growth_program_explained": false, "certification_interest": false, "tps_discussed": false,
+    "p2p_suggested": false, "staff_training_needed": false,
+    "clinical_confidence": "Unknown", "business_confidence": "Unknown",
+    "patient_affordability_perception": "Unknown"
+  },
+  "commercial_actions": {
     "boost_discussed": false, "trade_in_discussed": false, "trade_in_interest": false,
-    "growth_program_explained": false,
     "proposal_discussed": false, "proposal_sent": false, "proposal_sent_date": null,
     "proposal_follow_up_done": false
   }
@@ -113,11 +138,20 @@ def _empty_result(reason: str = "") -> dict:
         "suggested_next_action": "",
         "market_signals": [],
         "privacy_warnings": ([reason] if reason else []),
-        "commercial_actions": {
+        "track_types": [],
+        "itero_actions": {
             "demo_discussed": False, "demo_booked": False, "demo_booked_date": None,
             "demo_completed": False, "demo_completed_date": None,
+            "scanner_interest_level": "None", "scanner_concerns": [],
+        },
+        "invisalign_actions": {
+            "growth_program_explained": False, "certification_interest": False, "tps_discussed": False,
+            "p2p_suggested": False, "staff_training_needed": False,
+            "clinical_confidence": "Unknown", "business_confidence": "Unknown",
+            "patient_affordability_perception": "Unknown",
+        },
+        "commercial_actions": {
             "boost_discussed": False, "trade_in_discussed": False, "trade_in_interest": False,
-            "growth_program_explained": False,
             "proposal_discussed": False, "proposal_sent": False, "proposal_sent_date": None,
             "proposal_follow_up_done": False,
         },
@@ -176,7 +210,34 @@ async def analyze_note(note: str, session_id: str) -> dict:
         result["market_signals"] = [str(m) for m in (data.get("market_signals") or [])][:6]
         result["privacy_warnings"] = [str(w) for w in (data.get("privacy_warnings") or [])][:6]
 
-        # Commercial actions
+        # Track types
+        tracks_in = data.get("track_types") or []
+        result["track_types"] = [t for t in tracks_in if t in ("ITERO", "INVISALIGN")][:2]
+
+        # iTero actions
+        ia_in = data.get("itero_actions") or {}
+        ia = result["itero_actions"]
+        for k in ("demo_discussed", "demo_booked", "demo_completed"):
+            ia[k] = bool(ia_in.get(k))
+        for k in ("demo_booked_date", "demo_completed_date"):
+            ia[k] = ia_in.get(k) or None
+        sil = ia_in.get("scanner_interest_level") or "None"
+        ia["scanner_interest_level"] = sil if sil in ("Low", "Medium", "High", "None") else "None"
+        ia["scanner_concerns"] = [str(c) for c in (ia_in.get("scanner_concerns") or [])][:6]
+
+        # Invisalign actions
+        inv_in = data.get("invisalign_actions") or {}
+        inv = result["invisalign_actions"]
+        for k in ("growth_program_explained", "certification_interest", "tps_discussed",
+                  "p2p_suggested", "staff_training_needed"):
+            inv[k] = bool(inv_in.get(k))
+        for k, opts in (("clinical_confidence", ("Low", "Medium", "High", "Unknown")),
+                        ("business_confidence", ("Low", "Medium", "High", "Unknown")),
+                        ("patient_affordability_perception", ("Concerned", "Neutral", "Confident", "Unknown"))):
+            v = inv_in.get(k) or inv[k]
+            inv[k] = v if v in opts else inv[k]
+
+        # Commercial (track-agnostic)
         ca_in = data.get("commercial_actions") or {}
         ca = result["commercial_actions"]
         for k in ca.keys():

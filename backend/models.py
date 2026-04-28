@@ -143,23 +143,50 @@ class PromiseDraft(BaseModel):
     priority: Literal["Low", "Medium", "High"] = "Medium"
 
 
-class CommercialActions(BaseModel):
-    # Demo actions
+TrackType = Literal["ITERO", "INVISALIGN", "BOTH"]
+ConfidenceLevel = Literal["Low", "Medium", "High", "Unknown"]
+InterestLevel = Literal["Low", "Medium", "High", "None"]
+AffordabilityPerception = Literal["Concerned", "Neutral", "Confident", "Unknown"]
+
+
+class IteroActions(BaseModel):
     demo_discussed: bool = False
     demo_booked: bool = False
-    demo_booked_date: Optional[str] = None  # ISO date
+    demo_booked_date: Optional[str] = None
     demo_completed: bool = False
     demo_completed_date: Optional[str] = None
-    # Pricing context
+    scanner_interest_level: InterestLevel = "None"
+    scanner_concerns: List[str] = []
+
+
+class InvisalignActions(BaseModel):
+    growth_program_explained: bool = False
+    certification_interest: bool = False
+    tps_discussed: bool = False
+    p2p_suggested: bool = False
+    staff_training_needed: bool = False
+    clinical_confidence: ConfidenceLevel = "Unknown"
+    business_confidence: ConfidenceLevel = "Unknown"
+    patient_affordability_perception: AffordabilityPerception = "Unknown"
+
+
+class CommercialActions(BaseModel):
+    """Track-agnostic commercial fields (pricing + proposal). iTero-specific demo
+    fields and Invisalign-specific growth fields now live on IteroActions / InvisalignActions."""
     boost_discussed: bool = False
     trade_in_discussed: bool = False
     trade_in_interest: bool = False
-    growth_program_explained: bool = False
-    # Proposal actions
     proposal_discussed: bool = False
     proposal_sent: bool = False
     proposal_sent_date: Optional[str] = None
     proposal_follow_up_done: bool = False
+    # Deprecated — kept readable for backward compatibility (migration copies them out)
+    demo_discussed: bool = False
+    demo_booked: bool = False
+    demo_booked_date: Optional[str] = None
+    demo_completed: bool = False
+    demo_completed_date: Optional[str] = None
+    growth_program_explained: bool = False
 
 
 class AIExtraction(BaseModel):
@@ -172,6 +199,9 @@ class AIExtraction(BaseModel):
     suggested_next_action: str = ""
     market_signals: List[str] = []
     privacy_warnings: List[str] = []
+    track_types: List[TrackType] = []
+    itero_actions: IteroActions = IteroActions()
+    invisalign_actions: InvisalignActions = InvisalignActions()
     commercial_actions: CommercialActions = CommercialActions()
 
 
@@ -184,6 +214,7 @@ class VisitCreate(BaseModel):
     doctor_id: str
     visit_date: Optional[str] = None  # ISO datetime
     visit_type: VisitType = "In-person visit"
+    track_type: TrackType = "BOTH"
     free_text_note: str = ""
     confirmed_topics: List[str] = []
     confirmed_barriers: List[str] = []
@@ -192,6 +223,8 @@ class VisitCreate(BaseModel):
     next_step: Optional[str] = None
     promises: List[PromiseDraft] = []
     ai_extraction: Optional[AIExtraction] = None
+    itero_actions: IteroActions = IteroActions()
+    invisalign_actions: InvisalignActions = InvisalignActions()
     commercial_actions: CommercialActions = CommercialActions()
 
 
@@ -203,6 +236,7 @@ class Visit(BaseModel):
     team_id: Optional[str] = None
     visit_date: str = Field(default_factory=_now_iso)
     visit_type: VisitType = "In-person visit"
+    track_type: TrackType = "BOTH"
     free_text_note: str = ""
     confirmed_topics: List[str] = []
     confirmed_barriers: List[str] = []
@@ -210,6 +244,8 @@ class Visit(BaseModel):
     opportunity_state: OpportunityState = "Unknown"
     next_step: Optional[str] = None
     ai_extraction: Optional[AIExtraction] = None
+    itero_actions: IteroActions = IteroActions()
+    invisalign_actions: InvisalignActions = InvisalignActions()
     commercial_actions: CommercialActions = CommercialActions()
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
