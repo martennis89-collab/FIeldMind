@@ -103,6 +103,10 @@
 .scrollbar-thin::-webkit-scrollbar { height: 6px; width: 6px; }
 .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
 
+/* Hide scrollbar entirely (e.g. horizontal mobile tab strips) */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
 /* Mobile bottom nav safe area */
 .bottom-nav {
     padding-bottom: env(safe-area-inset-bottom);

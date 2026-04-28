@@ -23,12 +23,12 @@ export default function Admin() {
         </h1>
       </div>
       <Tabs defaultValue="users">
-        <TabsList className="bg-[var(--bg-paper)]">
-          <TabsTrigger value="users" data-testid="admin-tab-users"><UsersIcon className="w-4 h-4 mr-1" />Users</TabsTrigger>
-          <TabsTrigger value="teams" data-testid="admin-tab-teams"><Briefcase className="w-4 h-4 mr-1" />Teams</TabsTrigger>
-          <TabsTrigger value="taxonomy" data-testid="admin-tab-taxonomy"><BookOpen className="w-4 h-4 mr-1" />Taxonomy</TabsTrigger>
-          <TabsTrigger value="imports" data-testid="admin-tab-imports"><FileSpreadsheet className="w-4 h-4 mr-1" />Doctor imports</TabsTrigger>
-          <TabsTrigger value="audit" data-testid="admin-tab-audit"><Shield className="w-4 h-4 mr-1" />Audit log</TabsTrigger>
+        <TabsList className="bg-[var(--bg-paper)] flex w-full overflow-x-auto no-scrollbar">
+          <TabsTrigger value="users" data-testid="admin-tab-users" className="shrink-0"><UsersIcon className="w-4 h-4 mr-1" />Users</TabsTrigger>
+          <TabsTrigger value="teams" data-testid="admin-tab-teams" className="shrink-0"><Briefcase className="w-4 h-4 mr-1" />Teams</TabsTrigger>
+          <TabsTrigger value="taxonomy" data-testid="admin-tab-taxonomy" className="shrink-0"><BookOpen className="w-4 h-4 mr-1" />Taxonomy</TabsTrigger>
+          <TabsTrigger value="imports" data-testid="admin-tab-imports" className="shrink-0"><FileSpreadsheet className="w-4 h-4 mr-1" />Imports</TabsTrigger>
+          <TabsTrigger value="audit" data-testid="admin-tab-audit" className="shrink-0"><Shield className="w-4 h-4 mr-1" />Audit</TabsTrigger>
         </TabsList>
         <TabsContent value="users"><Users /></TabsContent>
         <TabsContent value="teams"><Teams /></TabsContent>
@@ -185,7 +185,8 @@ function Users() {
         </Dialog>
       </div>
 
-      <div className="rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+      {/* Desktop table (md+) */}
+      <div className="hidden md:block rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
         <table className="w-full text-sm">
           <thead style={{ background: "var(--bg-paper)" }}>
             <tr>{["Name", "Email", "Role", "Team", "Manager", "Active", ""].map((h) => <th key={h} className="text-left px-4 py-2 text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{h}</th>)}</tr>
@@ -230,6 +231,69 @@ function Users() {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile card list (below md) */}
+      <div className="md:hidden space-y-3">
+        {users.map((u) => {
+          const team = teams.find((t) => t.id === u.team_id);
+          const isSelf = me?.id === u.id;
+          const mgr = users.find((x) => x.id === u.manager_user_id);
+          const modifiable = canModify(u);
+          return (
+            <div
+              key={u.id}
+              data-testid={`user-card-${u.id}`}
+              className="rounded-md border p-3"
+              style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                    {u.full_name}
+                    {isSelf && <span className="ml-2 text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>you</span>}
+                  </div>
+                  <div className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{u.email}</div>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <span className={`pill ${u.role === "Owner" ? "pill-warning" : "pill-info"}`}>{u.role}</span>
+                  {u.active_status
+                    ? <span className="pill pill-success">Active</span>
+                    : <span className="pill pill-danger">Disabled</span>}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2 text-xs">
+                <div>
+                  <div className="uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Team</div>
+                  <div className="truncate" style={{ color: "var(--text-secondary)" }}>{team?.team_name || "—"}</div>
+                </div>
+                <div>
+                  <div className="uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Manager</div>
+                  <div className="truncate" style={{ color: "var(--text-secondary)" }}>{u.role === "TM" ? (mgr?.full_name || "—") : "—"}</div>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Button size="sm" variant="outline" disabled={!modifiable} onClick={() => setEditing({ ...u })} data-testid={`edit-user-${u.id}`}>
+                  <Pencil className="w-3.5 h-3.5 mr-1" /> Edit
+                </Button>
+                <Button size="sm" variant="outline" disabled={!modifiable} onClick={() => setResetting({ ...u, newPassword: "" })} data-testid={`reset-pw-${u.id}`}>
+                  <Shield className="w-3.5 h-3.5 mr-1" /> Reset PW
+                </Button>
+                <Button size="sm" variant="outline" disabled={!modifiable || isSelf} onClick={() => toggleActive(u)} data-testid={`toggle-user-${u.id}`}>
+                  {u.active_status ? "Disable" : "Enable"}
+                </Button>
+                <Button size="sm" variant="outline" disabled={!modifiable || isSelf} onClick={() => removeUser(u)} data-testid={`delete-user-${u.id}`}>
+                  <Trash2 className="w-3.5 h-3.5 mr-1" style={{ color: "var(--status-danger)" }} /> Delete
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+        {users.length === 0 && (
+          <div className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>No users yet.</div>
+        )}
       </div>
 
       {/* Edit user dialog */}
