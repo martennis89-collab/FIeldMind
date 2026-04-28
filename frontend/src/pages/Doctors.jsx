@@ -62,11 +62,18 @@ export default function Doctors() {
           </h1>
         </div>
         {user?.role === "TM" && (
-          <Link to="/doctors/import" data-testid="import-doctors-link">
-            <Button variant="outline" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>
-              <Upload className="w-4 h-4 mr-1" /> Import doctors
-            </Button>
-          </Link>
+          <div className="flex gap-2">
+            <Link to="/doctors/add" data-testid="add-doctor-link">
+              <Button style={{ background: "var(--brand-secondary)", color: "white" }}>
+                <Plus className="w-4 h-4 mr-1" /> Add doctor
+              </Button>
+            </Link>
+            <Link to="/doctors/import" data-testid="import-doctors-link">
+              <Button variant="outline" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>
+                <Upload className="w-4 h-4 mr-1" /> Import
+              </Button>
+            </Link>
+          </div>
         )}
       </div>
 

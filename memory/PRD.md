@@ -122,7 +122,15 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
 - Bottom sheets use a slide-up animation with backdrop dismiss + close button.
 
 ### Test coverage (iter-10)
-- 6 task UX tests: soft-delete excludes from list, complete sets/clears completed_at on status flip, edit (title/description/date/priority), reassign-doctor validates access, other-TM cannot delete, idempotent delete. **Total backend 106/106 green.**
+- 6 task UX tests: soft-delete excludes from list, complete sets/clears completed_at on status flip, edit (title/description/date/priority), reassign-doctor validates access, other-TM cannot delete, idempotent delete.
+- 3 manual-add-doctor tests: TM self-assigns, required-field validation (422), invalid-segment Literal rejection.
+
+### Manual "Add doctor" form
+- New `/doctors/add` page (TM + Admin) — clean form with **Name (required)**, Clinic, City, Region, Type (GP/Ortho/Other), Segment (Occasional/Active/Engaged/Expert), General notes.
+- Two save actions: **Save doctor** → goes to `/doctors/{id}`, and **Save & log a visit** → goes to `/log-visit?doctor_id={id}` (LogVisit now also supports `?doctor_id=` param alongside the existing `?doctor=`).
+- Doctors page (TM only) gets a primary **+ Add doctor** button next to **Import** (outlined).
+- The "+ Add" mobile bottom sheet for TMs now shows **both** options: "Add a doctor" (manual form) and "Import doctors" (spreadsheet wizard).
+- **Total backend 109/109 green.**
 
 ## Iteration 9 (Feb 2026) — Admin user management + doctor import wizard
 

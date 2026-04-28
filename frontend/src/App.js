@@ -21,6 +21,7 @@ import Admin from "@/pages/Admin";
 import Expenses from "@/pages/Expenses";
 import LogExpense from "@/pages/LogExpense";
 import ImportDoctors from "@/pages/ImportDoctors";
+import AddDoctor from "@/pages/AddDoctor";
 
 export default function App() {
   return (
@@ -155,6 +156,14 @@ export default function App() {
             element={
               <ProtectedRoute roles={["TM", "Admin"]}>
                 <Layout><ImportDoctors /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/doctors/add"
+            element={
+              <ProtectedRoute roles={["TM", "Admin"]}>
+                <Layout><AddDoctor /></Layout>
               </ProtectedRoute>
             }
           />

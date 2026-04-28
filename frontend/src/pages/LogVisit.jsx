@@ -19,7 +19,7 @@ const OP_STATES = ["Blocked", "Stuck", "Advancing", "Unknown"];
 export default function LogVisit() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const initialDoctorId = params.get("doctor");
+  const initialDoctorId = params.get("doctor") || params.get("doctor_id");
 
   const [step, setStep] = useState(1); // 1 doctor, 2 note, 3 review
   const [doctors, setDoctors] = useState([]);
