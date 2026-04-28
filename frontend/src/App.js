@@ -18,6 +18,8 @@ import TeamPerformance from "@/pages/TeamPerformance";
 import Itero from "@/pages/Itero";
 import Invisalign from "@/pages/Invisalign";
 import Admin from "@/pages/Admin";
+import Expenses from "@/pages/Expenses";
+import LogExpense from "@/pages/LogExpense";
 
 export default function App() {
   return (
@@ -128,6 +130,22 @@ export default function App() {
             element={
               <ProtectedRoute roles={["Admin"]}>
                 <Layout><Admin /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/expenses"
+            element={
+              <ProtectedRoute>
+                <Layout><Expenses /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/expenses/log"
+            element={
+              <ProtectedRoute roles={["TM"]}>
+                <Layout><LogExpense /></Layout>
               </ProtectedRoute>
             }
           />

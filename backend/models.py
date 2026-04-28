@@ -370,3 +370,51 @@ class WeeklyReport(BaseModel):
     comments: List[ReportComment] = []
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
+
+
+
+# ---------- EXPENSES ----------
+ExpenseCategory = Literal["Petrol", "Food"]
+ExpenseStatus = Literal["Draft", "Submitted", "Approved", "Rejected"]
+
+
+class ExpenseCreate(BaseModel):
+    expense_date: str  # YYYY-MM-DD
+    category: ExpenseCategory
+    amount: float
+    currency: str = "USD"
+    vendor: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ExpenseUpdate(BaseModel):
+    expense_date: Optional[str] = None
+    category: Optional[ExpenseCategory] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    vendor: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class Expense(BaseModel):
+    id: str = Field(default_factory=_uuid)
+    tm_user_id: str
+    tm_name: str = ""
+    team_id: Optional[str] = None
+    expense_date: str
+    submission_month: Optional[str] = None  # YYYY-MM (set on Submit)
+    category: ExpenseCategory
+    amount: float
+    currency: str = "USD"
+    vendor: Optional[str] = None
+    notes: Optional[str] = None
+    receipt_image_id: Optional[str] = None
+    receipt_mime: Optional[str] = None
+    receipt_hash: Optional[str] = None
+    ocr: Optional[dict] = None
+    status: ExpenseStatus = "Draft"
+    submitted_at: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    manager_comment: Optional[str] = None
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)

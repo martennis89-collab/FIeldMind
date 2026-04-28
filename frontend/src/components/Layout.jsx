@@ -17,6 +17,7 @@ import {
   BarChart3,
   ScanLine,
   Smile,
+  Receipt,
 } from "lucide-react";
 import { Button } from "./ui/button";
 
@@ -26,6 +27,7 @@ const TM_TABS = [
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
   { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
+  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
 ];
 
@@ -35,6 +37,7 @@ const MANAGER_TABS = [
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
   { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
   { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
+  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
 ];
 

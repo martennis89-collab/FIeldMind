@@ -86,6 +86,28 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 - All mutations write to the audit log (`taxonomy_term` entity).
 - Test coverage: 6/6 new tests in `tests/test_taxonomy_editable.py` (RBAC, CRUD lifecycle, duplicate detection, validation, public endpoint reflects DB). Total backend now 76/76 green.
 
+## Iteration 8 (Feb 2026) — Expense Tracking module (Phase 3)
+Mobile-first, food/petrol-only, image-driven expense capture with monthly submission and manager approval.
+
+- **Data model**: `expenses` collection — `{id, tm_user_id, tm_name, team_id, expense_date, submission_month, category (Petrol|Food), amount, currency, vendor?, notes?, receipt_image_id, receipt_mime, receipt_hash, ocr, status (Draft|Submitted|Approved|Rejected), submitted_at, reviewed_at, manager_comment, created_at, updated_at}`. Receipt images stored in **GridFS** (`receipts` bucket).
+- **AI receipt OCR** — new module `expenses_ai.py` using Claude Sonnet 4.5 vision via Emergent LLM Key (`emergentintegrations.llm.chat` + `ImageContent.image_base64`) extracts `{amount, currency, expense_date, vendor, category_hint, confidence, notes}`.
+- **Endpoints**:
+  - `POST /api/expenses` (multipart, TM only) — create draft, optional receipt upload, returns `{expense, duplicate_of}` (SHA-1 hash dedupe).
+  - `POST /api/expenses/extract` (multipart, TM only) — OCR-only, no DB write; pre-fill the form.
+  - `GET /api/expenses` — TM scope (own), Manager (team), Admin (all); filters `month`, `status`, `tm_user_id`.
+  - `GET /api/expenses/summary` — month totals, by-category, by-status, submittable_drafts count.
+  - `PUT /api/expenses/{id}` — only when Draft; TM scope.
+  - `DELETE /api/expenses/{id}` — only when Draft; deletes GridFS attachment too.
+  - `GET /api/expenses/{id}/receipt` — streams the receipt image (RBAC enforced).
+  - `POST /api/expenses/submit-month` `{month: "YYYY-MM"}` — locks all of caller's drafts that month → Submitted.
+  - `POST /api/expenses/{id}/approve` and `/reject` (Manager/Admin only; team-scoped for Manager).
+- **Frontend**:
+  - **TM `/expenses`**: month navigator, 4 stat cards (Total / Receipts / Petrol / Food), Add-expense + Submit-month buttons, list with receipt thumbnails (lazy-loaded as blobs) + status pills + delete-draft action.
+  - **TM `/expenses/log`**: photo capture (file input with `capture="environment"` for direct camera on mobile) → "Reading receipt with AI…" → form pre-filled with extracted fields + confidence banner + duplicate-receipt warning. Petrol/Food pill selector, amount with currency dropdown, date, optional vendor + notes. Save draft.
+  - **Manager `/expenses`**: month navigator, TM filter, status filter, totals card, full list with thumbnails + Approve/Reject buttons. Reject dialog supports an optional comment that's surfaced back to the TM in their list.
+- All state changes audited (`create/update/delete/submit/approve/reject`, entity=`expense`).
+- Test coverage: 12/12 new tests in `tests/test_expenses.py` (CRUD, RBAC, receipt upload + dedupe, GridFS streaming, monthly submission lock, approve/reject lifecycle, OCR endpoint smoke, manager-cannot-create, validation). **Total backend 88/88 green.**
+
 ## Iteration 2 (Feb 2026) — Manager Control Dashboard + Reports- Replaced TM-style dashboard view for managers with **Manager Control Dashboard**
 - Added **TM Performance Table** with: visits vs target (cadence-derived), avg visits/day, overdue count, promise completion rate (30d), high-priority doctors not visited (priority ≥ 55), sentiment trend per TM (recent vs prior 30d)
 - Auto **performance flags**: Low visit activity / Rising or High overdue tasks / Poor follow-up discipline / Avoidance of high-priority doctors — color-coded chips
@@ -98,7 +120,6 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 ## Backlog (next phases)
 **P1**
 - Per-region scoping for taxonomy terms (currently global; users.region exists but not yet enforced)
-- Expense tracking module with receipt photo upload + OCR (deferred per user request)
 
 **P2**
 - Configurable cadence per team
