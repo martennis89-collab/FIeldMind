@@ -20,7 +20,7 @@ const TARGET_FIELDS = [
   { key: "city", label: "City" },
   { key: "region", label: "Region" },
   { key: "doctor_type", label: "Doctor type", help: "GP / Ortho / Other" },
-  { key: "segment", label: "Segment", help: "New / Occasional / Active / Engaged / Expert" },
+  { key: "segment", label: "Segment", help: "New / Lapsed / Occasional / Active / Engaged / Expert" },
   { key: "general_notes", label: "General notes" },
 ];
 
@@ -99,7 +99,7 @@ export default function ImportDoctors() {
       const composed = `${first} ${last}`.trim();
       const name = fullRaw || composed;
       const segRaw = mapping.segment ? (row[mapping.segment] || "").trim() : "";
-      const segOk = !segRaw || ["New", "Occasional", "Active", "Engaged", "Expert"].includes(segRaw.charAt(0).toUpperCase() + segRaw.slice(1).toLowerCase());
+      const segOk = !segRaw || ["New", "Lapsed", "Occasional", "Active", "Engaged", "Expert"].includes(segRaw.charAt(0).toUpperCase() + segRaw.slice(1).toLowerCase());
       const rowErrors = [];
       if (!name) rowErrors.push("doctor_name (or first+last) missing");
       if (!segOk) rowErrors.push("segment invalid");

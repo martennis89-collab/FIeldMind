@@ -64,7 +64,7 @@ app = FastAPI(title="Field Intelligence Platform")
 api = APIRouter(prefix="/api")
 
 # Cadence defaults (days)
-DEFAULT_CADENCE = {"Occasional": 60, "Active": 45, "Engaged": 30, "Expert": 21}
+DEFAULT_CADENCE = {"New": 30, "Lapsed": 90, "Occasional": 60, "Active": 45, "Engaged": 30, "Expert": 21}
 
 
 # ---------- helpers ----------
@@ -138,7 +138,7 @@ def _priority_score(doctor, last_visit_date, days_since, open_promises, overdue_
     score = 0
     # segment importance
     seg = doctor.get("segment", "Occasional")
-    score += {"Occasional": 5, "Active": 15, "Engaged": 25, "Expert": 35}.get(seg, 10)
+    score += {"New": 8, "Lapsed": 12, "Occasional": 5, "Active": 15, "Engaged": 25, "Expert": 35}.get(seg, 10)
     # cadence
     target = DEFAULT_CADENCE.get(seg, 45)
     if days_since is None:
@@ -1401,7 +1401,7 @@ async def taxonomy(user=Depends(get_current_user)):
         "sentiments": ["Very Negative", "Negative", "Neutral", "Positive", "Very Positive"],
         "opportunity_states": ["Blocked", "Stuck", "Advancing", "Unknown"],
         "visit_types": ["In-person visit", "Phone call", "Online meeting", "Event conversation", "Training/session", "Other"],
-        "segments": ["Occasional", "Active", "Engaged", "Expert"],
+        "segments": ["New", "Lapsed", "Occasional", "Active", "Engaged", "Expert"],
         "cadence": DEFAULT_CADENCE,
     }
 

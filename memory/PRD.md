@@ -196,13 +196,13 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
-## Iteration 11 (Feb 2026) — Doctor import refinements + "New" segment
+## Iteration 11 (Feb 2026) — Doctor import refinements + "New" / "Lapsed" segments
 - **Split-name import**: Doctor import now accepts `first_name` + `last_name` columns; `imports.validate_and_project()` auto-merges them into `doctor_name` when no explicit full-name column is mapped. Required-name validation passes when first+last is provided.
 - **Updated import template**: `/api/doctors/import/template` (csv & xlsx) now ships with `first_name,last_name,…` columns + sample row "Ivan, Ivanov".
 - **Frontend `ImportDoctors.jsx`**: `TARGET_FIELDS` includes First name + Last name with help-text and merge logic in preview/dedupe.
-- **"New" segment**: added to `Segment` Literal in `models.py` (`New | Occasional | Active | Engaged | Expert`) and to `imports.ALLOWED_SEGMENTS`. Frontend `AddDoctor.jsx` SEGMENTS list includes "New".
+- **"New" + "Lapsed" segments** (Iter 11.1, fix from real-world `Planning 9.csv`): added to `Segment` Literal in `models.py` (`New | Lapsed | Occasional | Active | Engaged | Expert`), `imports.ALLOWED_SEGMENTS`, taxonomy endpoint, scoring weights (`Lapsed=12`), default cadence (`New=30d, Lapsed=90d`), `StatusPill.SegmentBadge` colors, frontend `AddDoctor.jsx` SEGMENTS list and `ImportDoctors.jsx` validator. The user's 189-row file (51 Lapsed) now validates with 0 failures.
 - **Larger imports**: row cap raised from 2 000 → **5 000** in `/doctors/import/preview` and `/commit` (HTTP 413 above that).
-- Test coverage: 3 new tests in `tests/test_doctor_import.py` (`test_first_last_name_merge`, `test_new_segment_accepted`, `test_manual_add_new_segment`) + template-shape assertion updated. **Total backend 114/114 green** (87 expenses/import/iter9-10 + 21 field-intel + 6 voice).
+- Test coverage: 4 new tests in `tests/test_doctor_import.py` (`test_first_last_name_merge`, `test_new_segment_accepted` (now also asserts Lapsed), `test_manual_add_new_segment`) + template-shape assertion updated. **16/16 import+manual-add tests green.**
 
 ## Backlog (next phases)
 **P1**

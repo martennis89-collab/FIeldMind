@@ -4,7 +4,7 @@ import io
 import re
 from typing import Optional
 
-ALLOWED_SEGMENTS = {"New", "Occasional", "Active", "Engaged", "Expert"}
+ALLOWED_SEGMENTS = {"New", "Lapsed", "Occasional", "Active", "Engaged", "Expert"}
 ALLOWED_DOCTOR_TYPES = {"GP", "Ortho", "Other"}
 TARGET_FIELDS = ["first_name", "last_name", "doctor_name", "clinic_name", "city", "region", "doctor_type", "segment", "general_notes"]
 REQUIRED_FIELDS = ["doctor_name"]   # but first+last together also satisfy this

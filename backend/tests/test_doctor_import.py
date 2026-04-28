@@ -44,7 +44,7 @@ class TestDoctorImport:
                 docs = docs.get("doctors", [])
             for d in docs:
                 name = (d.get("doctor_name") or "").lower()
-                if any(tok in name for tok in ("iter9", "test_iter9", "xlsx")):
+                if any(tok in name for tok in ("iter9", "test_iter9", "xlsx", "iter11")):
                     requests.delete(f"{API}/doctors/{d['id']}", headers=H(self.admin), timeout=5)
         except Exception:
             pass
@@ -200,6 +200,7 @@ class TestDoctorImport:
         csv = (
             "doctor_name,clinic_name,city,segment\n"
             "Dr Iter9_newseg,NewSegClinic,Burgas,New\n"
+            "Dr Iter11_lapsed,LapsedClinic,Sofia,Lapsed\n"
         ).encode("utf-8")
         prev = requests.post(f"{API}/doctors/import/preview", headers=H(self.tm),
                              files={"file": ("ns.csv", csv, "text/csv")}, timeout=15).json()
@@ -208,14 +209,15 @@ class TestDoctorImport:
         rc = requests.post(f"{API}/doctors/import/commit", headers=H(self.tm), json=body, timeout=15)
         assert rc.status_code == 200, rc.text
         d = rc.json()
-        assert d["created_count"] == 1
+        assert d["created_count"] == 2
         assert d["failed_count"] == 0
-        # Check segment persisted as 'New'
         rl = requests.get(f"{API}/doctors", headers=H(self.tm), timeout=15).json()
         docs = rl if isinstance(rl, list) else rl.get("doctors", [])
         match = next((doc for doc in docs if "iter9_newseg" in (doc.get("doctor_name") or "").lower()), None)
         assert match is not None
         assert match.get("segment") == "New"
+        lapsed = next((doc for doc in docs if "iter11_lapsed" in (doc.get("doctor_name") or "").lower()), None)
+        assert lapsed is not None and lapsed.get("segment") == "Lapsed"
 
     def test_manual_add_new_segment(self):
         """POST /api/doctors with segment='New' should succeed."""

@@ -76,7 +76,7 @@ class Team(BaseModel):
 
 
 # ---------- DOCTORS ----------
-Segment = Literal["New", "Occasional", "Active", "Engaged", "Expert"]
+Segment = Literal["New", "Lapsed", "Occasional", "Active", "Engaged", "Expert"]
 DoctorStatus = Literal["Active", "Inactive", "Watchlist"]
 DoctorType = Literal["GP", "Ortho", "Other"]
 

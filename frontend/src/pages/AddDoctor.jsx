@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { ChevronLeft, Save, Loader2, UserPlus } from "lucide-react";
 
 const DOCTOR_TYPES = ["GP", "Ortho", "Other"];
-const SEGMENTS = ["New", "Occasional", "Active", "Engaged", "Expert"];
+const SEGMENTS = ["New", "Lapsed", "Occasional", "Active", "Engaged", "Expert"];
 
 export default function AddDoctor() {
   const navigate = useNavigate();

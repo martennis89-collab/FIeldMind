@@ -32,6 +32,8 @@ export function priorityKind(label) {
 
 export function SegmentBadge({ segment }) {
   const map = {
+    New: "pill-info",
+    Lapsed: "pill-muted",
     Occasional: "pill-muted",
     Active: "pill-info",
     Engaged: "pill-warning",
