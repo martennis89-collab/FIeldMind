@@ -36,8 +36,20 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 - Backend: 21/21 (iter1) + 8/8 (iter2) pytest cases passing — auth, RBAC, filters, AI live call, visit save, task buckets, dashboards, search, admin, manager performance, weekly reports CRUD + buckets + comments
 - Frontend: full E2E across all roles (login, dashboard, doctors, profile, log-visit, tasks, search, admin, logout, performance table, reports flow, manager review)
 
-## Iteration 2 (Feb 2026) — Manager Control Dashboard + Reports
-- Replaced TM-style dashboard view for managers with **Manager Control Dashboard**
+## Iteration 3 (Feb 2026) — Commercial Actions + Control Tower
+- **Commercial Actions Tracking**: each visit now records 13 execution-layer fields (demo_discussed/booked/+date, demo_completed/+date, boost_discussed, trade_in_discussed, trade_in_interest, growth_program_explained, proposal_discussed, proposal_sent/+date, proposal_follow_up_done). AI extraction prompt updated to detect & pre-fill these from the free-text note.
+- **Doctor commercial_state**: derived per-doctor aggregate exposed on `_enrich_doctor` — adds days_since_proposal, demo_pending (booked-not-completed), proposal_unfollowed (sent-no-followup).
+- **New endpoints**:
+  - `GET /api/dashboard/manager/commercial` — demo & proposal funnels (discussed→booked→completed; sent→followed-up), booking/completion/follow-up rates, avg-days-since-proposal, pricing-context coverage % + lists of doctors without boost/trade-in/growth discussion, drop-off alerts, barriers-by-stage (pre-demo / post-demo / post-proposal).
+  - `GET /api/dashboard/manager/interventions` — three buckets each with doctor name + assigned TM + issue + suggested_action: **Critical** (proposal>7d unfollowed / demo booked-not-completed / Engaged-Expert ignored), **At-risk** (declining sentiment / overdue promises piling), **High opportunity** (recent demo + no proposal / strong-engagement+pricing-context+no proposal).
+- **Performance endpoint extended** with `execution_quality_score (0-100, Low/Med/High)`, `high_priority_visited_pct`, demo & proposal counts per TM, and a `coaching` block (strengths / weaknesses / suggestions).
+- **Manager UI cleanup** — Manager nav now ONLY shows: Dashboard / Intervention / Market Intel / Team / Reports. Removed for managers: Doctors browser, Tasks, Search, Log Visit FAB. (Doctor profile still reachable via deep-link from intervention/team lists.)
+- **Manager Dashboard = Control Tower**: 4 stat cards (Visits this week, Doctors, Critical, High opportunity) + Alerts strip (drop-offs) + Demo funnel + Proposal funnel + Market pulse + 3 quick-link tiles to Intervention / Team Performance / Market Intelligence.
+- **Dedicated pages**: `/intervention` (3 buckets with cards), `/market-intelligence` (top barriers, top topics, barriers by stage, pricing coverage), `/team-performance` (full TM table with EQS pills, flags, expandable strengths/weaknesses/coaching panel).
+- **Log Visit (TM)**: review step now includes a "Commercial actions" section with three columns (Demo / Pricing context / Proposal) of checkboxes. AI pre-fills any detected booleans; user confirms/edits before save.
+- **Reports updated**: Auto draft includes `demos_discussed/booked/completed` + `proposals_sent/proposals_followed_up`. Auto insights include "✓ N demo completed this week" / "⚠️ N proposal sent — schedule follow-ups".
+
+## Iteration 2 (Feb 2026) — Manager Control Dashboard + Reports- Replaced TM-style dashboard view for managers with **Manager Control Dashboard**
 - Added **TM Performance Table** with: visits vs target (cadence-derived), avg visits/day, overdue count, promise completion rate (30d), high-priority doctors not visited (priority ≥ 55), sentiment trend per TM (recent vs prior 30d)
 - Auto **performance flags**: Low visit activity / Rising or High overdue tasks / Poor follow-up discipline / Avoidance of high-priority doctors — color-coded chips
 - **Behavioral insights** per TM: Over-visiting low-value doctors, Under-visiting high-opportunity doctors, Strong/Weak follow-up habits, Sentiment trending up/down

@@ -44,7 +44,7 @@ export default function MarketIntelligence() {
         </h1>
       </div>
 
-      <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
+      <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="market-pulse-card">
         <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Market pulse</div>
         <p className="text-sm mt-1 leading-relaxed" data-testid="market-pulse" style={{ color: "var(--text-primary)" }}>{mgr.market_pulse}</p>
       </div>

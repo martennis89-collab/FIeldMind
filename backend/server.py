@@ -587,6 +587,7 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
         "opportunity_state": body.opportunity_state,
         "next_step": body.next_step,
         "ai_extraction": body.ai_extraction.model_dump() if body.ai_extraction else None,
+        "commercial_actions": body.commercial_actions.model_dump() if body.commercial_actions else CommercialActions().model_dump(),
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
