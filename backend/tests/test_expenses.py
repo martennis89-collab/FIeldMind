@@ -42,21 +42,30 @@ class TestExpensesEndToEnd:
     def test_create_expense_no_receipt(self):
         r = requests.post(f"{API}/expenses",
                           headers=H(self.tm),
-                          data={"expense_date": "2026-04-10", "category": "Food", "amount": "12.5", "currency": "USD", "vendor": "Cafe"},
+                          data={"expense_date": "2026-04-10", "category": "Food", "amount": "12.5", "vendor": "Cafe"},
                           timeout=15)
         assert r.status_code == 200, r.text
         exp = r.json()["expense"]
         assert exp["category"] == "Food"
         assert exp["amount"] == 12.5
         assert exp["status"] == "Draft"
-        assert exp["tm_user_id"]
+        assert exp["currency"] == "EUR"
         assert exp.get("receipt_image_id") is None
+
+    def test_currency_is_forced_to_eur(self):
+        # client tries to send a different currency — server forces EUR
+        r = requests.post(f"{API}/expenses",
+                          headers=H(self.tm),
+                          data={"expense_date": "2026-04-10", "category": "Food", "amount": "5", "currency": "USD"},
+                          timeout=10)
+        assert r.status_code == 200
+        assert r.json()["expense"]["currency"] == "EUR"
 
     def test_create_with_receipt_and_dedupe(self):
         img = _make_jpeg("Petrol")
         r1 = requests.post(f"{API}/expenses",
                            headers=H(self.tm),
-                           data={"expense_date": "2026-04-11", "category": "Petrol", "amount": "30", "currency": "USD"},
+                           data={"expense_date": "2026-04-11", "category": "Petrol", "amount": "30"},
                            files={"receipt": ("r.jpg", img, "image/jpeg")},
                            timeout=30)
         assert r1.status_code == 200, r1.text
@@ -64,7 +73,7 @@ class TestExpensesEndToEnd:
         # duplicate (same image bytes) → stored but flagged with a non-null duplicate_of
         r2 = requests.post(f"{API}/expenses",
                            headers=H(self.tm),
-                           data={"expense_date": "2026-04-11", "category": "Petrol", "amount": "30", "currency": "USD"},
+                           data={"expense_date": "2026-04-11", "category": "Petrol", "amount": "30"},
                            files={"receipt": ("r.jpg", img, "image/jpeg")},
                            timeout=30)
         assert r2.status_code == 200
@@ -156,30 +165,59 @@ class TestExpensesEndToEnd:
         u = requests.put(f"{API}/expenses/{any_submitted['id']}", headers=H(self.tm), json={"amount": 99}, timeout=10)
         assert u.status_code == 409
 
-    def test_approve_then_reject_with_comment(self):
-        # create + submit
+    def test_approve_endpoint_removed(self):
+        # The approve/reject endpoints are gone in this version
         cr = requests.post(f"{API}/expenses", headers=H(self.tm),
                            data={"expense_date": "2026-08-02", "category": "Petrol", "amount": "55"}, timeout=10).json()
         eid = cr["expense"]["id"]
-        requests.post(f"{API}/expenses/submit-month", headers=H(self.tm), json={"month": "2026-08"}, timeout=10)
-        # Approve (manager)
         a = requests.post(f"{API}/expenses/{eid}/approve", headers=H(self.manager), timeout=10)
-        assert a.status_code == 200, a.text
-        assert a.json()["status"] == "Approved"
-        # Reject (with comment)
-        rj = requests.post(f"{API}/expenses/{eid}/reject", headers=H(self.manager),
-                           json={"comment": "Out-of-policy vendor"}, timeout=10)
-        assert rj.status_code == 200
-        assert rj.json()["status"] == "Rejected"
-        assert rj.json()["manager_comment"] == "Out-of-policy vendor"
+        assert a.status_code in (404, 405)
+        rj = requests.post(f"{API}/expenses/{eid}/reject", headers=H(self.manager), timeout=10)
+        assert rj.status_code in (404, 405)
 
-    def test_tm_cannot_approve(self):
-        cr = requests.post(f"{API}/expenses", headers=H(self.tm),
-                           data={"expense_date": "2026-09-02", "category": "Food", "amount": "11"}, timeout=10).json()
-        eid = cr["expense"]["id"]
-        requests.post(f"{API}/expenses/submit-month", headers=H(self.tm), json={"month": "2026-09"}, timeout=10)
-        r = requests.post(f"{API}/expenses/{eid}/approve", headers=H(self.tm), timeout=10)
-        assert r.status_code == 403
+    def test_team_summary(self):
+        # Seed a couple of expenses across two TMs in the same month
+        for amt in (12, 18):
+            requests.post(f"{API}/expenses", headers=H(self.tm),
+                          data={"expense_date": "2026-10-04", "category": "Food", "amount": str(amt)}, timeout=10)
+        requests.post(f"{API}/expenses", headers=H(self.tm),
+                      data={"expense_date": "2026-10-08", "category": "Petrol", "amount": "40"}, timeout=10)
+        requests.post(f"{API}/expenses", headers=H(self.tm2),
+                      data={"expense_date": "2026-10-08", "category": "Food", "amount": "9"}, timeout=10)
+
+        r = requests.get(f"{API}/expenses/team-summary?month=2026-10", headers=H(self.manager), timeout=10)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["month"] == "2026-10"
+        assert d["currency"] == "EUR"
+        assert d["count"] >= 4
+        assert d["grand_total"] >= 79.0
+        names = [t["tm_name"] for t in d["by_tm"]]
+        assert any(n for n in names)
+        # TMs cannot read team summary
+        rt = requests.get(f"{API}/expenses/team-summary?month=2026-10", headers=H(self.tm), timeout=10)
+        assert rt.status_code == 403
+
+    def test_receipts_zip_download(self):
+        # Two expenses with receipts in 2026-11 by tm1
+        for i, vendor in enumerate(["Shell", "Cafe"]):
+            img = _make_jpeg(f"Receipt {i}-{vendor}")
+            requests.post(f"{API}/expenses", headers=H(self.tm),
+                          data={"expense_date": "2026-11-05", "category": "Petrol" if i == 0 else "Food", "amount": str(20 + i), "vendor": vendor},
+                          files={"receipt": (f"r{i}.jpg", img, "image/jpeg")},
+                          timeout=30)
+        r = requests.get(f"{API}/expenses/receipts.zip?month=2026-11", headers=H(self.manager), timeout=20)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"] == "application/zip"
+        assert r.content[:2] == b"PK"   # ZIP magic bytes
+        assert "attachment" in r.headers.get("content-disposition", "")
+        assert len(r.content) > 500
+        # 404 when no receipts
+        r2 = requests.get(f"{API}/expenses/receipts.zip?month=1999-01", headers=H(self.manager), timeout=10)
+        assert r2.status_code == 404
+        # TM forbidden
+        r3 = requests.get(f"{API}/expenses/receipts.zip?month=2026-11", headers=H(self.tm), timeout=10)
+        assert r3.status_code == 403
 
     def test_submit_month_validation(self):
         r = requests.post(f"{API}/expenses/submit-month", headers=H(self.tm),

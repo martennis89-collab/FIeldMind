@@ -6,9 +6,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { toast } from "sonner";
-import { Camera, Sparkles, Check, ChevronLeft, AlertTriangle, Loader2, Save } from "lucide-react";
-
-const CURRENCIES = ["USD", "EUR", "GBP", "INR", "AED", "SAR", "PLN", "BGN"];
+import { Camera, Sparkles, ChevronLeft, AlertTriangle, Loader2, Save } from "lucide-react";
 
 function todayISO() {
   const d = new Date();
@@ -27,7 +25,6 @@ export default function LogExpense() {
   const [category, setCategory] = useState("Petrol");
   const [date, setDate] = useState(todayISO());
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
   const [vendor, setVendor] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -57,9 +54,8 @@ export default function LogExpense() {
       const ex = data.extracted || {};
       setExtracted(ex);
       if (data.duplicate_of) setDuplicateOf(data.duplicate_of);
-      // Pre-fill form with whatever AI returned
+      // Pre-fill form with whatever AI returned (currency forced to EUR — ignored)
       if (ex.amount != null) setAmount(String(ex.amount));
-      if (ex.currency) setCurrency(ex.currency);
       if (ex.expense_date) setDate(ex.expense_date);
       if (ex.vendor) setVendor(ex.vendor);
       if (ex.category_hint) setCategory(ex.category_hint);
@@ -87,7 +83,6 @@ export default function LogExpense() {
       fd.append("expense_date", date);
       fd.append("category", category);
       fd.append("amount", String(amount));
-      fd.append("currency", currency || "USD");
       if (vendor.trim()) fd.append("vendor", vendor.trim());
       if (notes.trim()) fd.append("notes", notes.trim());
       if (file) fd.append("receipt", file);
@@ -188,12 +183,10 @@ export default function LogExpense() {
       {/* Amount & date */}
       <div className="rounded-md border p-5 mt-4 grid grid-cols-2 gap-3" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
         <div className="col-span-2">
-          <Label className="mb-1 block">Amount</Label>
-          <div className="flex gap-2">
-            <Input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" min="0" placeholder="0.00" className="bg-white text-lg flex-1" data-testid="amount-input" />
-            <select value={currency} onChange={(e) => setCurrency(e.target.value)} data-testid="currency-select" className="rounded-md border px-2 bg-white text-sm" style={{ borderColor: "var(--border-default)" }}>
-              {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+          <Label className="mb-1 block">Amount (EUR)</Label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg font-medium" style={{ color: "var(--text-muted)" }}>€</span>
+            <Input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" min="0" placeholder="0.00" className="bg-white text-lg pl-8" data-testid="amount-input" />
           </div>
           {amount === "" && extracted?.amount == null && (
             <div className="text-xs mt-1 flex items-center gap-1" style={{ color: "var(--status-warning)" }} data-testid="missing-amount-warning">

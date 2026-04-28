@@ -2420,7 +2420,6 @@ async def create_expense(
     expense_date: str = Form(...),
     category: str = Form(...),
     amount: float = Form(...),
-    currency: str = Form("USD"),
     vendor: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
     receipt: Optional[UploadFile] = File(None),
@@ -2476,7 +2475,7 @@ async def create_expense(
         "submission_month": None,
         "category": category,
         "amount": float(amount),
-        "currency": currency or "USD",
+        "currency": "EUR",
         "vendor": (vendor or "").strip() or None,
         "notes": (notes or "").strip() or None,
         "receipt_image_id": image_id,
@@ -2485,8 +2484,6 @@ async def create_expense(
         "ocr": None,
         "status": "Draft",
         "submitted_at": None,
-        "reviewed_at": None,
-        "manager_comment": None,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
@@ -2572,7 +2569,7 @@ async def expense_summary(
 
     rows = await db.expenses.find(q, {"_id": 0}).to_list(2000)
     by_cat: dict = {"Petrol": 0.0, "Food": 0.0}
-    by_status: dict = {"Draft": 0, "Submitted": 0, "Approved": 0, "Rejected": 0}
+    by_status: dict = {"Draft": 0, "Submitted": 0}
     total = 0.0
     for r in rows:
         amt = float(r.get("amount") or 0)
@@ -2583,7 +2580,7 @@ async def expense_summary(
         st = r.get("status")
         if st in by_status:
             by_status[st] += 1
-    currency = rows[0]["currency"] if rows else "USD"
+    currency = "EUR"
     submittable = sum(1 for r in rows if r.get("status") == "Draft")
     return {
         "month": month,
@@ -2608,7 +2605,7 @@ async def update_expense(exp_id: str, body: ExpenseUpdate, user=Depends(get_curr
     if exp.get("status") != "Draft":
         raise HTTPException(status_code=409, detail="Only Draft expenses can be edited")
     update: dict = {}
-    for field in ("expense_date", "category", "amount", "currency", "vendor", "notes"):
+    for field in ("expense_date", "category", "amount", "vendor", "notes"):
         v = getattr(body, field, None)
         if v is None:
             continue
@@ -2708,41 +2705,139 @@ async def submit_month(body: dict, user=Depends(get_current_user)):
     return {"ok": True, "submitted": res.modified_count, "month": month}
 
 
-@api.post("/expenses/{exp_id}/approve")
-async def approve_expense(exp_id: str, user=Depends(require_roles("Manager", "Admin"))):
-    exp = await db.expenses.find_one({"id": exp_id}, {"_id": 0})
-    if not exp:
-        raise HTTPException(status_code=404, detail="Expense not found")
-    if user["role"] == "Manager" and exp.get("team_id") != user.get("team_id"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    if exp.get("status") not in ("Submitted", "Rejected"):
-        raise HTTPException(status_code=409, detail="Only Submitted/Rejected expenses can be approved")
-    now = _now_iso()
-    await db.expenses.update_one({"id": exp_id}, {"$set": {
-        "status": "Approved", "reviewed_at": now, "updated_at": now,
-    }})
-    await _audit(user, "approve", "expense", exp_id)
-    fresh = await db.expenses.find_one({"id": exp_id}, {"_id": 0})
-    return fresh
+@api.get("/expenses/team-summary")
+async def expense_team_summary(
+    month: Optional[str] = None,
+    user=Depends(require_roles("Manager", "Admin")),
+):
+    """Manager/Admin view: per-TM totals + grand total for a given month.
+
+    Manager is scoped to their team; Admin sees everything.
+    """
+    if not month:
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+    q: dict = {"expense_date": {"$gte": f"{month}-01", "$lte": f"{month}-31"}}
+    if user["role"] == "Manager":
+        q["team_id"] = user.get("team_id")
+    rows = await db.expenses.find(q, {"_id": 0}).to_list(5000)
+
+    by_tm: dict = {}
+    grand_total = 0.0
+    submitted_count = 0
+    for r in rows:
+        amt = float(r.get("amount") or 0)
+        grand_total += amt
+        if r.get("status") == "Submitted":
+            submitted_count += 1
+        tm_id = r.get("tm_user_id")
+        if not tm_id:
+            continue
+        bucket = by_tm.setdefault(tm_id, {
+            "tm_user_id": tm_id,
+            "tm_name": r.get("tm_name") or "",
+            "total": 0.0,
+            "petrol": 0.0,
+            "food": 0.0,
+            "count": 0,
+            "submitted_count": 0,
+            "draft_count": 0,
+        })
+        bucket["total"] += amt
+        bucket["count"] += 1
+        if r.get("category") == "Petrol":
+            bucket["petrol"] += amt
+        elif r.get("category") == "Food":
+            bucket["food"] += amt
+        if r.get("status") == "Submitted":
+            bucket["submitted_count"] += 1
+        elif r.get("status") == "Draft":
+            bucket["draft_count"] += 1
+
+    # round + sort by total desc
+    tm_rows = []
+    for v in by_tm.values():
+        for k in ("total", "petrol", "food"):
+            v[k] = round(v[k], 2)
+        tm_rows.append(v)
+    tm_rows.sort(key=lambda x: x["total"], reverse=True)
+
+    return {
+        "month": month,
+        "currency": "EUR",
+        "grand_total": round(grand_total, 2),
+        "count": len(rows),
+        "submitted_count": submitted_count,
+        "by_tm": tm_rows,
+    }
 
 
-@api.post("/expenses/{exp_id}/reject")
-async def reject_expense(exp_id: str, body: dict = None, user=Depends(require_roles("Manager", "Admin"))):
-    exp = await db.expenses.find_one({"id": exp_id}, {"_id": 0})
-    if not exp:
-        raise HTTPException(status_code=404, detail="Expense not found")
-    if user["role"] == "Manager" and exp.get("team_id") != user.get("team_id"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    if exp.get("status") not in ("Submitted", "Approved"):
-        raise HTTPException(status_code=409, detail="Only Submitted/Approved expenses can be rejected")
-    comment = (body or {}).get("comment") or None
-    now = _now_iso()
-    await db.expenses.update_one({"id": exp_id}, {"$set": {
-        "status": "Rejected", "manager_comment": comment, "reviewed_at": now, "updated_at": now,
-    }})
-    await _audit(user, "reject", "expense", exp_id, new={"comment": comment})
-    fresh = await db.expenses.find_one({"id": exp_id}, {"_id": 0})
-    return fresh
+@api.get("/expenses/receipts.zip")
+async def download_receipts_zip(
+    month: Optional[str] = None,
+    tm_user_id: Optional[str] = None,
+    status: Optional[str] = None,
+    user=Depends(require_roles("Manager", "Admin")),
+):
+    """Manager/Admin: bundle all receipt images for a filtered set into a ZIP."""
+    import io as _io
+    import zipfile
+    from bson import ObjectId
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    from fastapi.responses import Response
+
+    q: dict = {}
+    if user["role"] == "Manager":
+        q["team_id"] = user.get("team_id")
+    if month:
+        q["expense_date"] = {"$gte": f"{month}-01", "$lte": f"{month}-31"}
+    if tm_user_id:
+        q["tm_user_id"] = tm_user_id
+    if status:
+        q["status"] = status
+    # only entries with a receipt
+    q["receipt_image_id"] = {"$ne": None}
+
+    rows = await db.expenses.find(q, {"_id": 0}).sort([("tm_name", 1), ("expense_date", -1)]).to_list(5000)
+    if not rows:
+        raise HTTPException(status_code=404, detail="No receipts to download")
+
+    buf = _io.BytesIO()
+    bucket = AsyncIOMotorGridFSBucket(db, bucket_name="receipts")
+    used = set()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for r in rows:
+            try:
+                stream = await bucket.open_download_stream(ObjectId(r["receipt_image_id"]))
+                data = await stream.read()
+            except Exception:
+                continue
+            mime = (r.get("receipt_mime") or "image/jpeg").lower()
+            ext = "jpg"
+            if "png" in mime:
+                ext = "png"
+            elif "webp" in mime:
+                ext = "webp"
+            tm = (r.get("tm_name") or "tm").replace(" ", "_").replace("/", "_")
+            base = f"{tm}/{r.get('expense_date','')}_{(r.get('vendor') or r.get('category') or 'receipt').replace(' ', '_').replace('/', '_')}_{r['id'][:8]}.{ext}"
+            name = base
+            i = 2
+            while name in used:
+                name = base.rsplit(".", 1)[0] + f"-{i}." + ext
+                i += 1
+            used.add(name)
+            zf.writestr(name, data)
+
+    payload = buf.getvalue()
+    label = month or "all"
+    if tm_user_id:
+        label += f"_{tm_user_id[:8]}"
+    fname = f"receipts_{label}.zip"
+    await _audit(user, "export", "expense_receipts", label, new={"count": len(rows), "month": month})
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ====================================================
@@ -2792,6 +2887,19 @@ async def on_startup():
     await db.reports.create_index("id", unique=True)
     await db.reports.create_index([("tm_user_id", 1), ("week_start", -1)])
     await db.reports.create_index([("team_id", 1), ("status", 1)])
+    await db.expenses.create_index("id", unique=True)
+    await db.expenses.create_index([("tm_user_id", 1), ("expense_date", -1)])
+    await db.expenses.create_index([("team_id", 1), ("expense_date", -1)])
+    await db.expenses.create_index([("receipt_hash", 1), ("tm_user_id", 1)])
+    # Migration: normalise legacy approval statuses (no-op on fresh DBs)
+    await db.expenses.update_many(
+        {"status": {"$in": ["Approved", "Rejected"]}},
+        {"$set": {"status": "Submitted"}, "$unset": {"manager_comment": "", "reviewed_at": ""}},
+    )
+    await db.expenses.update_many(
+        {"currency": {"$ne": "EUR"}},
+        {"$set": {"currency": "EUR"}},
+    )
     logger.info("Field Intelligence Platform started.")
 
 

@@ -1,15 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import api from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
-import { Textarea } from "../components/ui/textarea";
 import { toast } from "sonner";
-import { Receipt, Plus, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Clock, FileText, Trash2, Send } from "lucide-react";
+import { Receipt, Plus, ChevronLeft, ChevronRight, FileText, Trash2, Send, Download } from "lucide-react";
 
-const STATUS_KIND = { Draft: "muted", Submitted: "info", Approved: "success", Rejected: "danger" };
+const STATUS_KIND = { Draft: "muted", Submitted: "info" };
 
 function fmtMonth(m) {
   try {
@@ -22,8 +20,8 @@ function fmtDate(s) {
   if (!s) return "—";
   try { return new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); } catch { return s; }
 }
-function fmtAmount(n, ccy = "USD") {
-  try { return new Intl.NumberFormat(undefined, { style: "currency", currency: ccy || "USD" }).format(n || 0); } catch { return `${n} ${ccy}`; }
+function fmtAmount(n) {
+  try { return new Intl.NumberFormat(undefined, { style: "currency", currency: "EUR" }).format(n || 0); } catch { return `€${(n || 0).toFixed(2)}`; }
 }
 
 function StatusPill({ status }) {
@@ -129,10 +127,10 @@ function TMExpenses() {
         </div>
         {summary && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
-            <Stat label="Total" value={fmtAmount(summary.total, summary.currency)} testId="stat-total" />
+            <Stat label="Total" value={fmtAmount(summary.total)} testId="stat-total" />
             <Stat label="Receipts" value={summary.count} testId="stat-count" />
-            <Stat label="Petrol" value={fmtAmount(summary.by_category?.Petrol || 0, summary.currency)} testId="stat-petrol" />
-            <Stat label="Food" value={fmtAmount(summary.by_category?.Food || 0, summary.currency)} testId="stat-food" />
+            <Stat label="Petrol" value={fmtAmount(summary.by_category?.Petrol || 0)} testId="stat-petrol" />
+            <Stat label="Food" value={fmtAmount(summary.by_category?.Food || 0)} testId="stat-food" />
           </div>
         )}
       </div>
@@ -197,7 +195,7 @@ function ReceiptBlobImg({ expenseId, size, onError }) {
   return <img src={src} alt="receipt" data-testid={`receipt-thumb-${expenseId}`} className="rounded object-cover flex-shrink-0" style={{ width: size, height: size }} />;
 }
 
-function ExpenseRow({ expense, onDelete, onApprove, onReject, isManager }) {
+function ExpenseRow({ expense, onDelete, isManager }) {
   return (
     <div className="px-4 py-3 flex items-center gap-3 border-b last:border-b-0" style={{ borderColor: "var(--border-default)" }} data-testid={`expense-row-${expense.id}`}>
       <ReceiptThumb expense={expense} />
@@ -210,26 +208,17 @@ function ExpenseRow({ expense, onDelete, onApprove, onReject, isManager }) {
         </div>
         <div className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
           {fmtDate(expense.expense_date)}{expense.notes ? ` · ${expense.notes}` : ""}
-          {expense.manager_comment ? ` · Manager: ${expense.manager_comment}` : ""}
         </div>
       </div>
       <div className="text-right flex-shrink-0">
         <div className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>
-          {fmtAmount(expense.amount, expense.currency)}
+          {fmtAmount(expense.amount)}
         </div>
-        <div className="flex gap-1 justify-end mt-1">
-          {!isManager && expense.status === "Draft" && (
-            <button onClick={onDelete} data-testid={`expense-delete-${expense.id}`} title="Delete draft" className="p-1 rounded hover:bg-[var(--bg-paper)]">
-              <Trash2 className="w-3.5 h-3.5" style={{ color: "var(--status-danger)" }} />
-            </button>
-          )}
-          {isManager && (expense.status === "Submitted" || expense.status === "Rejected") && (
-            <button onClick={onApprove} data-testid={`approve-expense-${expense.id}`} className="text-xs px-2 py-0.5 rounded" style={{ background: "var(--status-success)", color: "white" }}>Approve</button>
-          )}
-          {isManager && (expense.status === "Submitted" || expense.status === "Approved") && (
-            <button onClick={onReject} data-testid={`reject-expense-${expense.id}`} className="text-xs px-2 py-0.5 rounded" style={{ background: "var(--status-danger)", color: "white" }}>Reject</button>
-          )}
-        </div>
+        {!isManager && expense.status === "Draft" && (
+          <button onClick={onDelete} data-testid={`expense-delete-${expense.id}`} title="Delete draft" className="p-1 rounded hover:bg-[var(--bg-paper)] mt-1">
+            <Trash2 className="w-3.5 h-3.5" style={{ color: "var(--status-danger)" }} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -238,123 +227,175 @@ function ExpenseRow({ expense, onDelete, onApprove, onReject, isManager }) {
 // ===================== MANAGER VIEW =====================
 function ManagerExpenses() {
   const [month, setMonth] = useState(monthKey());
-  const [tms, setTms] = useState([]);
-  const [tmId, setTmId] = useState("");
+  const [team, setTeam] = useState(null);
+  const [tmId, setTmId] = useState("");      // selected TM (for drill-down)
   const [statusFilter, setStatusFilter] = useState("");
   const [list, setList] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [rejectFor, setRejectFor] = useState(null);
-  const [comment, setComment] = useState("");
+  const [loadingTeam, setLoadingTeam] = useState(true);
+  const [loadingList, setLoadingList] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
+  // team summary
   useEffect(() => {
-    api.get("/users").then((r) => {
-      setTms((r.data || []).filter((u) => u.role === "TM"));
-    });
-  }, []);
+    setLoadingTeam(true);
+    api.get(`/expenses/team-summary?month=${month}`)
+      .then((r) => setTeam(r.data))
+      .finally(() => setLoadingTeam(false));
+  }, [month]);
 
-  const load = async () => {
-    setLoading(true);
+  // per-TM drill-down
+  useEffect(() => {
+    if (!tmId) { setList([]); return; }
+    setLoadingList(true);
+    const params = new URLSearchParams({ month });
+    params.set("tm_user_id", tmId);
+    if (statusFilter) params.set("status", statusFilter);
+    api.get(`/expenses?${params.toString()}`)
+      .then((r) => setList(r.data.expenses || []))
+      .finally(() => setLoadingList(false));
+  }, [month, tmId, statusFilter]);
+
+  const downloadAll = async (tmFilter = null) => {
+    setDownloading(true);
     try {
-      const params = new URLSearchParams();
-      if (month) params.set("month", month);
-      if (tmId) params.set("tm_user_id", tmId);
-      if (statusFilter) params.set("status", statusFilter);
-      const { data } = await api.get(`/expenses?${params.toString()}`);
-      setList(data.expenses || []);
+      const params = new URLSearchParams({ month });
+      if (tmFilter) params.set("tm_user_id", tmFilter);
+      const res = await api.get(`/expenses/receipts.zip?${params.toString()}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      const cd = res.headers?.["content-disposition"] || "";
+      const match = /filename="?([^"]+)"?/i.exec(cd);
+      a.download = match ? match[1] : `receipts_${month}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      toast.success("Receipts downloaded");
+    } catch (e) {
+      toast.error(e?.response?.status === 404 ? "No receipts to download" : "Could not download");
     } finally {
-      setLoading(false);
+      setDownloading(false);
     }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [month, tmId, statusFilter]);
 
-  const totals = useMemo(() => {
-    const t = list.reduce((s, e) => s + (e.amount || 0), 0);
-    return { total: t, count: list.length, currency: list[0]?.currency || "USD" };
-  }, [list]);
-
-  const approve = async (id) => {
-    try { await api.post(`/expenses/${id}/approve`); toast.success("Approved"); load(); }
-    catch { toast.error("Could not approve"); }
-  };
-  const reject = async () => {
-    if (!rejectFor) return;
-    try {
-      await api.post(`/expenses/${rejectFor.id}/reject`, { comment: comment.trim() || null });
-      toast.success("Rejected");
-      setRejectFor(null); setComment("");
-      load();
-    } catch {
-      toast.error("Could not reject");
-    }
-  };
+  const selectedTm = team?.by_tm?.find((t) => t.tm_user_id === tmId);
 
   return (
     <>
-      <div className="rounded-md border p-5 mb-5 grid sm:grid-cols-4 gap-3 items-end" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="manager-expenses-filters">
-        <div>
-          <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Month</div>
-          <div className="flex items-center gap-1">
+      {/* Month navigator + grand total */}
+      <div className="rounded-md border p-5 mb-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="manager-month-card">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
             <button onClick={() => setMonth(shiftMonth(month, -1))} data-testid="manager-month-prev" className="p-1.5 rounded hover:bg-[var(--bg-paper)]"><ChevronLeft className="w-4 h-4" /></button>
-            <div className="flex-1 text-center font-medium" style={{ color: "var(--brand-primary)" }} data-testid="manager-current-month">{fmtMonth(month)}</div>
+            <div className="font-display text-xl font-medium min-w-[180px] text-center" style={{ color: "var(--brand-primary)" }} data-testid="manager-current-month">{fmtMonth(month)}</div>
             <button onClick={() => setMonth(shiftMonth(month, 1))} data-testid="manager-month-next" className="p-1.5 rounded hover:bg-[var(--bg-paper)]"><ChevronRight className="w-4 h-4" /></button>
           </div>
+          <Button variant="outline" onClick={() => downloadAll()} disabled={downloading || !team?.count} data-testid="download-all-receipts-btn">
+            <Download className="w-4 h-4 mr-1" /> Download all receipts (ZIP)
+          </Button>
         </div>
-        <div>
-          <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>TM</div>
-          <Select value={tmId || "all"} onValueChange={(v) => setTmId(v === "all" ? "" : v)}>
-            <SelectTrigger className="bg-white" data-testid="manager-tm-select"><SelectValue placeholder="All TMs" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All TMs</SelectItem>
-              {tms.map((t) => <SelectItem key={t.id} value={t.id}>{t.full_name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <div className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Status</div>
-          <Select value={statusFilter || "all"} onValueChange={(v) => setStatusFilter(v === "all" ? "" : v)}>
-            <SelectTrigger className="bg-white" data-testid="manager-status-select"><SelectValue placeholder="All statuses" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              {["Draft", "Submitted", "Approved", "Rejected"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="rounded p-3" style={{ background: "var(--bg-paper)" }} data-testid="manager-totals">
-          <div className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Total · {totals.count} receipt{totals.count !== 1 ? "s" : ""}</div>
-          <div className="font-display text-xl font-medium" style={{ color: "var(--brand-primary)" }}>{fmtAmount(totals.total, totals.currency)}</div>
-        </div>
+        {team && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+            <Stat label="Team total" value={fmtAmount(team.grand_total)} testId="manager-stat-total" />
+            <Stat label="Receipts" value={team.count} testId="manager-stat-count" />
+            <Stat label="Submitted" value={team.submitted_count} testId="manager-stat-submitted" />
+            <Stat label="TMs reporting" value={team.by_tm?.length || 0} testId="manager-stat-tms" />
+          </div>
+        )}
       </div>
 
-      {loading ? (
-        <div className="text-sm py-12 text-center" style={{ color: "var(--text-muted)" }}>Loading…</div>
-      ) : list.length === 0 ? (
-        <div className="rounded-md border p-10 text-center" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}>
-          <FileText className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
-          <div className="text-sm" style={{ color: "var(--text-secondary)" }}>No expenses match the current filters.</div>
+      {/* Per-TM table */}
+      <div className="rounded-md border mb-5 overflow-hidden" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="manager-by-tm-table">
+        <div className="px-4 py-2 border-b text-xs uppercase tracking-widest font-medium" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+          By Territory Manager · {fmtMonth(month)}
         </div>
-      ) : (
-        <div className="rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }} data-testid="manager-expenses-list">
-          {list.map((e) => (
-            <ExpenseRow key={e.id} expense={e} isManager onApprove={() => approve(e.id)} onReject={() => { setRejectFor(e); setComment(""); }} />
-          ))}
+        {loadingTeam ? (
+          <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>Loading…</div>
+        ) : !team?.by_tm?.length ? (
+          <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>No expenses recorded for this month yet.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ background: "var(--bg-paper)", color: "var(--text-muted)" }}>
+                <th className="px-4 py-2 text-left text-[11px] uppercase tracking-widest">Territory Manager</th>
+                <th className="px-4 py-2 text-right text-[11px] uppercase tracking-widest">Petrol</th>
+                <th className="px-4 py-2 text-right text-[11px] uppercase tracking-widest">Food</th>
+                <th className="px-4 py-2 text-right text-[11px] uppercase tracking-widest">Total</th>
+                <th className="px-4 py-2 text-center text-[11px] uppercase tracking-widest">Receipts</th>
+                <th className="px-4 py-2 text-center text-[11px] uppercase tracking-widest">Submitted</th>
+                <th className="px-4 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {team.by_tm.map((row) => (
+                <tr key={row.tm_user_id}
+                    onClick={() => setTmId(tmId === row.tm_user_id ? "" : row.tm_user_id)}
+                    data-testid={`tm-row-${row.tm_user_id}`}
+                    className="cursor-pointer"
+                    style={{ background: tmId === row.tm_user_id ? "var(--status-info-bg)" : "transparent", borderTop: "1px solid var(--border-default)" }}>
+                  <td className="px-4 py-2 font-medium" style={{ color: "var(--brand-primary)" }}>{row.tm_name}</td>
+                  <td className="px-4 py-2 text-right">{fmtAmount(row.petrol)}</td>
+                  <td className="px-4 py-2 text-right">{fmtAmount(row.food)}</td>
+                  <td className="px-4 py-2 text-right font-medium" style={{ color: "var(--brand-primary)" }}>{fmtAmount(row.total)}</td>
+                  <td className="px-4 py-2 text-center">{row.count}</td>
+                  <td className="px-4 py-2 text-center">
+                    {row.submitted_count > 0 ? (
+                      <span className="pill pill-info">{row.submitted_count}</span>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                    )}
+                    {row.draft_count > 0 && <span className="ml-1 text-[11px]" style={{ color: "var(--text-muted)" }}>+ {row.draft_count} draft</span>}
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); downloadAll(row.tm_user_id); }}
+                      disabled={downloading || row.count === 0}
+                      data-testid={`download-tm-receipts-${row.tm_user_id}`}
+                      className="text-xs px-2 py-1 rounded hover:bg-[var(--bg-paper)]"
+                      style={{ color: "var(--brand-primary)" }}
+                      title="Download this TM's receipts">
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Drill-down list */}
+      {tmId && (
+        <div className="rounded-md border" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="manager-drilldown">
+          <div className="px-4 py-2 border-b flex items-center justify-between gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+            <div className="text-xs uppercase tracking-widest font-medium" style={{ color: "var(--text-muted)" }}>
+              {selectedTm?.tm_name || "Receipts"} · {selectedTm?.count || 0} receipt{(selectedTm?.count || 0) !== 1 ? "s" : ""}
+            </div>
+            <div className="flex items-center gap-2">
+              <Select value={statusFilter || "all"} onValueChange={(v) => setStatusFilter(v === "all" ? "" : v)}>
+                <SelectTrigger className="bg-white h-8 text-xs w-[140px]" data-testid="manager-status-select"><SelectValue placeholder="All statuses" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  {["Draft", "Submitted"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <button onClick={() => setTmId("")} className="text-xs px-2 py-1 rounded hover:bg-[var(--bg-paper)]" data-testid="close-drilldown" style={{ color: "var(--text-muted)" }}>
+                Close
+              </button>
+            </div>
+          </div>
+          {loadingList ? (
+            <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>Loading…</div>
+          ) : list.length === 0 ? (
+            <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>No receipts match the filter.</div>
+          ) : (
+            <div data-testid="manager-expenses-list">
+              {list.map((e) => <ExpenseRow key={e.id} expense={e} isManager />)}
+            </div>
+          )}
         </div>
       )}
-
-      <Dialog open={!!rejectFor} onOpenChange={(v) => { if (!v) { setRejectFor(null); setComment(""); } }}>
-        <DialogContent data-testid="reject-dialog">
-          <DialogHeader>
-            <DialogTitle>Reject expense</DialogTitle>
-          </DialogHeader>
-          <div className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>
-            {rejectFor && <>Rejecting <strong>{rejectFor.vendor || rejectFor.category}</strong> ({fmtAmount(rejectFor.amount, rejectFor.currency)}) from {rejectFor.tm_name}.</>}
-          </div>
-          <Textarea rows={3} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Optional reason for the TM…" className="bg-white" data-testid="reject-comment" />
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => { setRejectFor(null); setComment(""); }}>Cancel</Button>
-            <Button onClick={reject} data-testid="confirm-reject" style={{ background: "var(--status-danger)", color: "white" }}><XCircle className="w-4 h-4 mr-1" /> Reject</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

@@ -87,12 +87,12 @@ Positioning: "Salesforce records that an activity happened. FieldMind remembers 
 - Test coverage: 6/6 new tests in `tests/test_taxonomy_editable.py` (RBAC, CRUD lifecycle, duplicate detection, validation, public endpoint reflects DB). Total backend now 76/76 green.
 
 ## Iteration 8 (Feb 2026) — Expense Tracking module (Phase 3)
-Mobile-first, food/petrol-only, image-driven expense capture with monthly submission and manager approval.
+Mobile-first, food/petrol-only, image-driven expense capture with monthly submission to manager. **EUR-only, no per-receipt approval workflow** — manager simply views totals and downloads receipts.
 
-- **Data model**: `expenses` collection — `{id, tm_user_id, tm_name, team_id, expense_date, submission_month, category (Petrol|Food), amount, currency, vendor?, notes?, receipt_image_id, receipt_mime, receipt_hash, ocr, status (Draft|Submitted|Approved|Rejected), submitted_at, reviewed_at, manager_comment, created_at, updated_at}`. Receipt images stored in **GridFS** (`receipts` bucket).
-- **AI receipt OCR** — new module `expenses_ai.py` using Claude Sonnet 4.5 vision via Emergent LLM Key (`emergentintegrations.llm.chat` + `ImageContent.image_base64`) extracts `{amount, currency, expense_date, vendor, category_hint, confidence, notes}`.
+- **Data model**: `expenses` collection — `{id, tm_user_id, tm_name, team_id, expense_date, submission_month, category (Petrol|Food), amount, currency=EUR, vendor?, notes?, receipt_image_id, receipt_mime, receipt_hash, ocr, status (Draft|Submitted), submitted_at, created_at, updated_at}`. Receipt images stored in **GridFS** (`receipts` bucket).
+- **AI receipt OCR** — module `expenses_ai.py` using Claude Sonnet 4.5 vision via Emergent LLM Key (`emergentintegrations.llm.chat` + `ImageContent.image_base64`) extracts `{amount, currency, expense_date, vendor, category_hint, confidence, notes}`.
 - **Endpoints**:
-  - `POST /api/expenses` (multipart, TM only) — create draft, optional receipt upload, returns `{expense, duplicate_of}` (SHA-1 hash dedupe).
+  - `POST /api/expenses` (multipart, TM only) — create draft, optional receipt upload, returns `{expense, duplicate_of}` (SHA-1 hash dedupe). **Currency is server-forced to EUR.**
   - `POST /api/expenses/extract` (multipart, TM only) — OCR-only, no DB write; pre-fill the form.
   - `GET /api/expenses` — TM scope (own), Manager (team), Admin (all); filters `month`, `status`, `tm_user_id`.
   - `GET /api/expenses/summary` — month totals, by-category, by-status, submittable_drafts count.
@@ -100,13 +100,15 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - `DELETE /api/expenses/{id}` — only when Draft; deletes GridFS attachment too.
   - `GET /api/expenses/{id}/receipt` — streams the receipt image (RBAC enforced).
   - `POST /api/expenses/submit-month` `{month: "YYYY-MM"}` — locks all of caller's drafts that month → Submitted.
-  - `POST /api/expenses/{id}/approve` and `/reject` (Manager/Admin only; team-scoped for Manager).
+  - `GET /api/expenses/team-summary?month=YYYY-MM` (Manager/Admin) — per-TM rollup with petrol/food split, total, count, submitted/draft counts, and team grand_total.
+  - `GET /api/expenses/receipts.zip?month=YYYY-MM&tm_user_id=…` (Manager/Admin) — bundles every receipt image (filtered) into a ZIP archive named `<TM>/<date>_<vendor>_<id>.jpg`.
 - **Frontend**:
-  - **TM `/expenses`**: month navigator, 4 stat cards (Total / Receipts / Petrol / Food), Add-expense + Submit-month buttons, list with receipt thumbnails (lazy-loaded as blobs) + status pills + delete-draft action.
-  - **TM `/expenses/log`**: photo capture (file input with `capture="environment"` for direct camera on mobile) → "Reading receipt with AI…" → form pre-filled with extracted fields + confidence banner + duplicate-receipt warning. Petrol/Food pill selector, amount with currency dropdown, date, optional vendor + notes. Save draft.
-  - **Manager `/expenses`**: month navigator, TM filter, status filter, totals card, full list with thumbnails + Approve/Reject buttons. Reject dialog supports an optional comment that's surfaced back to the TM in their list.
-- All state changes audited (`create/update/delete/submit/approve/reject`, entity=`expense`).
-- Test coverage: 12/12 new tests in `tests/test_expenses.py` (CRUD, RBAC, receipt upload + dedupe, GridFS streaming, monthly submission lock, approve/reject lifecycle, OCR endpoint smoke, manager-cannot-create, validation). **Total backend 88/88 green.**
+  - **TM `/expenses`**: month navigator, 4 stat cards (Total / Receipts / Petrol / Food), Add-expense + Submit-month buttons, list with receipt thumbnails (lazy-loaded as blobs) + status pills (Draft/Submitted) + delete-draft action.
+  - **TM `/expenses/log`**: photo capture (file input with `capture="environment"` for direct camera on mobile) → "Reading receipt with AI…" → form pre-filled with extracted fields + confidence banner + duplicate-receipt warning. Petrol/Food pill selector, EUR-only amount with leading € symbol, date, optional vendor + notes. Save draft.
+  - **Manager `/expenses`**: month navigator, "Download all receipts (ZIP)" button, **Team Total / Receipts / Submitted / TMs reporting** stat cards. **By-Territory-Manager table** (Petrol € / Food € / Total € / receipts / submitted+draft counts / per-TM ZIP icon). Row-click drills into that TM's receipts list with status filter and lazy-loaded thumbnails.
+- All state changes audited (`create/update/delete/submit/export`, entity=`expense`/`expense_receipts`).
+- **Migration**: on startup, any legacy `Approved`/`Rejected` rows are normalised to `Submitted` and any non-EUR currencies are rewritten to `EUR` (idempotent, no-op on fresh DBs). New indexes on `expenses.id`, `(tm_user_id, expense_date)`, `(team_id, expense_date)`, `(receipt_hash, tm_user_id)`.
+- Test coverage: 14/14 tests in `tests/test_expenses.py` (CRUD, RBAC, EUR enforcement, receipt upload + dedupe, GridFS streaming, monthly submission lock, **team-summary**, **receipts ZIP** with magic-byte assertion, OCR endpoint smoke, manager-cannot-create, validation, approve-endpoint-removed assertion). **Total backend 90/90 green.**
 
 ## Iteration 2 (Feb 2026) — Manager Control Dashboard + Reports- Replaced TM-style dashboard view for managers with **Manager Control Dashboard**
 - Added **TM Performance Table** with: visits vs target (cadence-derived), avg visits/day, overdue count, promise completion rate (30d), high-priority doctors not visited (priority ≥ 55), sentiment trend per TM (recent vs prior 30d)
