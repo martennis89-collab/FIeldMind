@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../lib/api";
 import { Button } from "../components/ui/button";
@@ -10,7 +10,7 @@ import { Command, CommandInput, CommandList, CommandItem, CommandEmpty } from ".
 import { Popover, PopoverTrigger, PopoverContent } from "../components/ui/popover";
 import { StatusPill, sentimentKind, SegmentBadge } from "../components/StatusPill";
 import { toast } from "sonner";
-import { Brain, ChevronRight, ChevronLeft, Sparkles, Check, AlertTriangle, X, Clock, Plus } from "lucide-react";
+import { Brain, ChevronRight, ChevronLeft, Sparkles, Check, AlertTriangle, X, Clock, Plus, Mic, Square, Loader2 } from "lucide-react";
 
 const VISIT_TYPES = ["In-person visit", "Phone call", "Online meeting", "Event conversation", "Training/session", "Other"];
 const SENTIMENTS = ["Very Negative", "Negative", "Neutral", "Positive", "Very Positive"];
@@ -38,6 +38,12 @@ export default function LogVisit() {
   const [promises, setPromises] = useState([]);
   const [saving, setSaving] = useState(false);
   const [skipAi, setSkipAi] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [recElapsed, setRecElapsed] = useState(0);
+  const recorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const recTimerRef = useRef(null);
   const [trackType, setTrackType] = useState("BOTH");
   const [iteroActions, setIteroActions] = useState({
     demo_discussed: false,
@@ -131,6 +137,61 @@ export default function LogVisit() {
   const addPromise = () => {
     const today = new Date(); today.setDate(today.getDate() + 3);
     setPromises((arr) => [...arr, { task_title: "", task_description: "", suggested_due_date: today.toISOString().slice(0, 10), priority: "Medium", _accepted: true }]);
+  };
+
+  const startRec = async () => {
+    if (recording || transcribing) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      toast.error("Voice capture not supported on this device");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null; }
+        setRecording(false);
+        setRecElapsed(0);
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+        if (blob.size === 0) { toast.error("No audio captured"); return; }
+        setTranscribing(true);
+        try {
+          const fd = new FormData();
+          const ext = (rec.mimeType || "").includes("webm") ? "webm" : "wav";
+          fd.append("audio", blob, `voice.${ext}`);
+          const { data } = await api.post("/visits/transcribe", fd);
+          const text = (data?.text || "").trim();
+          if (!text) { toast.error("Couldn't pick up any speech — try again"); return; }
+          setNote((prev) => (prev ? `${prev.trim()} ${text}` : text));
+          toast.success(`Transcribed · ${text.length} chars`);
+        } catch (err) {
+          toast.error("Transcription failed — please type or try again");
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setRecording(true);
+      setRecElapsed(0);
+      recTimerRef.current = setInterval(() => {
+        setRecElapsed((s) => {
+          if (s + 1 >= 110) { try { rec.stop(); } catch {} } // auto-stop near 2 min cap
+          return s + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      toast.error("Microphone permission denied");
+    }
+  };
+
+  const stopRec = () => {
+    if (!recording) return;
+    try { recorderRef.current?.stop(); } catch {}
   };
 
   const save = async () => {
@@ -261,11 +322,33 @@ export default function LogVisit() {
             <span>Do not include patient names, patient medical details, confidential pricing, or pipeline values.</span>
           </div>
           <div>
-            <Label className="mb-2 block">What did you discuss?</Label>
+            <div className="flex items-center justify-between mb-2">
+              <Label className="block">What did you discuss?</Label>
+              <button
+                type="button"
+                onClick={recording ? stopRec : startRec}
+                disabled={transcribing}
+                data-testid={recording ? "voice-stop-btn" : "voice-record-btn"}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all"
+                style={{
+                  background: recording ? "var(--status-danger)" : transcribing ? "var(--bg-muted)" : "var(--brand-primary)",
+                  color: "white",
+                  opacity: transcribing ? 0.7 : 1,
+                }}
+              >
+                {transcribing ? (
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Transcribing…</>
+                ) : recording ? (
+                  <><Square className="w-3 h-3" fill="white" /> Stop · {String(Math.floor(recElapsed / 60)).padStart(1, "0")}:{String(recElapsed % 60).padStart(2, "0")}</>
+                ) : (
+                  <><Mic className="w-3.5 h-3.5" /> Voice note</>
+                )}
+              </button>
+            </div>
             <Textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Free text — write naturally. AI will extract topics, barriers, sentiment, and promises in the next step."
+              placeholder="Free text — write naturally, or tap Voice note to dictate. AI will extract topics, barriers, sentiment, and promises in the next step."
               rows={9}
               className="bg-white"
               data-testid="visit-note-textarea"

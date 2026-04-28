@@ -2,7 +2,7 @@
 
 All routes are prefixed with /api.
 """
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, UploadFile, File
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -657,6 +657,43 @@ def _suggested_reason(enriched, overdue):
 async def analyze_visit_note(body: AnalyzeNoteRequest, user=Depends(get_current_user)):
     result = await ai_analyze_note(body.note, session_id=f"analyze-{user['id']}")
     return result
+
+
+@api.post("/visits/transcribe")
+async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get_current_user)):
+    """Transcribe an uploaded audio clip (TM voice memo) into text using OpenAI Whisper.
+
+    Accepts a multipart upload with field name 'audio'. Supported formats: webm, mp3, m4a, wav, mp4, mpga, mpeg.
+    Max 25 MB (Whisper limit). Returns {text: str}.
+    """
+    import io
+    from emergentintegrations.llm.openai import OpenAISpeechToText
+
+    if not os.environ.get("EMERGENT_LLM_KEY"):
+        raise HTTPException(status_code=503, detail="Transcription service not configured")
+
+    # Read into memory and validate size
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio file exceeds 25 MB limit")
+
+    filename = audio.filename or "voice.webm"
+    # Wrap bytes so the SDK can read it as a file-like with a .name attribute
+    buf = io.BytesIO(raw)
+    buf.name = filename
+
+    try:
+        stt = OpenAISpeechToText(api_key=os.environ["EMERGENT_LLM_KEY"])
+        response = await stt.transcribe(file=buf, model="whisper-1", response_format="json")
+        text = getattr(response, "text", "") or ""
+    except Exception as e:
+        logging.exception("Whisper transcription failed")
+        raise HTTPException(status_code=502, detail=f"Transcription failed: {e}")
+
+    await _audit(user, "transcribe", "visit", "audio", new={"chars": len(text)})
+    return {"text": text.strip()}
 
 
 @api.post("/visits")
