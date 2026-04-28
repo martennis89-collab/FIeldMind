@@ -10,11 +10,12 @@ import { toast } from "sonner";
 import { ChevronLeft, Save, Loader2, UserPlus } from "lucide-react";
 
 const DOCTOR_TYPES = ["GP", "Ortho", "Other"];
-const SEGMENTS = ["Occasional", "Active", "Engaged", "Expert"];
+const SEGMENTS = ["New", "Occasional", "Active", "Engaged", "Expert"];
 
 export default function AddDoctor() {
   const navigate = useNavigate();
-  const [doctorName, setDoctorName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [clinicName, setClinicName] = useState("");
   const [city, setCity] = useState("");
   const [region, setRegion] = useState("");
@@ -24,7 +25,9 @@ export default function AddDoctor() {
   const [saving, setSaving] = useState(false);
 
   const save = async (andLogVisit = false) => {
-    const name = doctorName.trim();
+    const fn = firstName.trim();
+    const ln = lastName.trim();
+    const name = `${fn} ${ln}`.trim();
     if (!name) { toast.error("Doctor name is required"); return; }
     setSaving(true);
     try {
@@ -63,9 +66,15 @@ export default function AddDoctor() {
       </div>
 
       <div className="rounded-md border p-5 space-y-3" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
-        <div>
-          <Label className="mb-1 block">Doctor name <span style={{ color: "var(--status-danger)" }}>*</span></Label>
-          <Input value={doctorName} onChange={(e) => setDoctorName(e.target.value)} placeholder="e.g. Dr. Petrova" className="bg-white" data-testid="doctor-name-input" autoFocus />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label className="mb-1 block">First name <span style={{ color: "var(--status-danger)" }}>*</span></Label>
+            <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Ivan" className="bg-white" data-testid="doctor-first-name-input" autoFocus />
+          </div>
+          <div>
+            <Label className="mb-1 block">Last name</Label>
+            <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Petrova" className="bg-white" data-testid="doctor-last-name-input" />
+          </div>
         </div>
         <div>
           <Label className="mb-1 block">Clinic / practice</Label>
@@ -117,10 +126,10 @@ export default function AddDoctor() {
       <div className="flex flex-wrap justify-between gap-2 mt-5">
         <Button variant="ghost" onClick={() => navigate(-1)} data-testid="add-doctor-cancel">Cancel</Button>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => save(true)} disabled={saving || !doctorName.trim()} data-testid="add-doctor-save-and-log">
+          <Button variant="outline" onClick={() => save(true)} disabled={saving || !(firstName.trim() || lastName.trim())} data-testid="add-doctor-save-and-log">
             <UserPlus className="w-4 h-4 mr-1" /> Save &amp; log a visit
           </Button>
-          <Button onClick={() => save(false)} disabled={saving || !doctorName.trim()} data-testid="add-doctor-save-btn" style={{ background: "var(--brand-secondary)", color: "white" }}>
+          <Button onClick={() => save(false)} disabled={saving || !(firstName.trim() || lastName.trim())} data-testid="add-doctor-save-btn" style={{ background: "var(--brand-secondary)", color: "white" }}>
             {saving ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Saving…</> : <><Save className="w-4 h-4 mr-1" /> Save doctor</>}
           </Button>
         </div>

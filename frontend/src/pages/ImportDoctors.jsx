@@ -13,12 +13,14 @@ import {
 } from "lucide-react";
 
 const TARGET_FIELDS = [
-  { key: "doctor_name", label: "Doctor name", required: true },
+  { key: "first_name", label: "First name", help: "Combined with last name → full name" },
+  { key: "last_name", label: "Last name", help: "Combined with first name → full name" },
+  { key: "doctor_name", label: "Doctor name (full)", help: "Use this OR first + last name" },
   { key: "clinic_name", label: "Clinic name" },
   { key: "city", label: "City" },
   { key: "region", label: "Region" },
   { key: "doctor_type", label: "Doctor type", help: "GP / Ortho / Other" },
-  { key: "segment", label: "Segment", help: "Occasional / Active / Engaged / Expert" },
+  { key: "segment", label: "Segment", help: "New / Occasional / Active / Engaged / Expert" },
   { key: "general_notes", label: "General notes" },
 ];
 
@@ -91,11 +93,15 @@ export default function ImportDoctors() {
     let invalid = 0;
     const errors = [];
     rows.forEach((row, idx) => {
-      const name = mapping.doctor_name ? (row[mapping.doctor_name] || "").trim() : "";
+      const fullRaw = mapping.doctor_name ? (row[mapping.doctor_name] || "").trim() : "";
+      const first = mapping.first_name ? (row[mapping.first_name] || "").trim() : "";
+      const last = mapping.last_name ? (row[mapping.last_name] || "").trim() : "";
+      const composed = `${first} ${last}`.trim();
+      const name = fullRaw || composed;
       const segRaw = mapping.segment ? (row[mapping.segment] || "").trim() : "";
-      const segOk = !segRaw || ["Occasional", "Active", "Engaged", "Expert"].includes(segRaw.charAt(0).toUpperCase() + segRaw.slice(1).toLowerCase());
+      const segOk = !segRaw || ["New", "Occasional", "Active", "Engaged", "Expert"].includes(segRaw.charAt(0).toUpperCase() + segRaw.slice(1).toLowerCase());
       const rowErrors = [];
-      if (!name) rowErrors.push("doctor_name missing");
+      if (!name) rowErrors.push("doctor_name (or first+last) missing");
       if (!segOk) rowErrors.push("segment invalid");
       if (rowErrors.length === 0) valid++;
       else { invalid++; if (errors.length < 10) errors.push({ idx, errors: rowErrors }); }
@@ -110,7 +116,10 @@ export default function ImportDoctors() {
     const seenA = new Set(), seenB = new Set();
     let dupCount = 0;
     rows.forEach((row) => {
-      const name = (mapping.doctor_name ? row[mapping.doctor_name] : "")?.toLowerCase().trim();
+      const fullRaw = mapping.doctor_name ? (row[mapping.doctor_name] || "").toLowerCase().trim() : "";
+      const first = mapping.first_name ? (row[mapping.first_name] || "").toLowerCase().trim() : "";
+      const last = mapping.last_name ? (row[mapping.last_name] || "").toLowerCase().trim() : "";
+      const name = fullRaw || `${first} ${last}`.trim();
       const clinic = (mapping.clinic_name ? row[mapping.clinic_name] : "")?.toLowerCase().trim();
       const city = (mapping.city ? row[mapping.city] : "")?.toLowerCase().trim();
       const k1 = name && city ? `${name}|${city}` : null;

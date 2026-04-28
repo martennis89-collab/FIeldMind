@@ -486,6 +486,24 @@ async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Guardrails: protect the last active Admin from deactivation / role change / self-lockout.
+    will_deactivate = body.active_status is False and existing.get("active_status", True) is True
+    will_demote = body.role is not None and body.role != "Admin" and existing.get("role") == "Admin"
+    if existing.get("role") == "Admin" and (will_deactivate or will_demote):
+        active_admin_count = await db.users.count_documents({"role": "Admin", "active_status": True})
+        if active_admin_count <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot deactivate or demote the last active Admin. Promote another user to Admin first.",
+            )
+    if user["id"] == user_id and (will_deactivate or will_demote):
+        # An Admin cannot lock themselves out of their own account.
+        raise HTTPException(
+            status_code=409,
+            detail="You can't deactivate or change the role of your own account. Ask another Admin.",
+        )
+
     update = {k: v for k, v in body.model_dump(exclude_none=True).items() if k != "password"}
     if body.email:
         update["email"] = body.email.lower()
@@ -622,8 +640,8 @@ async def preview_doctor_import(file: UploadFile = File(...), user=Depends(requi
     rows = parsed["rows"]
     if not headers or not rows:
         raise HTTPException(status_code=400, detail="No data rows detected")
-    if len(rows) > 2000:
-        raise HTTPException(status_code=413, detail="Too many rows (max 2000) — split your file")
+    if len(rows) > 5000:
+        raise HTTPException(status_code=413, detail="Too many rows (max 5000) — split your file")
     suggested = auto_map_headers(headers)
     return {
         "filename": file.filename,
@@ -672,8 +690,8 @@ async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "
 
     if not isinstance(rows, list) or not rows:
         raise HTTPException(status_code=400, detail="No rows provided")
-    if len(rows) > 2000:
-        raise HTTPException(status_code=413, detail="Too many rows (max 2000)")
+    if len(rows) > 5000:
+        raise HTTPException(status_code=413, detail="Too many rows (max 5000)")
 
     validated = validate_and_project(rows, mapping)
 

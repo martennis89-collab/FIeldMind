@@ -4,14 +4,16 @@ import io
 import re
 from typing import Optional
 
-ALLOWED_SEGMENTS = {"Occasional", "Active", "Engaged", "Expert"}
+ALLOWED_SEGMENTS = {"New", "Occasional", "Active", "Engaged", "Expert"}
 ALLOWED_DOCTOR_TYPES = {"GP", "Ortho", "Other"}
-TARGET_FIELDS = ["doctor_name", "clinic_name", "city", "region", "doctor_type", "segment", "general_notes"]
-REQUIRED_FIELDS = ["doctor_name"]
+TARGET_FIELDS = ["first_name", "last_name", "doctor_name", "clinic_name", "city", "region", "doctor_type", "segment", "general_notes"]
+REQUIRED_FIELDS = ["doctor_name"]   # but first+last together also satisfy this
 
 # Default header → field aliases (case-insensitive, accent-insensitive after lowercasing)
 DEFAULT_ALIASES = {
-    "doctor_name": ["doctor_name", "doctor name", "doctor", "name", "physician", "dentist", "dr"],
+    "first_name": ["first_name", "first name", "firstname", "given name", "given", "fn", "name", "first"],
+    "last_name": ["last_name", "last name", "lastname", "surname", "family name", "ln", "last"],
+    "doctor_name": ["doctor_name", "doctor name", "doctor", "full name", "fullname", "physician", "dentist", "dr", "name"],
     "clinic_name": ["clinic_name", "clinic name", "clinic", "practice", "office", "facility"],
     "city": ["city", "town"],
     "region": ["region", "state", "province", "area", "country"],
@@ -95,6 +97,9 @@ def parse_upload(filename: str, blob: bytes) -> dict:
 def validate_and_project(rows: list, mapping: dict) -> list:
     """Apply mapping to each row → project into target fields + collect per-row errors.
 
+    If first_name and/or last_name are mapped, they are concatenated into doctor_name
+    (preserving any explicitly mapped doctor_name when present and non-empty).
+
     Returns list of {row_index, raw, projected, errors[]}.
     """
     out = []
@@ -105,11 +110,18 @@ def validate_and_project(rows: list, mapping: dict) -> list:
                 continue
             v = (raw.get(src) or "").strip() if isinstance(raw, dict) else ""
             projected[field] = v or None
+
+        # Compose doctor_name from first/last when applicable
+        first = (projected.get("first_name") or "").strip()
+        last = (projected.get("last_name") or "").strip()
+        existing_full = (projected.get("doctor_name") or "").strip()
+        if not existing_full and (first or last):
+            projected["doctor_name"] = f"{first} {last}".strip()
+
         errors = []
         if not projected.get("doctor_name"):
-            errors.append("doctor_name is required")
+            errors.append("doctor_name is required (or first_name + last_name)")
         if projected.get("doctor_type"):
-            # Soft-fix common variants
             t = projected["doctor_type"].strip().capitalize()
             if t.lower() in ("ortho", "orthodontist", "orthodontics"):
                 t = "Ortho"
@@ -135,8 +147,8 @@ def validate_and_project(rows: list, mapping: dict) -> list:
 
 def template_rows() -> list:
     return [
-        TARGET_FIELDS,
-        ["Dr Ivanov", "Smile Clinic", "Sofia", "Sofia", "Ortho", "Active",
+        ["first_name", "last_name", "clinic_name", "city", "region", "doctor_type", "segment", "general_notes"],
+        ["Ivan", "Ivanov", "Smile Clinic", "Sofia", "Sofia", "Ortho", "Active",
          "Interested in Invisalign but low clinical confidence"],
     ]
 
@@ -160,8 +172,8 @@ def build_template_xlsx() -> bytes:
     # Bold header
     for cell in ws[1]:
         cell.font = cell.font.copy(bold=True)
-    # Reasonable widths
-    widths = {"A": 28, "B": 24, "C": 16, "D": 16, "E": 14, "F": 14, "G": 50}
+    # Reasonable widths (8 columns now)
+    widths = {"A": 14, "B": 16, "C": 24, "D": 16, "E": 16, "F": 14, "G": 14, "H": 50}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
     buf = io.BytesIO()

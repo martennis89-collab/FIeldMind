@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import api from "../lib/api";
 import { Link } from "react-router-dom";
+import { useAuth } from "../lib/auth";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -40,6 +41,7 @@ export default function Admin() {
 }
 
 function Users() {
+  const { user: me } = useAuth();
   const [users, setUsers] = useState([]);
   const [teams, setTeams] = useState([]);
   const [open, setOpen] = useState(false);
@@ -62,10 +64,26 @@ function Users() {
     }
   };
 
+  // Count active admins (excluding the user being toggled) so we can preempt the server check.
+  const activeAdminCount = users.filter((u) => u.role === "Admin" && u.active_status).length;
+
   const toggleActive = async (u) => {
-    await api.put(`/users/${u.id}`, { active_status: !u.active_status });
-    toast.success(`User ${u.active_status ? "deactivated" : "activated"}`);
-    load();
+    if (me?.id === u.id) {
+      toast.error("You can't deactivate your own account.");
+      return;
+    }
+    if (u.role === "Admin" && u.active_status && activeAdminCount <= 1) {
+      toast.error("Can't deactivate the last active Admin. Promote another user first.");
+      return;
+    }
+    if (!window.confirm(`${u.active_status ? "Deactivate" : "Activate"} ${u.full_name}?\n${u.active_status ? "They won't be able to log in until reactivated." : ""}`)) return;
+    try {
+      await api.put(`/users/${u.id}`, { active_status: !u.active_status });
+      toast.success(`${u.full_name} ${u.active_status ? "deactivated" : "reactivated"}`);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
   };
 
   return (
@@ -112,15 +130,28 @@ function Users() {
           <tbody>
             {users.map((u) => {
               const team = teams.find((t) => t.id === u.team_id);
+              const isSelf = me?.id === u.id;
+              const isLastActiveAdmin = u.role === "Admin" && u.active_status && activeAdminCount <= 1;
+              const protectedLock = isSelf || isLastActiveAdmin;
               return (
                 <tr key={u.id} className="border-t" style={{ borderColor: "var(--border-default)" }} data-testid={`user-row-${u.id}`}>
-                  <td className="px-4 py-2 font-medium">{u.full_name}</td>
+                  <td className="px-4 py-2 font-medium">
+                    {u.full_name}
+                    {isSelf && <span className="ml-2 text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>you</span>}
+                  </td>
                   <td className="px-4 py-2">{u.email}</td>
                   <td className="px-4 py-2"><span className="pill pill-info">{u.role}</span></td>
                   <td className="px-4 py-2">{team?.team_name || "—"}</td>
                   <td className="px-4 py-2">{u.active_status ? <span className="pill pill-success">Active</span> : <span className="pill pill-danger">Disabled</span>}</td>
                   <td className="px-4 py-2 text-right">
-                    <Button size="sm" variant="outline" onClick={() => toggleActive(u)} data-testid={`toggle-user-${u.id}`}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => toggleActive(u)}
+                      disabled={u.active_status && protectedLock}
+                      title={isSelf ? "You can't deactivate your own account" : isLastActiveAdmin ? "Last active Admin — promote another user first" : ""}
+                      data-testid={`toggle-user-${u.id}`}
+                    >
                       {u.active_status ? "Deactivate" : "Activate"}
                     </Button>
                   </td>
