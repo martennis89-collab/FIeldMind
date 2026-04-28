@@ -328,6 +328,7 @@ class ReportContent(BaseModel):
     sentiment_summary: dict = {}
     key_insights: List[str] = []
     doctors_needing_attention: List[dict] = []
+    doctor_breakdown: List[dict] = []  # per-doctor visit summary for the week
     notes_from_tm: str = ""
     demos_discussed: int = 0
     demos_booked: int = 0

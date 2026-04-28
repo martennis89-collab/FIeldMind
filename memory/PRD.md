@@ -196,6 +196,15 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 14 (Feb 2026) — Per-doctor breakdown in reports + TM mobile "More" sheet
+- **TM mobile bottom-nav reshuffle**: replaced the 5th slot (was iTero) with a "**More**" sheet (slide-up panel). The sheet contains: iTero, Invisalign, Reports, Expenses. TM nav becomes: Home · Doctors · ＋ Add · Tasks · More.
+- **Per-doctor breakdown in reports** (`ReportContent.doctor_breakdown`): one row per doctor visited that week, with `visits_count`, `last_visit_date`, accumulated `topics`, `barriers`, latest `sentiment`, list of `promises` opened, and a 220-char excerpt of the latest free-text note. Sorted by visits-desc / last-visit-desc.
+- **`_build_report_draft`** populates the breakdown automatically; existing reports without it just render an empty section.
+- **Reports UI** (TM editor + Manager review drawer) gets a new "Per-doctor breakdown" section — collapsible card per doctor with topic/barrier pills, promise list, sentiment chip, and italicised note excerpt.
+- **CSV export**: new "Per-doctor visit breakdown" section with columns `Doctor / Clinic / City / Segment / Visits / Last visit / Sentiment / Topics / Barriers / Promises / Latest note`.
+- **PDF export**: new "Per-doctor breakdown" page block, one stacked summary per doctor (header + meta line + topics + barriers + promises + italicised note).
+- Test coverage: 3 new tests in `tests/test_report_doctor_breakdown.py` (`test_generate_includes_doctor_breakdown`, `test_csv_export_contains_per_doctor_section`, `test_pdf_export_still_returns_pdf`). All 9 report-export tests green.
+
 ## Iteration 13 (Feb 2026) — Owner role + full admin user CRUD
 - **New role: `Owner`** (`Literal["TM", "Manager", "Admin", "Owner"]`). `auth.require_roles` auto-grants Owner the same access as Admin (no per-route refactor needed).
 - **Auto-seeded Owner**: every backend startup runs `seed.seed_owner()` (idempotent) — creates Martin Petrov (`martennis89@gmail.com` / `1234.`) if missing. Survives all wipes/redeploys.

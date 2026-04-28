@@ -343,6 +343,56 @@ function ReportEditor({ open, onClose, draft, setDraft, readonly, saving, onSave
             </div>
           </section>
 
+          <section data-testid="report-doctor-breakdown-edit">
+            <Label className="text-xs uppercase tracking-widest mb-2 block" style={{ color: "var(--text-muted)" }}>
+              Per-doctor breakdown ({(c.doctor_breakdown || []).length})
+            </Label>
+            <div className="space-y-2">
+              {(c.doctor_breakdown || []).map((d) => (
+                <div key={d.doctor_id} className="rounded border p-3 text-sm" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}>
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div>
+                      <div className="font-medium" style={{ color: "var(--text-primary)" }}>{d.doctor_name}</div>
+                      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                        {[d.clinic_name, d.city, d.segment].filter(Boolean).join(" · ")}
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className="pill pill-info">{d.visits_count} visit{d.visits_count !== 1 ? "s" : ""}</span>
+                      {d.sentiment && d.sentiment !== "—" && (
+                        <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{d.sentiment}</span>
+                      )}
+                    </div>
+                  </div>
+                  {(d.topics || []).length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {d.topics.map((t) => <span key={t} className="pill pill-info">{t}</span>)}
+                    </div>
+                  )}
+                  {(d.barriers || []).length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {d.barriers.map((b) => <span key={b} className="pill pill-warning">{b}</span>)}
+                    </div>
+                  )}
+                  {(d.promises || []).length > 0 && (
+                    <div className="mt-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      <span className="font-semibold">Promises: </span>
+                      {d.promises.join("; ")}
+                    </div>
+                  )}
+                  {d.note_excerpt && (
+                    <div className="mt-1.5 text-xs italic" style={{ color: "var(--text-muted)" }}>
+                      "{d.note_excerpt}"
+                    </div>
+                  )}
+                </div>
+              ))}
+              {(c.doctor_breakdown || []).length === 0 && (
+                <div className="text-xs" style={{ color: "var(--text-muted)" }}>No visits logged this week.</div>
+              )}
+            </div>
+          </section>
+
           <section>
             <Label className="text-xs uppercase tracking-widest mb-2 block" style={{ color: "var(--text-muted)" }}>Notes for your manager</Label>
             {readonly ? (
@@ -562,6 +612,55 @@ function ReportDrawer({ reportId, onClose }) {
                     <div className="text-xs" style={{ color: "var(--text-muted)" }}>{d.segment} · {d.reason}</div>
                   </div>
                   <span className="pill pill-danger">priority {d.score}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {(c.doctor_breakdown || []).length > 0 && (
+          <section className="mt-5" data-testid="report-doctor-breakdown-readonly">
+            <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>
+              Per-doctor breakdown ({c.doctor_breakdown.length})
+            </div>
+            <div className="space-y-2">
+              {c.doctor_breakdown.map((d) => (
+                <div key={d.doctor_id} className="rounded border p-3 text-sm" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}>
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div>
+                      <div className="font-medium">{d.doctor_name}</div>
+                      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                        {[d.clinic_name, d.city, d.segment].filter(Boolean).join(" · ")}
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className="pill pill-info">{d.visits_count} visit{d.visits_count !== 1 ? "s" : ""}</span>
+                      {d.sentiment && d.sentiment !== "—" && (
+                        <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{d.sentiment}</span>
+                      )}
+                    </div>
+                  </div>
+                  {(d.topics || []).length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {d.topics.map((t) => <span key={t} className="pill pill-info">{t}</span>)}
+                    </div>
+                  )}
+                  {(d.barriers || []).length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {d.barriers.map((b) => <span key={b} className="pill pill-warning">{b}</span>)}
+                    </div>
+                  )}
+                  {(d.promises || []).length > 0 && (
+                    <div className="mt-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      <span className="font-semibold">Promises: </span>
+                      {d.promises.join("; ")}
+                    </div>
+                  )}
+                  {d.note_excerpt && (
+                    <div className="mt-1.5 text-xs italic" style={{ color: "var(--text-muted)" }}>
+                      "{d.note_excerpt}"
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

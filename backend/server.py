@@ -2365,6 +2365,63 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
     if proposals_sent and not proposals_followed:
         insights.append(f"⚠️ {proposals_sent} proposal{'s' if proposals_sent != 1 else ''} sent — schedule follow-ups.")
 
+    # Per-doctor breakdown for the week — one row per doctor visited
+    doctor_lookup = {d["id"]: d for d in (await db.doctors.find({"id": {"$in": list(doctor_ids)}}, {"_id": 0}).to_list(2000))}
+    # Tasks created this week, grouped by doctor
+    tasks_by_doctor: dict = {}
+    for tk in tasks_created:
+        tasks_by_doctor.setdefault(tk.get("doctor_id"), []).append(tk)
+    # Aggregate visits per doctor
+    visits_by_doctor: dict = {}
+    for v in visits:
+        visits_by_doctor.setdefault(v["doctor_id"], []).append(v)
+    breakdown = []
+    for did, vs in visits_by_doctor.items():
+        d = doctor_lookup.get(did) or {}
+        # Sort visits chronologically
+        vs.sort(key=lambda x: x.get("visit_date", ""))
+        last_visit = vs[-1]
+        topics_set = []
+        barriers_set = []
+        sentiments = []
+        for v in vs:
+            for t in v.get("confirmed_topics", []):
+                if t not in topics_set:
+                    topics_set.append(t)
+            for b in v.get("confirmed_barriers", []):
+                if b not in barriers_set:
+                    barriers_set.append(b)
+            s = v.get("sentiment")
+            if s:
+                sentiments.append(s)
+        # Use last sentiment as latest indicator
+        latest_sentiment = sentiments[-1] if sentiments else "—"
+        # Promises this week tied to this doctor
+        d_tasks = tasks_by_doctor.get(did, [])
+        promise_titles = [t.get("task_title") for t in d_tasks if t.get("task_title")]
+        # Pull a short note excerpt from the last visit (truncated)
+        note = (last_visit.get("free_text_note") or "").strip()
+        if len(note) > 220:
+            note = note[:217] + "…"
+        breakdown.append({
+            "doctor_id": did,
+            "doctor_name": d.get("doctor_name") or "—",
+            "clinic_name": d.get("clinic_name"),
+            "city": d.get("city"),
+            "segment": d.get("segment"),
+            "visits_count": len(vs),
+            "last_visit_date": last_visit.get("visit_date", "")[:10],
+            "topics": topics_set[:5],
+            "barriers": barriers_set[:5],
+            "sentiment": latest_sentiment,
+            "promises_count": len(promise_titles),
+            "promises": promise_titles[:5],
+            "note_excerpt": note,
+        })
+    # Sort by visit count desc, then last visit desc
+    breakdown.sort(key=lambda x: (-x["visits_count"], x["last_visit_date"]), reverse=False)
+    breakdown.sort(key=lambda x: (-x["visits_count"], x["last_visit_date"] or ""), reverse=True)
+
     content = {
         "visits_completed": len(visits),
         "doctors_visited": len(doctor_ids),
@@ -2376,6 +2433,7 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "sentiment_summary": sentiment_counts,
         "key_insights": insights,
         "doctors_needing_attention": needing,
+        "doctor_breakdown": breakdown,
         "notes_from_tm": "",
         "demos_discussed": demos_discussed,
         "demos_booked": demos_booked,
@@ -2646,6 +2704,24 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
         for d in (c.get("doctors_needing_attention", []) or []):
             w.writerow([d.get("doctor_name", ""), d.get("segment", ""), d.get("reason", ""), d.get("score", "")])
         w.writerow([])
+        # Per-doctor breakdown
+        w.writerow(["Per-doctor visit breakdown"])
+        w.writerow(["Doctor", "Clinic", "City", "Segment", "Visits", "Last visit", "Sentiment", "Topics", "Barriers", "Promises", "Latest note"])
+        for d in (c.get("doctor_breakdown", []) or []):
+            w.writerow([
+                d.get("doctor_name", ""),
+                d.get("clinic_name", "") or "",
+                d.get("city", "") or "",
+                d.get("segment", "") or "",
+                d.get("visits_count", 0),
+                d.get("last_visit_date", "") or "",
+                d.get("sentiment", "") or "",
+                "; ".join(d.get("topics", []) or []),
+                "; ".join(d.get("barriers", []) or []),
+                "; ".join(d.get("promises", []) or []),
+                d.get("note_excerpt", "") or "",
+            ])
+        w.writerow([])
         w.writerow(["TM notes", c.get("notes_from_tm", "") or r.get("notes_from_tm", "")])
         if r.get("manager_comment"):
             w.writerow(["Manager comment", r["manager_comment"]])
@@ -2759,6 +2835,37 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
             ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ]))
         flow.append(att)
+
+    # Per-doctor breakdown — what was discussed at each doctor this week
+    breakdown = c.get("doctor_breakdown") or []
+    if breakdown:
+        flow.append(Paragraph("Per-doctor breakdown", styles["H2"]))
+        for d in breakdown:
+            head_bits = [Paragraph(f"<b>{d.get('doctor_name','—')}</b>", styles["Body"])]
+            sub_bits = []
+            if d.get("clinic_name"):
+                sub_bits.append(d["clinic_name"])
+            if d.get("city"):
+                sub_bits.append(d["city"])
+            if d.get("segment"):
+                sub_bits.append(d["segment"])
+            sub_bits.append(f"{d.get('visits_count', 0)} visit{'s' if d.get('visits_count', 0) != 1 else ''}")
+            if d.get("last_visit_date"):
+                sub_bits.append(f"last {d['last_visit_date']}")
+            if d.get("sentiment") and d["sentiment"] != "—":
+                sub_bits.append(f"sentiment: {d['sentiment']}")
+            head_bits.append(Paragraph(" · ".join(sub_bits), styles["Muted"]))
+            if d.get("topics"):
+                head_bits.append(Paragraph("<b>Topics:</b> " + ", ".join(d["topics"]), styles["Body"]))
+            if d.get("barriers"):
+                head_bits.append(Paragraph("<b>Barriers:</b> " + ", ".join(d["barriers"]), styles["Body"]))
+            if d.get("promises"):
+                head_bits.append(Paragraph("<b>Promises:</b> " + "; ".join(d["promises"]), styles["Body"]))
+            if d.get("note_excerpt"):
+                head_bits.append(Paragraph(f"<i>{d['note_excerpt']}</i>", styles["Muted"]))
+            for elem in head_bits:
+                flow.append(elem)
+            flow.append(Spacer(1, 6))
 
     notes = (c.get("notes_from_tm") or r.get("notes_from_tm") or "").strip()
     if notes:

@@ -43,13 +43,20 @@ const MANAGER_TOP = [
 ];
 
 // ---------- Mobile bottom (max 5) ----------
-// TM: Home / Doctors / + / Tasks / iTero (the last slot intentionally cycles iTero – Invisalign via long-press? keep simple: iTero)
+// TM: Home / Doctors / + / Tasks / More (sheet with iTero, Invisalign, Reports, Expenses)
 const TM_BOTTOM = [
   { to: "/", label: "Home", icon: LayoutDashboard, testId: "nav-dashboard" },
   { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
   // central "+ Add" injected at this slot
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
-  { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
+  // slot 5 = "More" sheet (injected below)
+];
+
+const TM_MORE = [
+  { to: "/itero", label: "iTero", icon: ScanLine, testId: "more-itero" },
+  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "more-invisalign" },
+  { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
+  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
 ];
 
 // Manager: Dashboard / Intervention / iTero / Invisalign / More
@@ -165,8 +172,18 @@ export default function Layout({ children }) {
                 </span>
                 <span className="text-[10px] mt-1" style={{ color: "var(--brand-secondary)", fontWeight: 600 }}>Add</span>
               </button>
-              {/* slot 4, 5 */}
-              {TM_BOTTOM.slice(2, 4).map((t) => <BottomTab key={t.to} t={t} />)}
+              {/* slot 4 */}
+              {TM_BOTTOM.slice(2, 3).map((t) => <BottomTab key={t.to} t={t} />)}
+              {/* slot 5 — More sheet */}
+              <button
+                onClick={() => setMoreOpen(true)}
+                data-testid="mobile-more-btn-tm"
+                className="flex flex-col items-center justify-center gap-1 text-[10px]"
+                style={{ color: moreOpen ? "var(--brand-primary)" : "var(--text-muted)" }}
+              >
+                <MoreHorizontal className="w-5 h-5" />
+                More
+              </button>
             </div>
           </nav>
           {/* + Add bottom sheet (TM) */}
@@ -177,6 +194,15 @@ export default function Layout({ children }) {
               <SheetItem icon={Receipt} label="Add an expense" onClick={() => { setTmAddOpen(false); navigate("/expenses/log"); }} testId="add-expense" />
               <SheetItem icon={Users} label="Add a doctor" onClick={() => { setTmAddOpen(false); navigate("/doctors/add"); }} testId="add-doctor" />
               <SheetItem icon={Layers} label="Import doctors" onClick={() => { setTmAddOpen(false); navigate("/doctors/import"); }} testId="add-doctor-import" subtitle="From a spreadsheet" />
+            </BottomSheet>
+          )}
+          {/* More sheet (TM) */}
+          {moreOpen && (
+            <BottomSheet onClose={() => setMoreOpen(false)} testId="tm-more-sheet">
+              <SheetTitle>More</SheetTitle>
+              {TM_MORE.map((m) => (
+                <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
+              ))}
             </BottomSheet>
           )}
         </>
