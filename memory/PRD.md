@@ -97,6 +97,33 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
 - **Manager `/expenses`**: by-Territory-Manager rollup table (Petrol € / Food € / Total € / counts), drill-down list, "Download all receipts (ZIP)" + per-TM zip icon.
 - Idempotent startup migration normalised legacy Approved/Rejected → Submitted and any non-EUR currency → EUR.
 
+## Iteration 10 (Feb 2026) — Tasks/Promises UX + role-based mobile navigation
+
+### Tasks (Promises) UX overhaul
+- **Inline complete / edit / delete** on every row — no navigation, no full reload, no tab switch.
+  - Optimistic state updates; rollback on API error.
+  - Completed rows: green left-border accent, line-through title, "✓ Done <timestamp>" inline. Reopen via undo icon.
+  - Overdue rows: red left-border accent, alert icon.
+  - Delete = soft-delete with `window.confirm` prompt; logged in audit trail.
+- **Open / Completed pill toggle** with row counts. Default tab is **Open** (sorted: overdue first, then by due-date asc; Completed sorted by completion timestamp desc).
+- **Edit dialog** lets the TM update title, description, due_date, priority, and reassign to another doctor (server validates the user can access the new doctor).
+- **Backend changes**:
+  - `TaskUpdate` now accepts `doctor_id` (with access validation; 400 if not allowed).
+  - `PUT /tasks/{id}` clears `completed_at` when status flips back to Open/Overdue, and 410 if the task was soft-deleted.
+  - **New `DELETE /tasks/{id}`** soft-deletes via `{deleted_at, deleted_by}`. Idempotent on second call. Audit-logged.
+  - `GET /tasks` and `GET /doctors/{id}/tasks` and `/doctors/{id}/prepare` now exclude soft-deleted tasks (`$or [exists:false, null]`).
+
+### Role-based bottom navigation (mobile-first)
+- Reduced bottom nav to **5 items max** for both roles. Desktop top nav unchanged (still shows the full set).
+- **TM bottom**: Home · Doctors · **+ Add (centered FAB)** · Tasks · iTero. The + Add button opens a bottom sheet with: Log a visit, Add an expense, Add a doctor (Import from spreadsheet).
+- **Manager bottom**: Dashboard · Intervention · iTero · Invisalign · **More** (sheet → Team performance, Reports, Expenses).
+- Manager top nav reordered: Dashboard · Intervention · iTero · Invisalign · Team · Expenses · Reports (Intervention promoted next to Dashboard per UX rules).
+- Manager intentionally has no Add button or Tasks tab; TM intentionally has no Reports button on the bottom (still in top nav).
+- Bottom sheets use a slide-up animation with backdrop dismiss + close button.
+
+### Test coverage (iter-10)
+- 6 task UX tests: soft-delete excludes from list, complete sets/clears completed_at on status flip, edit (title/description/date/priority), reassign-doctor validates access, other-TM cannot delete, idempotent delete. **Total backend 106/106 green.**
+
 ## Iteration 9 (Feb 2026) — Admin user management + doctor import wizard
 
 ### Admin user management (existing endpoints regression-hardened)

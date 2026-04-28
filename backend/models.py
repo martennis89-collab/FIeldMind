@@ -273,6 +273,7 @@ class TaskUpdate(BaseModel):
     due_date: Optional[str] = None
     priority: Optional[TaskPriority] = None
     status: Optional[TaskStatus] = None
+    doctor_id: Optional[str] = None
 
 
 class Task(BaseModel):

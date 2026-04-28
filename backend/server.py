@@ -832,7 +832,10 @@ async def get_doctor_tasks(doctor_id: str, user=Depends(get_current_user)):
     doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     if not doc or not await _can_access_doctor(user, doc):
         raise HTTPException(status_code=404, detail="Doctor not found")
-    tasks = await db.tasks.find({"doctor_id": doctor_id}, {"_id": 0}).sort("due_date", 1).to_list(200)
+    tasks = await db.tasks.find({
+        "doctor_id": doctor_id,
+        "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}],
+    }, {"_id": 0}).sort("due_date", 1).to_list(200)
     return tasks
 
 
@@ -844,7 +847,8 @@ async def prepare_visit(doctor_id: str, user=Depends(get_current_user)):
     enriched = await _enrich_doctor(doc)
     visits = await db.visits.find({"doctor_id": doctor_id}, {"_id": 0}).sort("visit_date", -1).to_list(3)
     open_tasks = await db.tasks.find(
-        {"doctor_id": doctor_id, "status": {"$in": ["Open", "Overdue"]}}, {"_id": 0}
+        {"doctor_id": doctor_id, "status": {"$in": ["Open", "Overdue"]},
+         "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}, {"_id": 0}
     ).sort("due_date", 1).to_list(50)
     today = datetime.now(timezone.utc).date().isoformat()
     overdue = [t for t in open_tasks if t.get("due_date") and t["due_date"] < today]
@@ -1017,6 +1021,8 @@ async def list_tasks(
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
+    # Exclude soft-deleted tasks
+    q["$or"] = [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]
     today_d = datetime.now(timezone.utc).date()
     today = today_d.isoformat()
     if bucket == "overdue":
@@ -1075,19 +1081,53 @@ async def update_task(task_id: str, body: TaskUpdate, user=Depends(get_current_u
     t = await db.tasks.find_one({"id": task_id}, {"_id": 0})
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
+    if t.get("deleted_at"):
+        raise HTTPException(status_code=410, detail="Task has been deleted")
     # access
     if user["role"] == "TM" and t.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and t.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")
     update = body.model_dump(exclude_none=True)
+    # Validate doctor reassignment
+    if "doctor_id" in update and update["doctor_id"] != t.get("doctor_id"):
+        new_doc = await db.doctors.find_one({"id": update["doctor_id"]}, {"_id": 0})
+        if not new_doc or not await _can_access_doctor(user, new_doc):
+            raise HTTPException(status_code=400, detail="Target doctor not accessible")
     if update.get("status") == "Completed":
         update["completed_at"] = _now_iso()
+    elif update.get("status") in ("Open", "Overdue") and t.get("completed_at"):
+        update["completed_at"] = None
     update["updated_at"] = _now_iso()
     await db.tasks.update_one({"id": task_id}, {"$set": update})
     await _audit(user, "update", "task", task_id, prev=t, new=update)
     new = await db.tasks.find_one({"id": task_id}, {"_id": 0})
     return new
+
+
+@api.delete("/tasks/{task_id}")
+async def delete_task(task_id: str, user=Depends(get_current_user)):
+    """Soft-delete: marks the task with deleted_at. Audit logged.
+
+    TM may delete their own; Manager may delete within their team; Admin any.
+    """
+    t = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if t.get("deleted_at"):
+        return {"ok": True, "id": task_id, "already_deleted": True}
+    if user["role"] == "TM" and t.get("tm_user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "Manager" and t.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    now = _now_iso()
+    await db.tasks.update_one({"id": task_id}, {"$set": {
+        "deleted_at": now,
+        "deleted_by": user["id"],
+        "updated_at": now,
+    }})
+    await _audit(user, "delete", "task", task_id, prev=t)
+    return {"ok": True, "id": task_id}
 
 
 # ====================================================
