@@ -52,6 +52,7 @@ export default function Meetings() {
   const [tab, setTab] = useState("upcoming");
   const [filter, setFilter] = useState("all");
   const [eventDialog, setEventDialog] = useState(null); // null | "new" | event obj for edit
+  const [demoDoneFor, setDemoDoneFor] = useState(null); // meeting being completed
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -196,7 +197,7 @@ export default function Meetings() {
                 <div className="space-y-2">
                   {grouped[sec].map((r) =>
                     r._kind === "meeting"
-                      ? <MeetingCard key={`m-${r.id}`} m={r} onLog={() => logVisit(r)} onCancel={() => cancelMeeting(r)} />
+                      ? <MeetingCard key={`m-${r.id}`} m={r} onLog={() => logVisit(r)} onCancel={() => cancelMeeting(r)} onMarkDemoDone={() => setDemoDoneFor(r)} />
                       : <EventCard key={`e-${r.id}`} e={r} onEdit={() => setEventDialog(r)} onDone={() => markEventDone(r)} onDelete={() => deleteEvent(r)} />,
                   )}
                 </div>
@@ -212,13 +213,20 @@ export default function Meetings() {
         onClose={() => setEventDialog(null)}
         onSaved={() => { setEventDialog(null); load(); }}
       />
+
+      <DemoDoneDialog
+        meeting={demoDoneFor}
+        onClose={() => setDemoDoneFor(null)}
+        onDone={() => { setDemoDoneFor(null); load(); }}
+      />
     </div>
   );
 }
 
-function MeetingCard({ m, onLog, onCancel }) {
+function MeetingCard({ m, onLog, onCancel, onMarkDemoDone }) {
   const cancelled = m.status === "Cancelled";
   const completed = m.status === "Completed";
+  const isDemo = !!m.is_demo;
   return (
     <div
       data-testid={`meeting-card-${m.id}`}
@@ -227,14 +235,16 @@ function MeetingCard({ m, onLog, onCancel }) {
         background: "var(--bg-default)",
         borderColor: "var(--border-default)",
         borderLeftWidth: 3,
-        borderLeftColor: completed ? "var(--status-success)" : cancelled ? "var(--text-muted)" : "var(--brand-secondary)",
+        borderLeftColor: completed ? "var(--status-success)" : cancelled ? "var(--text-muted)" : isDemo ? "#A8542F" : "var(--brand-secondary)",
         opacity: cancelled ? 0.55 : 1,
       }}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--brand-secondary)" }}>Meeting</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: isDemo ? "#A8542F" : "var(--brand-secondary)" }}>
+              {isDemo ? "iTero demo" : "Meeting"}
+            </span>
             <Link to={`/doctors/${m.doctor_id}`} className="font-display text-lg font-semibold hover:underline" style={{ color: "var(--brand-primary)" }}>
               {m.doctor_name}
             </Link>
@@ -253,8 +263,16 @@ function MeetingCard({ m, onLog, onCancel }) {
           {completed && <span className="pill pill-success inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Logged</span>}
           {cancelled && <span className="pill pill-muted">Cancelled</span>}
           {!completed && !cancelled && (
-            <div className="flex gap-1">
-              <Button size="sm" onClick={onLog} data-testid={`meeting-log-${m.id}`} style={{ background: "var(--brand-primary)", color: "white" }}>
+            <div className="flex flex-wrap gap-1 justify-end">
+              {isDemo && (
+                <Button size="sm" onClick={onMarkDemoDone} data-testid={`meeting-mark-demo-done-${m.id}`}
+                  style={{ background: "#A8542F", color: "white" }}>
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Mark demo done
+                </Button>
+              )}
+              <Button size="sm" onClick={onLog} data-testid={`meeting-log-${m.id}`}
+                variant={isDemo ? "outline" : "default"}
+                style={isDemo ? {} : { background: "var(--brand-primary)", color: "white" }}>
                 <ClipboardList className="w-3.5 h-3.5 mr-1" /> Log visit
               </Button>
               <Button size="sm" variant="outline" onClick={onCancel} data-testid={`meeting-cancel-${m.id}`}>
@@ -456,6 +474,125 @@ function EventDialog({ open, existing, onClose, onSaved }) {
           <Button onClick={save} disabled={busy || !title.trim() || !startsAt || !endsAt} data-testid="event-save-btn"
             style={{ background: "var(--brand-secondary)", color: "white" }}>
             {busy ? "Saving…" : (existing ? "Save" : "Add event")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
+
+const INTEREST_LEVELS = ["None", "Low", "Medium", "High"];
+
+function DemoDoneDialog({ meeting, onClose, onDone }) {
+  const [interest, setInterest] = useState("Medium");
+  const [outcome, setOutcome] = useState("");
+  const [nextStep, setNextStep] = useState("");
+  const [nextStepDue, setNextStepDue] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (meeting) {
+      setInterest("Medium"); setOutcome(""); setNextStep("");
+      const d = new Date(); d.setDate(d.getDate() + 7);
+      const pad = (n) => String(n).padStart(2, "0");
+      setNextStepDue(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    }
+  }, [meeting]);
+
+  const submit = async () => {
+    if (!meeting) return;
+    setBusy(true);
+    try {
+      await api.post(`/meetings/${meeting.id}/complete-demo`, {
+        interest_level: interest,
+        outcome_note: outcome.trim() || null,
+        next_step: nextStep.trim() || null,
+        next_step_due: nextStep.trim() ? (nextStepDue || null) : null,
+      });
+      toast.success(`Demo completed${nextStep.trim() ? " · follow-up task created" : ""}`);
+      onDone?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to mark demo done");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={!!meeting} onOpenChange={(o) => !o && onClose?.()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Mark demo done — {meeting?.doctor_name}</DialogTitle>
+        </DialogHeader>
+        {meeting && (
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Interest level</Label>
+              <div className="grid grid-cols-4 gap-1 mt-1">
+                {INTEREST_LEVELS.map((lvl) => (
+                  <button
+                    key={lvl}
+                    onClick={() => setInterest(lvl)}
+                    data-testid={`demo-interest-${lvl}`}
+                    className="py-2 rounded-md text-sm border transition-colors"
+                    style={{
+                      background: interest === lvl ? "var(--brand-secondary)" : "transparent",
+                      color: interest === lvl ? "white" : "var(--text-secondary)",
+                      borderColor: interest === lvl ? "var(--brand-secondary)" : "var(--border-default)",
+                    }}
+                  >{lvl}</button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <Label>How did it go? (optional)</Label>
+              <Textarea
+                rows={2}
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value)}
+                placeholder="Quick note about the outcome — concerns raised, what they liked…"
+                className="bg-white"
+                data-testid="demo-outcome-input"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <Label>Next step (optional)</Label>
+                <Input
+                  value={nextStep}
+                  onChange={(e) => setNextStep(e.target.value)}
+                  placeholder="e.g. Send pricing proposal"
+                  className="bg-white"
+                  data-testid="demo-next-step-input"
+                />
+                <div className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>If filled, creates a Medium-priority task tied to this doctor.</div>
+              </div>
+              {nextStep.trim() && (
+                <div className="sm:col-span-2">
+                  <Label>Due</Label>
+                  <Input
+                    type="date"
+                    value={nextStepDue}
+                    onChange={(e) => setNextStepDue(e.target.value)}
+                    className="bg-white"
+                    data-testid="demo-next-due-input"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button
+            onClick={submit}
+            disabled={busy}
+            data-testid="demo-mark-done-submit"
+            style={{ background: "#A8542F", color: "white" }}
+          >
+            {busy ? "Saving…" : "Mark demo done"}
           </Button>
         </DialogFooter>
       </DialogContent>

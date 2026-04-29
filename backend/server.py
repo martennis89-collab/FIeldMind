@@ -11,7 +11,8 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Literal
+from pydantic import BaseModel
 
 from auth import (
     hash_password,
@@ -1560,6 +1561,101 @@ async def delete_meeting(meeting_id: str, user=Depends(get_current_user)):
     await db.meetings.delete_one({"id": meeting_id})
     await _audit(user, "delete", "meeting", meeting_id, prev=m)
     return {"ok": True, "id": meeting_id}
+
+
+class CompleteDemoBody(BaseModel):
+    interest_level: Literal["None", "Low", "Medium", "High"] = "Medium"
+    outcome_note: Optional[str] = None
+    next_step: Optional[str] = None  # if provided, creates a follow-up task
+    next_step_due: Optional[str] = None  # ISO date for the task due_date
+
+
+@api.post("/meetings/{meeting_id}/complete-demo")
+async def complete_demo_meeting(meeting_id: str, body: CompleteDemoBody, user=Depends(get_current_user)):
+    """One-tap completion for a booked iTero demo. Marks the meeting Completed,
+    creates a lightweight visit (so the doctor lands in 'Demo Completed' on Demos overview),
+    auto-advances the pipeline stage, and optionally creates a follow-up task.
+    """
+    m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if not m.get("is_demo"):
+        raise HTTPException(status_code=400, detail="Only iTero-demo meetings can be marked done this way")
+    if m["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if m.get("status") == "Completed":
+        raise HTTPException(status_code=400, detail="Demo already completed")
+
+    today_iso = _now_iso()
+    today_date = today_iso[:10]
+    note = (body.outcome_note or f"iTero demo completed. Interest: {body.interest_level}.").strip()
+
+    # Build a lightweight visit record
+    visit_id = str(uuid.uuid4())
+    visit_doc = {
+        "id": visit_id,
+        "doctor_id": m["doctor_id"],
+        "tm_user_id": user["id"],
+        "team_id": m.get("team_id"),
+        "track_type": "iTero",
+        "visit_date": today_iso,
+        "visit_type": "Demo session",
+        "free_text_note": note,
+        "ai_extracted_tags": {},
+        "confirmed_topics": [],
+        "confirmed_barriers": [],
+        "sentiment": None,
+        "itero_actions": {
+            "demo_completed": True,
+            "demo_completed_date": today_date,
+            "scanner_interest_level": body.interest_level,
+            "scanner_concerns": [],
+        },
+        "invisalign_actions": {},
+        "commercial_actions": {},
+        "meeting_id": meeting_id,
+        "created_at": today_iso,
+        "updated_at": today_iso,
+    }
+    await db.visits.insert_one(visit_doc)
+    await _audit(user, "create", "visit", visit_id, new={"doctor_id": m["doctor_id"], "from": "demo-complete"})
+
+    # Mark meeting Completed and link the visit
+    await db.meetings.update_one(
+        {"id": meeting_id},
+        {"$set": {"status": "Completed", "visit_id": visit_id, "updated_at": today_iso}},
+    )
+
+    # Auto-advance the pipeline stage forward
+    class _IA:
+        def model_dump(self): return {"demo_completed": True}
+    class _CA:
+        def model_dump(self): return {}
+    await _auto_advance_itero_stage(m["doctor_id"], _IA(), _CA(), user)
+
+    # Optional follow-up task
+    task_id = None
+    if body.next_step and body.next_step.strip():
+        task_id = str(uuid.uuid4())
+        await db.tasks.insert_one({
+            "id": task_id,
+            "doctor_id": m["doctor_id"],
+            "tm_user_id": user["id"],
+            "team_id": m.get("team_id"),
+            "task_title": body.next_step.strip(),
+            "task_description": "",
+            "due_date": body.next_step_due or None,
+            "priority": "Medium",
+            "status": "Open",
+            "promise_kind": "Follow-up",
+            "source": "demo-complete",
+            "source_visit_id": visit_id,
+            "created_at": today_iso,
+            "updated_at": today_iso,
+        })
+        await _audit(user, "create", "task", task_id, new={"task_title": body.next_step.strip(), "doctor_id": m["doctor_id"]})
+
+    return {"ok": True, "meeting_id": meeting_id, "visit_id": visit_id, "task_id": task_id}
 
 
 # ====================================================

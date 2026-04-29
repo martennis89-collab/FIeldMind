@@ -196,6 +196,17 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 22 (Feb 2026) — One-tap "Mark demo done"
+- **New endpoint** `POST /api/meetings/{id}/complete-demo` (only for `is_demo=true` meetings). Body: `{interest_level, outcome_note?, next_step?, next_step_due?}`. In one transaction it:
+  1. Inserts a lightweight visit (`visit_type=Demo session`, `track_type=iTero`, `meeting_id` linked, `itero_actions: {demo_completed: true, demo_completed_date: today, scanner_interest_level}`).
+  2. Marks the meeting `status=Completed` and stores `visit_id`.
+  3. Auto-advances the doctor's pipeline stage to **Demo Completed** (forward-only) with stage-history note.
+  4. Optionally creates a Medium-priority follow-up task tied to the doctor when `next_step` is provided.
+  5. Returns `{ok, meeting_id, visit_id, task_id}`. Re-completing returns HTTP 400.
+- **Frontend Schedule (`/meetings`)** — meeting cards with `is_demo=true` now render an iTero-orange "**Mark demo done**" primary button beside "Log visit". Header label switches to "iTero demo" with a matching left border colour for instant scanning.
+- **DemoDoneDialog**: 4-button interest-level selector (None / Low / Medium / High), optional outcome note, optional next-step input that reveals a due-date field (defaulting to today + 7 days). One submit.
+- Test coverage: 3 new tests in `tests/test_mark_demo_done.py` (advances pipeline + creates visit + appears in Completed; creates follow-up task when next_step set; non-demo meeting returns 400). 25/25 schedule+iTero tests green.
+
 ## Iteration 21 (Feb 2026) — Explicit "Book a demo" flow
 - **Problem**: booking a demo previously required logging a visit and ticking `iTero → demo_booked` — not discoverable. Users asked "how do I actually book a demo?".
 - **`Meeting.is_demo`** boolean field added (default `false`). `MeetingCreate` / `MeetingUpdate` accept it. When `is_demo=true` on create, the server auto-advances the doctor's iTero pipeline to **"Demo Booked"** (forward-only, never overwrites Lost) and writes a stage-history entry with note "Auto-advanced from booked iTero demo".
