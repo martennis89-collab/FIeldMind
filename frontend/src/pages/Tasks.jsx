@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import api from "../lib/api";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -8,7 +8,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { StatusPill, priorityKind } from "../components/StatusPill";
-import { CalendarClock, CheckCircle2, AlertTriangle, Brain, Clock, Pencil, Trash2, Undo2 } from "lucide-react";
+import { CalendarClock, CheckCircle2, AlertTriangle, Brain, Clock, Pencil, Trash2, Undo2, Plus, Search as SearchIcon } from "lucide-react";
 import { toast } from "sonner";
 
 const KINDS = [
@@ -36,6 +36,19 @@ export default function Tasks() {
   const [doctors, setDoctors] = useState({});
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [allDoctors, setAllDoctors] = useState([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setCreating(true);
+      // Strip the param so reopening tabs doesn't keep popping the dialog
+      const sp = new URLSearchParams(searchParams);
+      sp.delete("new");
+      setSearchParams(sp, { replace: true });
+    }
+    // eslint-disable-next-line
+  }, []);
 
   // OPTIMISTIC HELPERS
   const moveToCompleted = (id) => {
@@ -88,6 +101,9 @@ export default function Tasks() {
     }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    api.get("/doctors").then((r) => setAllDoctors(Array.isArray(r.data) ? r.data : (r.data.doctors || []))).catch(() => {});
+  }, []);
 
   const list = kind === "open" ? open : completed;
 
@@ -143,11 +159,20 @@ export default function Tasks() {
 
   return (
     <div data-testid="tasks-page">
-      <div className="mb-6">
-        <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Promises & follow-ups</div>
-        <h1 className="font-display text-3xl sm:text-4xl font-light tracking-tight" style={{ color: "var(--brand-primary)" }}>
-          Things you <span className="font-medium">owe.</span>
-        </h1>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Promises & follow-ups</div>
+          <h1 className="font-display text-3xl sm:text-4xl font-light tracking-tight" style={{ color: "var(--brand-primary)" }}>
+            Things you <span className="font-medium">owe.</span>
+          </h1>
+        </div>
+        <Button
+          onClick={() => setCreating(true)}
+          data-testid="new-task-btn"
+          style={{ background: "var(--brand-secondary)", color: "white" }}
+        >
+          <Plus className="w-4 h-4 mr-1" /> New task
+        </Button>
       </div>
 
       {/* Open / Completed toggle */}
@@ -209,6 +234,17 @@ export default function Tasks() {
           const patch = (arr) => arr.map((x) => (x.id === updated.id ? { ...x, ...updated } : x));
           setOpen((p) => patch(p));
           setCompleted((p) => patch(p));
+        }}
+      />
+
+      <NewTaskDialog
+        open={creating}
+        doctors={allDoctors}
+        onClose={() => setCreating(false)}
+        onCreated={(t, doctor) => {
+          // optimistic insert into open list and doctor cache
+          setOpen((prev) => [t, ...prev]);
+          if (doctor) setDoctors((m) => ({ ...m, [doctor.id]: doctor }));
         }}
       />
     </div>
@@ -378,3 +414,169 @@ function EditTaskDialog({ open, task, onClose, onSaved }) {
     </Dialog>
   );
 }
+
+
+function NewTaskDialog({ open, doctors, onClose, onCreated }) {
+  const [doctorId, setDoctorId] = useState("");
+  const [docQuery, setDocQuery] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [dueDate, setDueDate] = useState(todayISO());
+  const [priority, setPriority] = useState("Medium");
+  const [saving, setSaving] = useState(false);
+
+  // Reset form whenever dialog opens
+  useEffect(() => {
+    if (open) {
+      setDoctorId(""); setDocQuery(""); setTitle(""); setDescription("");
+      setDueDate(todayISO()); setPriority("Medium");
+    }
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!docQuery.trim()) return doctors.slice(0, 12);
+    const q = docQuery.toLowerCase().trim();
+    return doctors.filter((d) =>
+      (d.doctor_name || "").toLowerCase().includes(q) ||
+      (d.clinic_name || "").toLowerCase().includes(q) ||
+      (d.city || "").toLowerCase().includes(q),
+    ).slice(0, 20);
+  }, [doctors, docQuery]);
+
+  const selectedDoctor = doctors.find((d) => d.id === doctorId);
+
+  const save = async () => {
+    if (!doctorId) { toast.error("Pick a doctor"); return; }
+    if (!title.trim()) { toast.error("Add a task title"); return; }
+    setSaving(true);
+    try {
+      const { data } = await api.post("/tasks", {
+        doctor_id: doctorId,
+        task_title: title.trim(),
+        task_description: description.trim() || "",
+        due_date: dueDate || null,
+        priority,
+      });
+      toast.success("Task created");
+      onCreated?.(data, selectedDoctor);
+      onClose?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to create task");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose?.()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>New task</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <Label className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Doctor</Label>
+            {selectedDoctor ? (
+              <div className="rounded-md border bg-white p-3 mt-1 flex items-start justify-between gap-3" style={{ borderColor: "var(--border-default)" }}>
+                <div>
+                  <div className="font-medium" style={{ color: "var(--brand-primary)" }}>{selectedDoctor.doctor_name}</div>
+                  <div className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                    {[selectedDoctor.clinic_name, selectedDoctor.city, selectedDoctor.segment].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => { setDoctorId(""); setDocQuery(""); }} data-testid="new-task-clear-doctor">Change</Button>
+              </div>
+            ) : (
+              <>
+                <div className="relative mt-1">
+                  <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "var(--text-muted)" }} />
+                  <Input
+                    autoFocus
+                    placeholder="Search doctor by name, clinic, city…"
+                    value={docQuery}
+                    onChange={(e) => setDocQuery(e.target.value)}
+                    className="pl-9 bg-white"
+                    data-testid="new-task-doctor-search"
+                  />
+                </div>
+                <div className="mt-2 max-h-56 overflow-y-auto rounded-md border bg-white" style={{ borderColor: "var(--border-default)" }}>
+                  {filtered.length === 0 ? (
+                    <div className="p-3 text-sm" style={{ color: "var(--text-muted)" }}>No doctors match.</div>
+                  ) : (
+                    filtered.map((d) => (
+                      <button
+                        key={d.id}
+                        onClick={() => setDoctorId(d.id)}
+                        data-testid={`new-task-doctor-${d.id}`}
+                        className="w-full text-left px-3 py-2 border-b last:border-b-0 hover:bg-[var(--bg-paper)] transition-colors"
+                        style={{ borderColor: "var(--border-default)" }}
+                      >
+                        <div className="text-sm font-medium" style={{ color: "var(--brand-primary)" }}>{d.doctor_name}</div>
+                        <div className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                          {[d.clinic_name, d.city, d.segment].filter(Boolean).join(" · ") || "—"}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div>
+            <Label>Task</Label>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Send pricing for the iTero scanner"
+              className="bg-white"
+              data-testid="new-task-title"
+            />
+          </div>
+
+          <div>
+            <Label>Details (optional)</Label>
+            <Textarea
+              rows={2}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Anything that helps you finish this faster"
+              className="bg-white"
+              data-testid="new-task-description"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Due date</Label>
+              <Input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="bg-white"
+                data-testid="new-task-due-date"
+              />
+              <div className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>Defaults to today.</div>
+            </div>
+            <div>
+              <Label>Priority</Label>
+              <Select value={priority} onValueChange={setPriority}>
+                <SelectTrigger className="bg-white" data-testid="new-task-priority"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["Low", "Medium", "High"].map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving || !doctorId || !title.trim()} data-testid="new-task-save" style={{ background: "var(--brand-secondary)", color: "white" }}>
+            {saving ? "Saving…" : "Create task"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+

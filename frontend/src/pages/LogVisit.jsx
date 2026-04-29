@@ -28,6 +28,10 @@ export default function LogVisit() {
   const [doctorId, setDoctorId] = useState(initialDoctorId || "");
   const [docPickerOpen, setDocPickerOpen] = useState(false);
   const [visitType, setVisitType] = useState("In-person visit");
+  const [visitDate, setVisitDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const [note, setNote] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [ai, setAi] = useState(null);
@@ -203,6 +207,14 @@ export default function LogVisit() {
       const payload = {
         doctor_id: doctorId,
         visit_type: visitType,
+        visit_date: (() => {
+          // Combine selected date with current time so backend gets a full ISO timestamp
+          if (!visitDate) return undefined;
+          const now = new Date();
+          const [y, m, d] = visitDate.split("-").map(Number);
+          const dt = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+          return dt.toISOString();
+        })(),
         free_text_note: note,
         confirmed_topics: topics,
         confirmed_barriers: barriers,
@@ -306,6 +318,19 @@ export default function LogVisit() {
                 {VISIT_TYPES.map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}
               </SelectContent>
             </Select>
+          </div>
+
+          <div>
+            <Label className="mb-2 block">Visit date</Label>
+            <Input
+              type="date"
+              value={visitDate}
+              onChange={(e) => setVisitDate(e.target.value)}
+              max={(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })()}
+              className="h-11 bg-white"
+              data-testid="visit-date-input"
+            />
+            <div className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>Defaults to today. Pick a past date for visits you forgot to log.</div>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

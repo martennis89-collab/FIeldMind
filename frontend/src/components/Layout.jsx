@@ -196,6 +196,7 @@ export default function Layout({ children }) {
               <SheetTitle>Add</SheetTitle>
               <SheetItem icon={ClipboardList} label="Log a visit" onClick={() => { setTmAddOpen(false); navigate("/log-visit"); }} testId="add-log-visit" />
               <SheetItem icon={CalendarPlus} label="Book a meeting" onClick={() => { setTmAddOpen(false); navigate("/meetings/book"); }} testId="add-book-meeting" />
+              <SheetItem icon={CheckSquare} label="New task" onClick={() => { setTmAddOpen(false); navigate("/tasks?new=1"); }} testId="add-new-task" />
               <SheetItem icon={Receipt} label="Add an expense" onClick={() => { setTmAddOpen(false); navigate("/expenses/log"); }} testId="add-expense" />
               <SheetItem icon={Users} label="Add a doctor" onClick={() => { setTmAddOpen(false); navigate("/doctors/add"); }} testId="add-doctor" />
               <SheetItem icon={Layers} label="Import doctors" onClick={() => { setTmAddOpen(false); navigate("/doctors/import"); }} testId="add-doctor-import" subtitle="From a spreadsheet" />

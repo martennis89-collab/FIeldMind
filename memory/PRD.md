@@ -196,6 +196,12 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 17 (Feb 2026) — Standalone task creation + visit-date picker
+- **Tasks page header** gains a "**+ New task**" button. Opens a dialog that pre-selects no doctor; user searches the roster (name / clinic / city), then fills task title + optional details + due date (**defaults to today**) + priority. POSTs to existing `/api/tasks` and inserts the new task at the top of the Open list optimistically.
+- **Deep-link**: `/tasks?new=1` auto-opens the dialog and strips the param. Wired into the TM `+ Add` bottom sheet so phone users can tap one shortcut to start a task.
+- **Log Visit step 1** gets a "**Visit date**" `<input type="date">` (defaults to today, max=today). The combined ISO timestamp is sent in the visit payload so backdated visits land on the right day in the timeline. Helper text reminds users they can pick a past date for visits they forgot to log.
+- Test coverage: 3 new tests in `tests/test_tasks_and_visit_date.py` (standalone task create · complete-then-reopen · backdated visit_date persists). 15/15 tasks/meetings/itero-pipeline tests green.
+
 ## Iteration 16 (Feb 2026) — iTero pipeline (Demo → Contract Signed)
 - **New 8-stage pipeline** on Doctor: `None / Demo Discussed / Demo Booked / Demo Completed / Proposal Sent / Contract Sent / Contract Signed / Lost` (`models.IteroStage`).
 - **Doctor doc** gains `itero_stage`, `itero_stage_updated_at`, `itero_stage_updated_by`. New collection `itero_stage_history` records every move (`from_stage / to_stage / by_user / note / auto / at`).
