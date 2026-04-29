@@ -51,6 +51,9 @@ from models import (
     Meeting,
     MeetingCreate,
     MeetingUpdate,
+    Event,
+    EventCreate,
+    EventUpdate,
     IteroStage,
     IteroStageUpdate,
     ITERO_STAGE_RANK,
@@ -1415,6 +1418,89 @@ async def delete_meeting(meeting_id: str, user=Depends(get_current_user)):
     await db.meetings.delete_one({"id": meeting_id})
     await _audit(user, "delete", "meeting", meeting_id, prev=m)
     return {"ok": True, "id": meeting_id}
+
+
+# ====================================================
+# EVENTS  (generic agenda items, no doctor link)
+# ====================================================
+@api.post("/events", response_model=Event)
+async def create_event(body: EventCreate, user=Depends(get_current_user)):
+    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    e = Event(
+        id=str(uuid.uuid4()),
+        title=body.title.strip(),
+        tm_user_id=user["id"],
+        tm_name=user.get("full_name", ""),
+        team_id=user.get("team_id"),
+        scheduled_at=body.scheduled_at,
+        duration_minutes=body.duration_minutes or 60,
+        location=body.location,
+        notes=body.notes,
+        status="Scheduled",
+    ).model_dump()
+    await db.events.insert_one(e)
+    await _audit(user, "create", "event", e["id"], new={"title": e["title"], "scheduled_at": e["scheduled_at"]})
+    return e
+
+
+@api.get("/events")
+async def list_events(
+    when: Optional[str] = Query(None, description="upcoming | past | all"),
+    user=Depends(get_current_user),
+):
+    q: dict = {}
+    if user["role"] == "TM":
+        q["tm_user_id"] = user["id"]
+    elif user["role"] == "Manager":
+        q["team_id"] = user.get("team_id")
+    now = _now_iso()
+    if when == "upcoming":
+        q["scheduled_at"] = {"$gte": now}
+        q["status"] = "Scheduled"
+    elif when == "past":
+        q["$or"] = [{"scheduled_at": {"$lt": now}}, {"status": {"$in": ["Done", "Cancelled"]}}]
+    rows = await db.events.find(q, {"_id": 0}).sort("scheduled_at", 1).to_list(2000)
+    return rows
+
+
+@api.get("/events/{event_id}", response_model=Event)
+async def get_event(event_id: str, user=Depends(get_current_user)):
+    e = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if user["role"] == "TM" and e["tm_user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "Manager" and e.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return e
+
+
+@api.put("/events/{event_id}", response_model=Event)
+async def update_event(event_id: str, body: EventUpdate, user=Depends(get_current_user)):
+    e = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if e["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    update["updated_at"] = _now_iso()
+    await db.events.update_one({"id": event_id}, {"$set": update})
+    new = await db.events.find_one({"id": event_id}, {"_id": 0})
+    await _audit(user, "update", "event", event_id, new=update)
+    return new
+
+
+@api.delete("/events/{event_id}")
+async def delete_event(event_id: str, user=Depends(get_current_user)):
+    e = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if e["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await db.events.delete_one({"id": event_id})
+    await _audit(user, "delete", "event", event_id, prev=e)
+    return {"ok": True, "id": event_id}
 
 
 # ====================================================
@@ -3678,6 +3764,9 @@ async def on_startup():
     await db.meetings.create_index([("doctor_id", 1)])
     await db.meetings.create_index([("team_id", 1), ("scheduled_at", 1)])
     await db.itero_stage_history.create_index([("doctor_id", 1), ("at", -1)])
+    await db.events.create_index("id", unique=True)
+    await db.events.create_index([("tm_user_id", 1), ("scheduled_at", 1)])
+    await db.events.create_index([("team_id", 1), ("scheduled_at", 1)])
     # Migration: normalise legacy approval statuses (no-op on fresh DBs)
     await db.expenses.update_many(
         {"status": {"$in": ["Approved", "Rejected"]}},

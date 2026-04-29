@@ -488,6 +488,43 @@ class Meeting(BaseModel):
 
 
 
+# ---------- EVENTS (generic calendar items, not tied to a doctor) ----------
+EventStatus = Literal["Scheduled", "Done", "Cancelled"]
+
+
+class EventCreate(BaseModel):
+    title: str
+    scheduled_at: str  # ISO datetime
+    duration_minutes: int = 60
+    location: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class EventUpdate(BaseModel):
+    title: Optional[str] = None
+    scheduled_at: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+    status: Optional[EventStatus] = None
+
+
+class Event(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    title: str
+    tm_user_id: str
+    tm_name: str = ""
+    team_id: Optional[str] = None
+    scheduled_at: str
+    duration_minutes: int = 60
+    location: Optional[str] = None
+    notes: Optional[str] = None
+    status: EventStatus = "Scheduled"
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+
+
 # ---------- ITERO PIPELINE ----------
 class IteroStageUpdate(BaseModel):
     stage: IteroStage

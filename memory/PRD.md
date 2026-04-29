@@ -196,6 +196,17 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 18 (Feb 2026) — Generic events alongside meetings (unified Schedule)
+- **New `events` collection** (`{id, title, tm_user_id, tm_name, team_id, scheduled_at, duration_minutes, location, notes, status: Scheduled|Done|Cancelled, ...}`). Not tied to a doctor — for things like internal trainings, conferences, off-sites.
+- **Endpoints**: `POST/GET/PUT/DELETE /api/events` (`?when=upcoming|past|all`). RBAC mirrors meetings (TM owns; Manager sees team; Admin/Owner sees all). Indexes on `id`, `(tm_user_id, scheduled_at)`, `(team_id, scheduled_at)`.
+- **Unified Schedule view** (`/meetings` page rebuilt):
+  - Heading renamed to **"Meetings & events"**, count includes both.
+  - Tabs: Upcoming / Past / All. New filter chips: All / Meetings / Events.
+  - Combined timeline grouped by Today / This week / Later (or Past). Meetings show "Log visit" + Cancel; events show "Done" + Delete. Different left-border color and label badge per kind for instant scanning.
+- **Add event dialog**: title (required), datetime (default tomorrow 10:00), duration (default 60), optional location, optional notes. Same dialog handles edit (click event title in list).
+- **Quick access**: TM `+ Add` bottom sheet now has both "Book a meeting" and "Add an event" entries. `/meetings?new_event=1` deep-link auto-opens the event dialog and strips the param.
+- Test coverage: 3 new tests in `tests/test_events.py` (create/list/update/delete cycle, other-TM blocked, Manager-sees-team-events). 8/8 schedule tests green.
+
 ## Iteration 17 (Feb 2026) — Standalone task creation + visit-date picker
 - **Tasks page header** gains a "**+ New task**" button. Opens a dialog that pre-selects no doctor; user searches the roster (name / clinic / city), then fills task title + optional details + due date (**defaults to today**) + priority. POSTs to existing `/api/tasks` and inserts the new task at the top of the Open list optimistically.
 - **Deep-link**: `/tasks?new=1` auto-opens the dialog and strips the param. Wired into the TM `+ Add` bottom sheet so phone users can tap one shortcut to start a task.
