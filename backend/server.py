@@ -10,6 +10,7 @@ import os
 import logging
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+import uuid
 from typing import List, Optional
 
 from auth import (
@@ -50,6 +51,9 @@ from models import (
     Meeting,
     MeetingCreate,
     MeetingUpdate,
+    IteroStage,
+    IteroStageUpdate,
+    ITERO_STAGE_RANK,
 )
 from ai import analyze_note as ai_analyze_note
 from seed import seed_demo, seed_owner
@@ -1093,6 +1097,9 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
     await db.visits.insert_one(visit)
     await _audit(user, "create", "visit", visit["id"], new={"doctor_id": body.doctor_id, "sentiment": body.sentiment})
 
+    # Auto-advance iTero pipeline stage based on the latest visit's signals.
+    await _auto_advance_itero_stage(body.doctor_id, body.itero_actions, body.commercial_actions, user)
+
     # Auto-link meeting -> Completed when visit logged from a booked meeting
     if body.meeting_id:
         m = await db.meetings.find_one({"id": body.meeting_id, "tm_user_id": user["id"]}, {"_id": 0})
@@ -1150,6 +1157,173 @@ async def list_visits(
         q["tm_user_id"] = tm_user_id
     visits = await db.visits.find(q, {"_id": 0}).sort("visit_date", -1).to_list(500)
     return visits
+
+
+# ====================================================
+# ITERO PIPELINE
+# ====================================================
+def _signal_to_stage(itero_actions, commercial_actions) -> str:
+    """Pick the most-advanced iTero stage signalled by a visit's actions."""
+    ia = itero_actions.model_dump() if itero_actions and hasattr(itero_actions, "model_dump") else (itero_actions or {})
+    ca = commercial_actions.model_dump() if commercial_actions and hasattr(commercial_actions, "model_dump") else (commercial_actions or {})
+    if ia.get("contract_signed"):
+        return "Contract Signed"
+    if ia.get("contract_sent"):
+        return "Contract Sent"
+    if ca.get("proposal_sent"):
+        return "Proposal Sent"
+    if ia.get("demo_completed") or ca.get("demo_completed"):
+        return "Demo Completed"
+    if ia.get("demo_booked") or ca.get("demo_booked"):
+        return "Demo Booked"
+    if ia.get("demo_discussed") or ca.get("demo_discussed"):
+        return "Demo Discussed"
+    return "None"
+
+
+async def _auto_advance_itero_stage(doctor_id: str, itero_actions, commercial_actions, user):
+    """Advance the doctor's iTero stage if the visit signals a more-advanced stage.
+    Lost is terminal — never auto-overwritten. Stages only move forward, never backward.
+    """
+    target = _signal_to_stage(itero_actions, commercial_actions)
+    if target == "None":
+        return
+    doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
+    if not doc:
+        return
+    current = doc.get("itero_stage") or "None"
+    if current == "Lost":
+        return  # do not auto-advance over Lost
+    if ITERO_STAGE_RANK.get(target, 0) <= ITERO_STAGE_RANK.get(current, 0):
+        return
+    now = _now_iso()
+    await db.doctors.update_one(
+        {"id": doctor_id},
+        {"$set": {"itero_stage": target, "itero_stage_updated_at": now,
+                  "itero_stage_updated_by": user["id"], "updated_at": now}},
+    )
+    await db.itero_stage_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "doctor_id": doctor_id,
+        "from_stage": current,
+        "to_stage": target,
+        "by_user_id": user["id"],
+        "by_user_name": user.get("full_name", ""),
+        "note": "Auto-advanced from visit log",
+        "auto": True,
+        "at": now,
+    })
+
+
+@api.post("/doctors/{doctor_id}/itero-stage")
+async def set_itero_stage(doctor_id: str, body: IteroStageUpdate, user=Depends(get_current_user)):
+    doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
+    if not doc or not await _can_access_doctor(user, doc):
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    current = doc.get("itero_stage") or "None"
+    now = _now_iso()
+    await db.doctors.update_one(
+        {"id": doctor_id},
+        {"$set": {"itero_stage": body.stage, "itero_stage_updated_at": now,
+                  "itero_stage_updated_by": user["id"], "updated_at": now}},
+    )
+    await db.itero_stage_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "doctor_id": doctor_id,
+        "from_stage": current,
+        "to_stage": body.stage,
+        "by_user_id": user["id"],
+        "by_user_name": user.get("full_name", ""),
+        "note": (body.note or None),
+        "auto": False,
+        "at": now,
+    })
+    await _audit(user, "stage_change", "doctor", doctor_id,
+                 prev={"itero_stage": current}, new={"itero_stage": body.stage, "note": body.note})
+    return {"ok": True, "doctor_id": doctor_id, "from_stage": current, "to_stage": body.stage}
+
+
+@api.get("/itero/pipeline")
+async def itero_pipeline(user=Depends(get_current_user)):
+    """Return doctors grouped by iTero stage. Scope:
+    - TM: only own
+    - Manager: full team (all TMs in their team)
+    - Admin/Owner: all
+    """
+    q: dict = {"status": "Active"}
+    if user["role"] == "TM":
+        q["assigned_tm_id"] = user["id"]
+    elif user["role"] == "Manager":
+        team_id = user.get("team_id")
+        team_tms = await db.users.find({"team_id": team_id, "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
+        q["assigned_tm_id"] = {"$in": [t["id"] for t in team_tms]}
+    docs = await db.doctors.find(q, {"_id": 0}).to_list(5000)
+
+    # Augment with TM name + last visit
+    tm_ids = list({d.get("assigned_tm_id") for d in docs if d.get("assigned_tm_id")})
+    tm_lookup = {}
+    if tm_ids:
+        tms = await db.users.find({"id": {"$in": tm_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(500)
+        tm_lookup = {t["id"]: t.get("full_name", "") for t in tms}
+    last_visit_lookup: dict = {}
+    if docs:
+        pipeline = [
+            {"$match": {"doctor_id": {"$in": [d["id"] for d in docs]}}},
+            {"$sort": {"visit_date": -1}},
+            {"$group": {"_id": "$doctor_id", "last": {"$first": "$visit_date"}}},
+        ]
+        async for row in db.visits.aggregate(pipeline):
+            last_visit_lookup[row["_id"]] = row.get("last")
+
+    stages = ["None", "Demo Discussed", "Demo Booked", "Demo Completed",
+              "Proposal Sent", "Contract Sent", "Contract Signed", "Lost"]
+    grouped: dict = {s: [] for s in stages}
+    today = datetime.now(timezone.utc).date()
+    for d in docs:
+        stage = d.get("itero_stage") or "None"
+        if stage not in grouped:
+            stage = "None"
+        last = last_visit_lookup.get(d["id"])
+        days_since = None
+        if last:
+            try:
+                lv = datetime.fromisoformat(last.replace("Z", "+00:00")).date()
+                days_since = (today - lv).days
+            except Exception:
+                days_since = None
+        grouped[stage].append({
+            "id": d["id"],
+            "doctor_name": d.get("doctor_name", ""),
+            "clinic_name": d.get("clinic_name"),
+            "city": d.get("city"),
+            "segment": d.get("segment"),
+            "tm_user_id": d.get("assigned_tm_id"),
+            "tm_name": tm_lookup.get(d.get("assigned_tm_id"), ""),
+            "stage": stage,
+            "stage_updated_at": d.get("itero_stage_updated_at"),
+            "last_visit_date": last,
+            "days_since_last_visit": days_since,
+        })
+
+    # Sort each column: stage_updated_at desc; if equal, last visit desc
+    def _sort_key(c):
+        return (c.get("stage_updated_at") or "", c.get("last_visit_date") or "")
+    for s in grouped:
+        grouped[s].sort(key=_sort_key, reverse=True)
+
+    counts = {s: len(grouped[s]) for s in stages}
+    return {"stages": stages, "groups": grouped, "counts": counts, "total": sum(counts.values())}
+
+
+@api.get("/doctors/{doctor_id}/itero-stage-history")
+async def itero_stage_history(doctor_id: str, user=Depends(get_current_user)):
+    doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
+    if not doc or not await _can_access_doctor(user, doc):
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    rows = await db.itero_stage_history.find({"doctor_id": doctor_id}, {"_id": 0}).sort("at", -1).to_list(200)
+    return rows
 
 
 # ====================================================
@@ -3503,6 +3677,7 @@ async def on_startup():
     await db.meetings.create_index([("tm_user_id", 1), ("scheduled_at", 1)])
     await db.meetings.create_index([("doctor_id", 1)])
     await db.meetings.create_index([("team_id", 1), ("scheduled_at", 1)])
+    await db.itero_stage_history.create_index([("doctor_id", 1), ("at", -1)])
     # Migration: normalise legacy approval statuses (no-op on fresh DBs)
     await db.expenses.update_many(
         {"status": {"$in": ["Approved", "Rejected"]}},

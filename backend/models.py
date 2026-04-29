@@ -110,6 +110,31 @@ class DoctorUpdate(BaseModel):
     general_notes: Optional[str] = None
 
 
+IteroStage = Literal[
+    "None",
+    "Demo Discussed",
+    "Demo Booked",
+    "Demo Completed",
+    "Proposal Sent",
+    "Contract Sent",
+    "Contract Signed",
+    "Lost",
+]
+
+
+# Used to know which stage is "more advanced" (auto-advance only forward).
+ITERO_STAGE_RANK = {
+    "None": 0,
+    "Demo Discussed": 1,
+    "Demo Booked": 2,
+    "Demo Completed": 3,
+    "Proposal Sent": 4,
+    "Contract Sent": 5,
+    "Contract Signed": 6,
+    "Lost": -1,  # terminal but explicit; never auto-advances over Lost
+}
+
+
 class Doctor(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
@@ -123,6 +148,9 @@ class Doctor(BaseModel):
     team_id: Optional[str] = None
     status: DoctorStatus = "Active"
     general_notes: Optional[str] = None
+    itero_stage: IteroStage = "None"
+    itero_stage_updated_at: Optional[str] = None
+    itero_stage_updated_by: Optional[str] = None
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
 
@@ -159,6 +187,12 @@ class IteroActions(BaseModel):
     demo_booked_date: Optional[str] = None
     demo_completed: bool = False
     demo_completed_date: Optional[str] = None
+    contract_sent: bool = False
+    contract_sent_date: Optional[str] = None
+    contract_signed: bool = False
+    contract_signed_date: Optional[str] = None
+    lost: bool = False
+    lost_reason: Optional[str] = None
     scanner_interest_level: InterestLevel = "None"
     scanner_concerns: List[str] = []
 
@@ -451,3 +485,10 @@ class Meeting(BaseModel):
     visit_id: Optional[str] = None
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
+
+
+
+# ---------- ITERO PIPELINE ----------
+class IteroStageUpdate(BaseModel):
+    stage: IteroStage
+    note: Optional[str] = None

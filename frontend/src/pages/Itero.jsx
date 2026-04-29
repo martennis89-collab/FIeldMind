@@ -43,6 +43,11 @@ export default function Itero() {
           </h1>
           <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>This page reads ONLY iTero-tagged data. No growth-program data here.</p>
         </div>
+        <Link to="/itero/pipeline" data-testid="itero-pipeline-link">
+          <button className="px-4 py-2 rounded-md text-sm font-medium" style={{ background: "var(--brand-secondary)", color: "white" }}>
+            Open pipeline →
+          </button>
+        </Link>
       </div>
 
       {!data && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}

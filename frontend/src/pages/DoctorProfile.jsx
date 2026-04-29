@@ -80,6 +80,13 @@ export default function DoctorProfile() {
               <StatusPill kind={priorityKind(doctor.visit_priority_label)}>{doctor.visit_priority_label} priority · {doctor.visit_priority_score}</StatusPill>
               <StatusPill kind={cadenceKind(doctor.cadence_status)}>{doctor.cadence_status}</StatusPill>
               {doctor.current_sentiment && <StatusPill kind={sentimentKind(doctor.current_sentiment)}>{doctor.current_sentiment} ({doctor.sentiment_trend})</StatusPill>}
+              {doctor.itero_stage && doctor.itero_stage !== "None" && (
+                <Link to="/itero/pipeline" data-testid="itero-stage-pill">
+                  <span className={`pill ${doctor.itero_stage === "Contract Signed" ? "pill-success" : doctor.itero_stage === "Lost" ? "pill-muted" : "pill-warning"}`}>
+                    iTero: {doctor.itero_stage}
+                  </span>
+                </Link>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap gap-2">

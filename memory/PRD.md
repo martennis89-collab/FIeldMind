@@ -196,6 +196,21 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 16 (Feb 2026) — iTero pipeline (Demo → Contract Signed)
+- **New 8-stage pipeline** on Doctor: `None / Demo Discussed / Demo Booked / Demo Completed / Proposal Sent / Contract Sent / Contract Signed / Lost` (`models.IteroStage`).
+- **Doctor doc** gains `itero_stage`, `itero_stage_updated_at`, `itero_stage_updated_by`. New collection `itero_stage_history` records every move (`from_stage / to_stage / by_user / note / auto / at`).
+- **`IteroActions`** extended with `contract_sent`, `contract_sent_date`, `contract_signed`, `contract_signed_date`, `lost`, `lost_reason`.
+- **Auto-advance** on `POST /api/visits` — `_auto_advance_itero_stage()` reads the most-advanced signal across `itero_actions` + `commercial_actions.proposal_sent` and bumps the doctor's stage **forward only**. `Lost` is terminal — never auto-overwritten.
+- **Endpoints**:
+  - `GET /api/itero/pipeline` — RBAC-scoped (TM=own, Manager=full team, Admin/Owner=all). Returns `{stages, groups, counts, total}` with TM names + last-visit days per card. Each column sorted by `stage_updated_at` desc, then last visit.
+  - `POST /api/doctors/{id}/itero-stage` — `{stage, note?}` to manually set; appends history (`auto:false`).
+  - `GET /api/doctors/{id}/itero-stage-history` — chronological audit of stage moves.
+- **Frontend `/itero/pipeline`**: horizontal kanban (8 columns, mobile-friendly horizontal scroll-snap). Each card shows doctor name, segment pill, clinic·city, TM name (managers only see this when the data is from another TM), days since last visit, and a "Move forward" / "Change stage" button that opens a dialog for stage + optional note.
+- **Doctor profile** shows current iTero stage as a coloured pill linking to the pipeline.
+- **`/itero` funnel page** got an "Open pipeline →" button.
+- Indexes: `itero_stage_history.(doctor_id, at desc)`.
+- Test coverage: 7 new tests in `tests/test_itero_pipeline.py` (groups returned, manual stage + history, **visit auto-advance**, **no backward auto-advance**, **Lost not auto-overwritten**, manager team scope, other-TM cannot mutate). 37/37 critical tests green.
+
 ## Iteration 15 (Feb 2026) — Book a meeting (lightweight scheduler)
 - **New `meetings` collection** (`{id, doctor_id, doctor_name, clinic_name, city, tm_user_id, tm_name, team_id, scheduled_at, duration_minutes, subject, status, visit_id, created_at, updated_at}`).
 - **Endpoints** (TM-only create; RBAC-scoped reads/edits):
