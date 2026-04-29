@@ -33,14 +33,6 @@ function dayBucket(iso) {
   return "Later";
 }
 
-function defaultDateTime() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  d.setHours(10, 0, 0, 0);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 const FILTERS = [
   { id: "all", label: "All" },
   { id: "meetings", label: "Meetings" },
@@ -279,6 +271,21 @@ function MeetingCard({ m, onLog, onCancel }) {
 function EventCard({ e, onEdit, onDone, onDelete }) {
   const done = e.status === "Done";
   const cancelled = e.status === "Cancelled";
+
+  // Format the time range. If start and end are on the same day, show day once.
+  const start = e.scheduled_at ? new Date(e.scheduled_at) : null;
+  const end = e.ends_at ? new Date(e.ends_at) : null;
+  const sameDay = start && end &&
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+  const timeFmt = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const dayFmt = (d) => d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  let timeRange;
+  if (start && end && sameDay) timeRange = `${dayFmt(start)} · ${timeFmt(start)} – ${timeFmt(end)}`;
+  else if (start && end) timeRange = `${dayFmt(start)} ${timeFmt(start)} → ${dayFmt(end)} ${timeFmt(end)}`;
+  else timeRange = fmtDate(e.scheduled_at);
+
   return (
     <div
       data-testid={`event-card-${e.id}`}
@@ -302,7 +309,7 @@ function EventCard({ e, onEdit, onDone, onDelete }) {
             </button>
           </div>
           <div className="text-sm flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5" style={{ color: "var(--text-secondary)" }}>
-            <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{fmtDate(e.scheduled_at)}{e.duration_minutes ? ` · ${e.duration_minutes} min` : ""}</span>
+            <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{timeRange}</span>
             {e.location && (
               <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {e.location}</span>
             )}
@@ -328,10 +335,29 @@ function EventCard({ e, onEdit, onDone, onDelete }) {
   );
 }
 
+function defaultStartEnd() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(10, 0, 0, 0);
+  const e = new Date(d.getTime() + 60 * 60 * 1000); // +1h
+  const fmt = (x) => {
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`;
+  };
+  return { start: fmt(d), end: fmt(e) };
+}
+
+function toLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function EventDialog({ open, existing, onClose, onSaved }) {
   const [title, setTitle] = useState("");
-  const [scheduledAt, setScheduledAt] = useState(defaultDateTime());
-  const [duration, setDuration] = useState(60);
+  const [startsAt, setStartsAt] = useState("");
+  const [endsAt, setEndsAt] = useState("");
   const [location, setLocation] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
@@ -340,28 +366,40 @@ function EventDialog({ open, existing, onClose, onSaved }) {
     if (open) {
       if (existing) {
         setTitle(existing.title || "");
-        const d = new Date(existing.scheduled_at);
-        const pad = (n) => String(n).padStart(2, "0");
-        setScheduledAt(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
-        setDuration(existing.duration_minutes || 60);
+        setStartsAt(toLocalInput(existing.scheduled_at));
+        const fallbackEnd = existing.ends_at
+          || (existing.scheduled_at && existing.duration_minutes
+            ? new Date(new Date(existing.scheduled_at).getTime() + (existing.duration_minutes * 60 * 1000)).toISOString()
+            : null);
+        setEndsAt(toLocalInput(fallbackEnd));
         setLocation(existing.location || "");
         setNotes(existing.notes || "");
       } else {
-        setTitle(""); setScheduledAt(defaultDateTime()); setDuration(60); setLocation(""); setNotes("");
+        const { start, end } = defaultStartEnd();
+        setTitle(""); setStartsAt(start); setEndsAt(end); setLocation(""); setNotes("");
       }
     }
   }, [open, existing]);
 
+  // If user picks a new start that's >= current end, push end +1h
+  const onStartChange = (v) => {
+    setStartsAt(v);
+    if (v && endsAt && new Date(v) >= new Date(endsAt)) {
+      const e = new Date(new Date(v).getTime() + 60 * 60 * 1000);
+      setEndsAt(toLocalInput(e.toISOString()));
+    }
+  };
+
   const save = async () => {
     if (!title.trim()) { toast.error("Add a title"); return; }
-    if (!scheduledAt) { toast.error("Pick a date & time"); return; }
+    if (!startsAt || !endsAt) { toast.error("Pick start and end"); return; }
+    if (new Date(endsAt) <= new Date(startsAt)) { toast.error("End must be after start"); return; }
     setBusy(true);
     try {
-      const iso = new Date(scheduledAt).toISOString();
       const payload = {
         title: title.trim(),
-        scheduled_at: iso,
-        duration_minutes: Number(duration) || 60,
+        scheduled_at: new Date(startsAt).toISOString(),
+        ends_at: new Date(endsAt).toISOString(),
         location: location.trim() || null,
         notes: notes.trim() || null,
       };
@@ -385,19 +423,20 @@ function EventDialog({ open, existing, onClose, onSaved }) {
         <div className="space-y-4">
           <div>
             <Label>Title</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Internal training, conference call, off-site"
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Internal training, conference, off-site"
               data-testid="event-title-input" autoFocus className="bg-white" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="sm:col-span-2">
-              <Label>When</Label>
-              <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)}
-                data-testid="event-datetime-input" className="bg-white" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label>From</Label>
+              <Input type="datetime-local" value={startsAt} onChange={(e) => onStartChange(e.target.value)}
+                data-testid="event-start-input" className="bg-white" />
             </div>
             <div>
-              <Label>Duration (min)</Label>
-              <Input type="number" min={5} step={5} value={duration} onChange={(e) => setDuration(e.target.value)}
-                data-testid="event-duration-input" className="bg-white" />
+              <Label>To</Label>
+              <Input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)}
+                min={startsAt || undefined}
+                data-testid="event-end-input" className="bg-white" />
             </div>
           </div>
           <div>
@@ -414,7 +453,7 @@ function EventDialog({ open, existing, onClose, onSaved }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button onClick={save} disabled={busy || !title.trim() || !scheduledAt} data-testid="event-save-btn"
+          <Button onClick={save} disabled={busy || !title.trim() || !startsAt || !endsAt} data-testid="event-save-btn"
             style={{ background: "var(--brand-secondary)", color: "white" }}>
             {busy ? "Saving…" : (existing ? "Save" : "Add event")}
           </Button>

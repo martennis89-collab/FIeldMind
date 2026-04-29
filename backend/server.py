@@ -1427,20 +1427,39 @@ async def delete_meeting(meeting_id: str, user=Depends(get_current_user)):
 async def create_event(body: EventCreate, user=Depends(get_current_user)):
     if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
+    # Resolve start, end, and duration so all three stay in sync.
+    starts = body.scheduled_at
+    ends = body.ends_at
+    duration = body.duration_minutes or 60
+    try:
+        start_dt = datetime.fromisoformat(starts.replace("Z", "+00:00"))
+        if ends:
+            end_dt = datetime.fromisoformat(ends.replace("Z", "+00:00"))
+            if end_dt <= start_dt:
+                raise HTTPException(status_code=400, detail="End must be after start")
+            duration = max(int((end_dt - start_dt).total_seconds() // 60), 1)
+        else:
+            end_dt = start_dt + timedelta(minutes=duration)
+            ends = end_dt.isoformat()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid date/time")
     e = Event(
         id=str(uuid.uuid4()),
         title=body.title.strip(),
         tm_user_id=user["id"],
         tm_name=user.get("full_name", ""),
         team_id=user.get("team_id"),
-        scheduled_at=body.scheduled_at,
-        duration_minutes=body.duration_minutes or 60,
+        scheduled_at=starts,
+        ends_at=ends,
+        duration_minutes=duration,
         location=body.location,
         notes=body.notes,
         status="Scheduled",
     ).model_dump()
     await db.events.insert_one(e)
-    await _audit(user, "create", "event", e["id"], new={"title": e["title"], "scheduled_at": e["scheduled_at"]})
+    await _audit(user, "create", "event", e["id"], new={"title": e["title"], "scheduled_at": e["scheduled_at"], "ends_at": e["ends_at"]})
     return e
 
 
@@ -1484,6 +1503,30 @@ async def update_event(event_id: str, body: EventUpdate, user=Depends(get_curren
     if e["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    # Keep starts/ends/duration consistent if any of them was changed.
+    has_time_change = any(k in update for k in ("scheduled_at", "ends_at", "duration_minutes"))
+    if has_time_change:
+        starts = update.get("scheduled_at", e.get("scheduled_at"))
+        ends = update.get("ends_at", e.get("ends_at"))
+        duration = update.get("duration_minutes", e.get("duration_minutes") or 60)
+        try:
+            start_dt = datetime.fromisoformat(starts.replace("Z", "+00:00"))
+            # If user supplied a new ends_at, recompute duration; else recompute ends_at from duration.
+            if "ends_at" in update or (ends and "scheduled_at" in update and "duration_minutes" not in update):
+                end_dt = datetime.fromisoformat(ends.replace("Z", "+00:00"))
+                if end_dt <= start_dt:
+                    raise HTTPException(status_code=400, detail="End must be after start")
+                duration = max(int((end_dt - start_dt).total_seconds() // 60), 1)
+            else:
+                end_dt = start_dt + timedelta(minutes=duration)
+                ends = end_dt.isoformat()
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid date/time")
+        update["scheduled_at"] = starts
+        update["ends_at"] = ends
+        update["duration_minutes"] = duration
     update["updated_at"] = _now_iso()
     await db.events.update_one({"id": event_id}, {"$set": update})
     new = await db.events.find_one({"id": event_id}, {"_id": 0})

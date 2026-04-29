@@ -38,10 +38,12 @@ class TestEvents:
             pass
 
     def test_create_list_update_delete(self):
+        starts = _future_iso(72)
+        ends = (datetime.now(timezone.utc) + timedelta(hours=72 + 2)).isoformat()
         r = requests.post(f"{API}/events", headers=H(self.tm), json={
             "title": "iter18 Internal training",
-            "scheduled_at": _future_iso(72),
-            "duration_minutes": 90,
+            "scheduled_at": starts,
+            "ends_at": ends,
             "location": "Sofia office",
             "notes": "Bring laptop",
         }, timeout=10)
@@ -49,6 +51,9 @@ class TestEvents:
         e = r.json()
         assert e["title"] == "iter18 Internal training"
         assert e["status"] == "Scheduled"
+        # Duration must reflect end - start (~120 min)
+        assert 115 <= e["duration_minutes"] <= 125
+        assert e.get("ends_at")
         # List upcoming
         rl = requests.get(f"{API}/events?when=upcoming", headers=H(self.tm), timeout=10).json()
         assert any(x["id"] == e["id"] for x in rl)
@@ -61,6 +66,14 @@ class TestEvents:
         # Delete
         rd = requests.delete(f"{API}/events/{e['id']}", headers=H(self.tm), timeout=10)
         assert rd.status_code == 200
+
+    def test_end_must_be_after_start(self):
+        starts = _future_iso(48)
+        ends = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()  # before start
+        r = requests.post(f"{API}/events", headers=H(self.tm), json={
+            "title": "iter18 invalid", "scheduled_at": starts, "ends_at": ends,
+        }, timeout=10)
+        assert r.status_code == 400
 
     def test_other_tm_cannot_see_or_modify(self):
         e = requests.post(f"{API}/events", headers=H(self.tm), json={

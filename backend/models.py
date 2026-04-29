@@ -494,7 +494,8 @@ EventStatus = Literal["Scheduled", "Done", "Cancelled"]
 
 class EventCreate(BaseModel):
     title: str
-    scheduled_at: str  # ISO datetime
+    scheduled_at: str  # start ISO datetime
+    ends_at: Optional[str] = None  # end ISO datetime; if absent, derived from duration_minutes
     duration_minutes: int = 60
     location: Optional[str] = None
     notes: Optional[str] = None
@@ -503,6 +504,7 @@ class EventCreate(BaseModel):
 class EventUpdate(BaseModel):
     title: Optional[str] = None
     scheduled_at: Optional[str] = None
+    ends_at: Optional[str] = None
     duration_minutes: Optional[int] = None
     location: Optional[str] = None
     notes: Optional[str] = None
@@ -517,6 +519,7 @@ class Event(BaseModel):
     tm_name: str = ""
     team_id: Optional[str] = None
     scheduled_at: str
+    ends_at: Optional[str] = None
     duration_minutes: int = 60
     location: Optional[str] = None
     notes: Optional[str] = None

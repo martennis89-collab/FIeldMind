@@ -196,6 +196,12 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 19 (Feb 2026) — Events: from / to date-time
+- **`Event.ends_at`** (Optional ISO datetime) added; `EventCreate/Update` accept `ends_at` and the server keeps `scheduled_at` (=start), `ends_at` and `duration_minutes` consistent (computes whichever wasn't provided; rejects end ≤ start with HTTP 400).
+- **EventDialog** now has **From** + **To** datetime inputs (instead of single datetime + duration). Defaults to tomorrow 10:00 → 11:00. Auto-bumps the end forward by 1 h if the user picks a start that's ≥ the current end.
+- **EventCard** shows a clean range like "Mon, Apr 27 · 10:00 – 12:00" (or full date on both sides when the event spans days).
+- Test coverage: regression updated to send `ends_at` instead of `duration_minutes`; new `test_end_must_be_after_start` asserts 400. **9/9 schedule tests green.**
+
 ## Iteration 18 (Feb 2026) — Generic events alongside meetings (unified Schedule)
 - **New `events` collection** (`{id, title, tm_user_id, tm_name, team_id, scheduled_at, duration_minutes, location, notes, status: Scheduled|Done|Cancelled, ...}`). Not tied to a doctor — for things like internal trainings, conferences, off-sites.
 - **Endpoints**: `POST/GET/PUT/DELETE /api/events` (`?when=upcoming|past|all`). RBAC mirrors meetings (TM owns; Manager sees team; Admin/Owner sees all). Indexes on `id`, `(tm_user_id, scheduled_at)`, `(team_id, scheduled_at)`.
