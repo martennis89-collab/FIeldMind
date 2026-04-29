@@ -1329,6 +1329,106 @@ async def itero_stage_history(doctor_id: str, user=Depends(get_current_user)):
     return rows
 
 
+@api.get("/itero/demos")
+async def itero_demos(user=Depends(get_current_user)):
+    """List doctors with demo signals, bucketed by Booked / Completed / Lost.
+    - Booked: latest visit shows demo_booked_date AND demo not yet completed.
+    - Completed: any visit recorded a demo_completed_date in the last 30d.
+    - Lost: doctor stage is Lost AND had any demo signal historically.
+    Scope: TM=own, Manager=team, Admin/Owner=all (mirror of /itero/pipeline).
+    """
+    # Scope doctors
+    doctor_q = {"status": "Active"}
+    if user["role"] == "TM":
+        doctor_q["assigned_tm_id"] = user["id"]
+    elif user["role"] == "Manager":
+        team_id = user.get("team_id")
+        team_tms = await db.users.find({"team_id": team_id, "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
+        doctor_q["assigned_tm_id"] = {"$in": [t["id"] for t in team_tms]}
+    docs = await db.doctors.find(doctor_q, {"_id": 0}).to_list(5000)
+    if not docs:
+        return {"booked": [], "completed": [], "lost": [], "counts": {"booked": 0, "completed": 0, "lost": 0}}
+    doc_map = {d["id"]: d for d in docs}
+
+    visits = await db.visits.find(
+        {"doctor_id": {"$in": list(doc_map.keys())}},
+        {"_id": 0}
+    ).sort("visit_date", -1).to_list(20000)
+
+    # Walk newest -> oldest; first encountered booked/completed dates win.
+    demos: dict = {}
+    for v in visits:
+        ia = v.get("itero_actions") or {}
+        ca = v.get("commercial_actions") or {}  # legacy fallback
+        d = demos.setdefault(v["doctor_id"], {})
+        bd = ia.get("demo_booked_date") or ca.get("demo_booked_date")
+        if bd and not d.get("booked_date"):
+            d["booked_date"] = bd
+        cd = ia.get("demo_completed_date") or ca.get("demo_completed_date")
+        if cd and not d.get("completed_date"):
+            d["completed_date"] = cd
+        # Track that this doctor had ANY demo signal (even just demo_discussed)
+        if any([
+            ia.get("demo_discussed"), ia.get("demo_booked"), ia.get("demo_completed"),
+            ca.get("demo_discussed"), ca.get("demo_booked"), ca.get("demo_completed"),
+            bd, cd,
+        ]):
+            d["had_demo_signal"] = True
+
+    today = datetime.now(timezone.utc).date()
+    booked, completed, lost = [], [], []
+    for did, d in demos.items():
+        doc = doc_map[did]
+        stage = doc.get("itero_stage") or "None"
+        row = {
+            "doctor_id": did,
+            "doctor_name": doc.get("doctor_name"),
+            "clinic_name": doc.get("clinic_name"),
+            "city": doc.get("city"),
+            "segment": doc.get("segment"),
+            "tm_user_id": doc.get("assigned_tm_id"),
+            "stage": stage,
+            "booked_date": d.get("booked_date"),
+            "completed_date": d.get("completed_date"),
+        }
+        if stage == "Lost" and d.get("had_demo_signal"):
+            lost.append(row)
+            continue
+        # Completed in last 30 days (even if doctor already advanced past)
+        if d.get("completed_date"):
+            try:
+                cdate = datetime.fromisoformat(d["completed_date"][:10]).date()
+                if (today - cdate).days <= 30:
+                    completed.append(row)
+                    continue
+            except Exception:
+                completed.append(row)
+                continue
+        # Booked but not yet completed -> upcoming
+        if d.get("booked_date") and not d.get("completed_date"):
+            booked.append(row)
+
+    booked.sort(key=lambda x: x.get("booked_date") or "")  # soonest first
+    completed.sort(key=lambda x: x.get("completed_date") or "", reverse=True)
+    lost.sort(key=lambda x: (x.get("completed_date") or x.get("booked_date") or ""), reverse=True)
+
+    # TM name enrichment
+    tm_ids = list({r["tm_user_id"] for sub in (booked, completed, lost) for r in sub if r.get("tm_user_id")})
+    if tm_ids:
+        tms = await db.users.find({"id": {"$in": tm_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(500)
+        tm_lookup = {t["id"]: t.get("full_name", "") for t in tms}
+        for sub in (booked, completed, lost):
+            for r in sub:
+                r["tm_name"] = tm_lookup.get(r["tm_user_id"], "")
+
+    return {
+        "booked": booked,
+        "completed": completed,
+        "lost": lost,
+        "counts": {"booked": len(booked), "completed": len(completed), "lost": len(lost)},
+    }
+
+
 # ====================================================
 # MEETINGS  (lightweight scheduler; not a calendar integration)
 # ====================================================

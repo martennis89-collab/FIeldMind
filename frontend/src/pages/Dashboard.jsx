@@ -312,6 +312,8 @@ function TMView({ data }) {
         <StatCard label="Due today" value={data.stats.due_today} icon={CalendarClock} kind="warning" testId="stat-due-today" />
       </div>
 
+      <UpcomingDemosWidget />
+
       <div className="flex items-baseline justify-between mb-4">
         <div>
           <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Today's intelligence</div>
@@ -345,6 +347,65 @@ function TMView({ data }) {
         </div>
       )}
     </>
+  );
+}
+
+function UpcomingDemosWidget() {
+  const [demos, setDemos] = useState(null);
+  useEffect(() => {
+    api.get("/itero/demos").then((r) => setDemos(r.data)).catch(() => setDemos({ booked: [] }));
+  }, []);
+  if (!demos) return null;
+  const list = (demos.booked || []).slice(0, 4);
+  if (list.length === 0) return null;
+  const fmt = (s) => { try { return new Date(s).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); } catch { return s; } };
+  const rel = (s) => {
+    if (!s) return null;
+    try {
+      const d = new Date(s); d.setHours(0, 0, 0, 0);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const days = Math.round((d - today) / 86400000);
+      if (days < 0) return `${-days}d ago`;
+      if (days === 0) return "Today";
+      if (days === 1) return "Tomorrow";
+      return `In ${days}d`;
+    } catch { return null; }
+  };
+  return (
+    <div data-testid="dashboard-demos-widget" className="rounded-md border p-5 mb-8" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>iTero · Booked demos</div>
+          <h3 className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>Upcoming demos</h3>
+        </div>
+        <Link to="/itero/demos" className="text-sm hover:underline" style={{ color: "var(--brand-secondary)" }}>See all →</Link>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-2">
+        {list.map((r) => {
+          const overdue = (() => {
+            try { const d = new Date(r.booked_date); d.setHours(0,0,0,0); const t = new Date(); t.setHours(0,0,0,0); return d < t; } catch { return false; }
+          })();
+          return (
+            <Link
+              key={r.doctor_id}
+              to={`/doctors/${r.doctor_id}`}
+              data-testid={`dashboard-demo-${r.doctor_id}`}
+              className="flex items-center justify-between p-3 rounded border transition-colors hover:border-[var(--brand-primary)]"
+              style={{ borderColor: overdue ? "var(--status-danger)" : "var(--border-default)", background: "var(--bg-paper)" }}
+            >
+              <div className="min-w-0">
+                <div className="font-medium text-sm truncate" style={{ color: "var(--brand-primary)" }}>{r.doctor_name}</div>
+                <div className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{[r.clinic_name, r.city].filter(Boolean).join(" · ") || "—"}</div>
+              </div>
+              <div className="text-right shrink-0 ml-2">
+                <div className="text-sm font-mono" style={{ color: overdue ? "var(--status-danger)" : "var(--text-primary)" }}>{fmt(r.booked_date)}</div>
+                <div className="text-[10px]" style={{ color: overdue ? "var(--status-danger)" : "var(--text-muted)" }}>{rel(r.booked_date)}</div>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

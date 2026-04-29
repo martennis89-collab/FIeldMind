@@ -196,6 +196,19 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 20 (Feb 2026) — Demos overview (Booked / Completed / Lost)
+- **New endpoint** `GET /api/itero/demos` — walks each scoped doctor's visit history newest→oldest to extract earliest available `demo_booked_date` and `demo_completed_date`, then buckets:
+  - `booked` — has a booked date but no completed date (sorted soonest first)
+  - `completed` — `demo_completed_date` within the last 30 days (sorted latest first)
+  - `lost` — doctor stage = `Lost` AND ever had any demo signal (sorted by latest available date)
+  - RBAC: TM=own, Manager=team, Admin/Owner=all (mirror of `/itero/pipeline`)
+  - Each row carries `doctor_id`, `doctor_name`, `clinic_name`, `city`, `segment`, `tm_user_id`, `tm_name`, `stage`, `booked_date`, `completed_date`.
+- **New page** `/itero/demos`: tab strip Booked / Completed / Lost with live counts, search box (name/clinic/city), color-left-bordered rows, days-until/since pill, **overdue booked dates highlighted in red**. Each row links to the doctor profile so the TM can prep before the demo.
+- **`/itero` funnel page**: new "Demos · Booked" section above the funnel listing the next 8 booked dates (links to full Demos overview).
+- **TM Dashboard widget** "Upcoming demos" — top 4 nearest booked dates with the same overdue highlight + "See all →" to `/itero/demos`. Hidden if there are no booked demos.
+- "Demos overview →" link added to the iTero header beside "Open pipeline →".
+- Test coverage: 4 new tests in `tests/test_itero_demos.py` (booked appears with date · completed within 30d · Lost overrides booked · Manager sees team demos). 4/4 green.
+
 ## Iteration 19 (Feb 2026) — Events: from / to date-time
 - **`Event.ends_at`** (Optional ISO datetime) added; `EventCreate/Update` accept `ends_at` and the server keeps `scheduled_at` (=start), `ends_at` and `duration_minutes` consistent (computes whichever wasn't provided; rejects end ≤ start with HTTP 400).
 - **EventDialog** now has **From** + **To** datetime inputs (instead of single datetime + duration). Defaults to tomorrow 10:00 → 11:00. Auto-bumps the end forward by 1 h if the user picks a start that's ≥ the current end.

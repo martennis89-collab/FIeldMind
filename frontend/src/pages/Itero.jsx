@@ -43,15 +43,95 @@ export default function Itero() {
           </h1>
           <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>This page reads ONLY iTero-tagged data. No growth-program data here.</p>
         </div>
-        <Link to="/itero/pipeline" data-testid="itero-pipeline-link">
-          <button className="px-4 py-2 rounded-md text-sm font-medium" style={{ background: "var(--brand-secondary)", color: "white" }}>
-            Open pipeline →
-          </button>
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link to="/itero/demos" data-testid="itero-demos-link">
+            <button className="px-4 py-2 rounded-md text-sm font-medium border" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)", background: "transparent" }}>
+              Demos overview →
+            </button>
+          </Link>
+          <Link to="/itero/pipeline" data-testid="itero-pipeline-link">
+            <button className="px-4 py-2 rounded-md text-sm font-medium" style={{ background: "var(--brand-secondary)", color: "white" }}>
+              Open pipeline →
+            </button>
+          </Link>
+        </div>
       </div>
 
       {!data && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
+      {data && <BookedDemosBlock />}
       {data && (isManager ? <ManagerItero data={data} /> : <TMItero data={data} />)}
+    </div>
+  );
+}
+
+function BookedDemosBlock() {
+  const [demos, setDemos] = React.useState(null);
+  React.useEffect(() => {
+    api.get("/itero/demos").then((r) => setDemos(r.data)).catch(() => setDemos({ booked: [], counts: { booked: 0 } }));
+  }, []);
+  const fmt = (s) => { try { return new Date(s).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); } catch { return s; } };
+  const rel = (s) => {
+    if (!s) return null;
+    try {
+      const d = new Date(s); d.setHours(0, 0, 0, 0);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const days = Math.round((d - today) / 86400000);
+      if (days < 0) return `${-days}d ago`;
+      if (days === 0) return "Today";
+      if (days === 1) return "Tomorrow";
+      return `In ${days}d`;
+    } catch { return null; }
+  };
+  if (!demos) return null;
+  const list = demos.booked || [];
+  return (
+    <div
+      data-testid="itero-booked-demos-section"
+      className="rounded-md border p-5 mb-6"
+      style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Demos · Booked</div>
+          <h3 className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>
+            {list.length === 0 ? "No demos booked yet" : `${list.length} demo${list.length === 1 ? "" : "s"} on the calendar`}
+          </h3>
+        </div>
+        <Link to="/itero/demos" data-testid="itero-booked-see-all" className="text-sm hover:underline" style={{ color: "var(--brand-secondary)" }}>
+          See all →
+        </Link>
+      </div>
+      {list.length > 0 && (
+        <div className="space-y-1.5">
+          {list.slice(0, 8).map((r) => {
+            const days = (() => {
+              try { const d = new Date(r.booked_date); d.setHours(0, 0, 0, 0); const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((d - t) / 86400000); } catch { return null; }
+            })();
+            const overdue = days != null && days < 0;
+            return (
+              <Link
+                key={r.doctor_id}
+                to={`/doctors/${r.doctor_id}`}
+                data-testid={`itero-booked-row-${r.doctor_id}`}
+                className="flex items-center justify-between gap-2 rounded border px-3 py-2 text-sm transition-colors hover:border-[var(--brand-primary)]"
+                style={{ borderColor: overdue ? "var(--status-danger)" : "var(--border-default)", background: "var(--bg-paper)" }}
+              >
+                <div className="min-w-0">
+                  <div className="font-medium truncate" style={{ color: "var(--brand-primary)" }}>{r.doctor_name}</div>
+                  <div className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>
+                    {[r.clinic_name, r.city].filter(Boolean).join(" · ") || "—"}
+                    {r.tm_name && <span className="ml-2" style={{ color: "var(--text-muted)" }}>· TM: {r.tm_name}</span>}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-sm font-mono" style={{ color: overdue ? "var(--status-danger)" : "var(--text-primary)" }}>{fmt(r.booked_date)}</div>
+                  <div className="text-[10px]" style={{ color: overdue ? "var(--status-danger)" : "var(--text-muted)" }}>{rel(r.booked_date)}</div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -25,6 +25,7 @@ import AddDoctor from "@/pages/AddDoctor";
 import Meetings from "@/pages/Meetings";
 import BookMeeting from "@/pages/BookMeeting";
 import IteroPipeline from "@/pages/IteroPipeline";
+import IteroDemos from "@/pages/IteroDemos";
 
 export default function App() {
   return (
@@ -143,6 +144,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout><IteroPipeline /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/itero/demos"
+            element={
+              <ProtectedRoute>
+                <Layout><IteroDemos /></Layout>
               </ProtectedRoute>
             }
           />
