@@ -1375,6 +1375,25 @@ async def itero_demos(user=Depends(get_current_user)):
         ]):
             d["had_demo_signal"] = True
 
+    # Merge in meetings flagged as iTero demos.
+    demo_meetings = await db.meetings.find(
+        {"doctor_id": {"$in": list(doc_map.keys())}, "is_demo": True},
+        {"_id": 0},
+    ).sort("scheduled_at", -1).to_list(5000)
+    for mt in demo_meetings:
+        d = demos.setdefault(mt["doctor_id"], {})
+        d["had_demo_signal"] = True
+        # Completed (visit logged from it) → counts as completed_date if more recent than visit-derived one.
+        if mt.get("status") == "Completed":
+            cd = (mt.get("updated_at") or mt.get("scheduled_at") or "")[:10]
+            if cd and (not d.get("completed_date") or d["completed_date"] < cd):
+                d["completed_date"] = cd
+        # Scheduled → upcoming booked. Use scheduled_at if no future booked_date already known.
+        if mt.get("status") == "Scheduled":
+            sd = (mt.get("scheduled_at") or "")[:10]
+            if sd and (not d.get("booked_date") or d["booked_date"] < sd):
+                d["booked_date"] = sd
+
     today = datetime.now(timezone.utc).date()
     booked, completed, lost = [], [], []
     for did, d in demos.items():
@@ -1452,11 +1471,34 @@ async def create_meeting(body: MeetingCreate, user=Depends(get_current_user)):
         scheduled_at=body.scheduled_at,
         duration_minutes=body.duration_minutes or 30,
         subject=body.subject,
+        is_demo=body.is_demo,
         status="Scheduled",
     ).model_dump()
     await db.meetings.insert_one(m)
     await _audit(user, "create", "meeting", m["id"],
-                 new={"doctor_id": body.doctor_id, "scheduled_at": body.scheduled_at})
+                 new={"doctor_id": body.doctor_id, "scheduled_at": body.scheduled_at, "is_demo": body.is_demo})
+
+    # If this meeting is an iTero demo, auto-advance the doctor's pipeline stage to "Demo Booked"
+    if body.is_demo:
+        current = doctor.get("itero_stage") or "None"
+        if current != "Lost" and ITERO_STAGE_RANK.get("Demo Booked", 0) > ITERO_STAGE_RANK.get(current, 0):
+            now = _now_iso()
+            await db.doctors.update_one(
+                {"id": body.doctor_id},
+                {"$set": {"itero_stage": "Demo Booked", "itero_stage_updated_at": now,
+                          "itero_stage_updated_by": user["id"], "updated_at": now}},
+            )
+            await db.itero_stage_history.insert_one({
+                "id": str(uuid.uuid4()),
+                "doctor_id": body.doctor_id,
+                "from_stage": current,
+                "to_stage": "Demo Booked",
+                "by_user_id": user["id"],
+                "by_user_name": user.get("full_name", ""),
+                "note": "Auto-advanced from booked iTero demo",
+                "auto": True,
+                "at": now,
+            })
     return m
 
 

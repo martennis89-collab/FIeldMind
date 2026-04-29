@@ -4,7 +4,7 @@ import api from "../lib/api";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
-import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 function formatDate(s) {
@@ -106,6 +106,15 @@ export default function DoctorProfile() {
               style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}
             >
               <CalendarPlus className="w-4 h-4 mr-2" /> Book meeting
+            </Button>
+            <Button
+              onClick={() => navigate(`/meetings/book?doctor_id=${doctor.id}&demo=1`)}
+              data-testid="book-demo-from-profile-btn"
+              variant="outline"
+              className="font-medium"
+              style={{ borderColor: "var(--brand-secondary)", color: "var(--brand-secondary)" }}
+            >
+              <ScanLine className="w-4 h-4 mr-2" /> Book demo
             </Button>
           </div>
         </div>

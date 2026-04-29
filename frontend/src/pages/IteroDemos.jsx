@@ -79,6 +79,11 @@ export default function IteroDemos() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Link to="/meetings/book?demo=1" data-testid="demos-book-btn">
+            <Button style={{ background: "var(--brand-secondary)", color: "white" }}>
+              <CalendarDays className="w-4 h-4 mr-1" /> Book a demo
+            </Button>
+          </Link>
           <Link to="/itero/pipeline">
             <Button variant="outline" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>Pipeline</Button>
           </Link>

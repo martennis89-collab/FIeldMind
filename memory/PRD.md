@@ -196,6 +196,17 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
   - Manager: dedicated `/reports` page with tabs **Submitted / Pending / Overdue** (synthetic rows for TMs who haven't submitted current/previous week), full report drawer with Auto Insight Summary at top, comment box (status flips to Reviewed)
 - **Status tracking**: Draft / Submitted / Reviewed / Pending (no current-week submission) / Overdue (missed prior week)
 
+## Iteration 21 (Feb 2026) — Explicit "Book a demo" flow
+- **Problem**: booking a demo previously required logging a visit and ticking `iTero → demo_booked` — not discoverable. Users asked "how do I actually book a demo?".
+- **`Meeting.is_demo`** boolean field added (default `false`). `MeetingCreate` / `MeetingUpdate` accept it. When `is_demo=true` on create, the server auto-advances the doctor's iTero pipeline to **"Demo Booked"** (forward-only, never overwrites Lost) and writes a stage-history entry with note "Auto-advanced from booked iTero demo".
+- **`/api/itero/demos`** now also reads `meetings.is_demo=true` rows: Scheduled meetings supply a future `booked_date`; Completed meetings supply a `completed_date`. Demos overview shows them alongside visit-derived demos automatically.
+- **Frontend `/meetings/book`** page: prominent "**This is an iTero demo**" toggle at the top (auto-prefills subject "iTero demo"). Heading and submit-button label flip between "Book a meeting" / "Book demo". `?demo=1` query param pre-checks the toggle.
+- **Quick entry points**:
+  - TM `+ Add` bottom sheet: new "**Book an iTero demo**" entry below "Book a meeting".
+  - Doctor profile: new "**Book demo**" outline button next to "Book meeting".
+  - `/itero/demos` page: primary "**Book a demo**" button in the header.
+- Test coverage: 2 new tests in `tests/test_book_demo.py` (is_demo auto-advances stage + appears in Booked bucket; non-demo meeting leaves stage untouched). 18/18 demos+meetings+pipeline tests green.
+
 ## Iteration 20 (Feb 2026) — Demos overview (Booked / Completed / Lost)
 - **New endpoint** `GET /api/itero/demos` — walks each scoped doctor's visit history newest→oldest to extract earliest available `demo_booked_date` and `demo_completed_date`, then buckets:
   - `booked` — has a booked date but no completed date (sorted soonest first)

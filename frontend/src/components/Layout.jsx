@@ -196,6 +196,7 @@ export default function Layout({ children }) {
               <SheetTitle>Add</SheetTitle>
               <SheetItem icon={ClipboardList} label="Log a visit" onClick={() => { setTmAddOpen(false); navigate("/log-visit"); }} testId="add-log-visit" />
               <SheetItem icon={CalendarPlus} label="Book a meeting" onClick={() => { setTmAddOpen(false); navigate("/meetings/book"); }} testId="add-book-meeting" />
+              <SheetItem icon={ScanLine} label="Book an iTero demo" onClick={() => { setTmAddOpen(false); navigate("/meetings/book?demo=1"); }} testId="add-book-demo" subtitle="Auto-marks pipeline as Demo Booked" />
               <SheetItem icon={Calendar} label="Add an event" onClick={() => { setTmAddOpen(false); navigate("/meetings?new_event=1"); }} testId="add-event" subtitle="Generic agenda item, no doctor" />
               <SheetItem icon={CheckSquare} label="New task" onClick={() => { setTmAddOpen(false); navigate("/tasks?new=1"); }} testId="add-new-task" />
               <SheetItem icon={Receipt} label="Add an expense" onClick={() => { setTmAddOpen(false); navigate("/expenses/log"); }} testId="add-expense" />

@@ -20,6 +20,7 @@ function defaultDateTime() {
 export default function BookMeeting() {
   const [params] = useSearchParams();
   const preDoctorId = params.get("doctor_id");
+  const preDemo = params.get("demo") === "1";
   const navigate = useNavigate();
 
   const [doctors, setDoctors] = useState([]);
@@ -27,7 +28,8 @@ export default function BookMeeting() {
   const [docQuery, setDocQuery] = useState("");
   const [scheduledAt, setScheduledAt] = useState(defaultDateTime());
   const [durationMinutes, setDurationMinutes] = useState(30);
-  const [subject, setSubject] = useState("");
+  const [subject, setSubject] = useState(preDemo ? "iTero demo" : "");
+  const [isDemo, setIsDemo] = useState(preDemo);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -62,8 +64,9 @@ export default function BookMeeting() {
         scheduled_at: iso,
         duration_minutes: Number(durationMinutes) || 30,
         subject: subject.trim() || null,
+        is_demo: isDemo,
       });
-      toast.success("Meeting booked");
+      toast.success(isDemo ? "iTero demo booked — pipeline moved to Demo Booked" : "Meeting booked");
       navigate("/meetings");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not book");
@@ -79,10 +82,36 @@ export default function BookMeeting() {
       </button>
       <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Schedule</div>
       <h1 className="font-display text-3xl sm:text-4xl font-light tracking-tight mb-6" style={{ color: "var(--brand-primary)" }}>
-        Book a <span className="font-medium">meeting.</span>
+        {isDemo ? <>Book an <span className="font-medium">iTero demo.</span></> : <>Book a <span className="font-medium">meeting.</span></>}
       </h1>
 
       <div className="space-y-5 rounded-md border p-5" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}>
+        {/* iTero demo toggle */}
+        <label className="flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors"
+          style={{
+            borderColor: isDemo ? "var(--brand-secondary)" : "var(--border-default)",
+            background: isDemo ? "rgba(194, 109, 83, 0.06)" : "var(--bg-default)",
+          }}
+          data-testid="is-demo-toggle"
+        >
+          <input
+            type="checkbox"
+            checked={isDemo}
+            onChange={(e) => {
+              setIsDemo(e.target.checked);
+              if (e.target.checked && !subject.trim()) setSubject("iTero demo");
+            }}
+            className="mt-0.5 w-4 h-4 cursor-pointer"
+            data-testid="is-demo-checkbox"
+          />
+          <div>
+            <div className="text-sm font-medium" style={{ color: "var(--brand-primary)" }}>This is an iTero demo</div>
+            <div className="text-xs" style={{ color: "var(--text-secondary)" }}>
+              Auto-advances the doctor's pipeline to <strong>Demo Booked</strong> and shows on the Demos overview.
+            </div>
+          </div>
+        </label>
+
         {/* Doctor */}
         <div>
           <Label className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Doctor</Label>
@@ -182,7 +211,7 @@ export default function BookMeeting() {
             data-testid="submit-book-btn"
             style={{ background: "var(--brand-secondary)", color: "white" }}
           >
-            <CalendarPlus className="w-4 h-4 mr-1" /> {busy ? "Booking…" : "Book meeting"}
+            <CalendarPlus className="w-4 h-4 mr-1" /> {busy ? "Booking…" : isDemo ? "Book demo" : "Book meeting"}
           </Button>
         </div>
       </div>

@@ -459,6 +459,7 @@ class MeetingCreate(BaseModel):
     scheduled_at: str  # ISO datetime
     duration_minutes: int = 30
     subject: Optional[str] = None
+    is_demo: bool = False  # marks this meeting as an iTero demo
 
 
 class MeetingUpdate(BaseModel):
@@ -466,6 +467,7 @@ class MeetingUpdate(BaseModel):
     duration_minutes: Optional[int] = None
     subject: Optional[str] = None
     status: Optional[MeetingStatus] = None
+    is_demo: Optional[bool] = None
 
 
 class Meeting(BaseModel):
@@ -481,6 +483,7 @@ class Meeting(BaseModel):
     scheduled_at: str
     duration_minutes: int = 30
     subject: Optional[str] = None
+    is_demo: bool = False
     status: MeetingStatus = "Scheduled"
     visit_id: Optional[str] = None
     created_at: str = Field(default_factory=_now_iso)
