@@ -100,7 +100,11 @@ export default function IteroDemos() {
           {TABS.map((t, i, arr) => {
             const Icon = t.icon;
             const active = tab === t.id;
-            const count = (data.counts || {})[t.id] || 0;
+            const counts = data.counts || {};
+            const doctorCount = counts[t.id] || 0;
+            const eventKey = t.id === "booked" ? "booked_events" : t.id === "completed" ? "completed_events" : null;
+            const eventCount = eventKey ? (counts[eventKey] || 0) : doctorCount;
+            const showEventBadge = eventKey && eventCount > doctorCount;
             return (
               <button
                 key={t.id}
@@ -114,7 +118,9 @@ export default function IteroDemos() {
               >
                 <Icon className="w-3.5 h-3.5" />
                 {t.label}
-                <span className="text-xs opacity-75">({count})</span>
+                <span className="text-xs opacity-75">
+                  ({showEventBadge ? `${eventCount} / ${doctorCount} drs` : doctorCount})
+                </span>
               </button>
             );
           })}
@@ -130,6 +136,26 @@ export default function IteroDemos() {
           />
         </div>
       </div>
+
+      {(() => {
+        const counts = data.counts || {};
+        const evKey = tab === "booked" ? "booked_events" : tab === "completed" ? "completed_events" : null;
+        const ev = evKey ? (counts[evKey] || 0) : 0;
+        const drs = counts[tab] || 0;
+        if (evKey && ev > drs) {
+          return (
+            <div
+              className="mb-4 text-xs px-3 py-2 rounded"
+              style={{ background: "var(--status-info-bg)", color: "var(--status-info)" }}
+              data-testid={`demos-events-note-${tab}`}
+            >
+              {ev} {tab} event{ev === 1 ? "" : "s"} across {drs} doctor{drs === 1 ? "" : "s"}
+              {" "}— the weekly report counts events, this list groups per doctor.
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {loading ? (
         <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>
@@ -164,8 +190,20 @@ export default function IteroDemos() {
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="font-medium" style={{ color: "var(--brand-primary)" }}>
-                      {r.doctor_name}
+                    <div className="font-medium flex items-center gap-2" style={{ color: "var(--brand-primary)" }}>
+                      <span>{r.doctor_name}</span>
+                      {(() => {
+                        const ec = tab === "completed" ? r.completed_events : tab === "booked" ? r.booked_events : null;
+                        return ec && ec > 1 ? (
+                          <span
+                            className="pill pill-success text-[10px]"
+                            data-testid={`demo-row-events-${r.doctor_id}`}
+                            title={`${ec} ${tab} events for this doctor`}
+                          >
+                            ×{ec}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
                     <div className="text-xs mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5" style={{ color: "var(--text-secondary)" }}>
                       {(r.clinic_name || r.city) && (

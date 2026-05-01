@@ -1399,7 +1399,14 @@ async def itero_demos(user=Depends(get_current_user)):
     ).sort("visit_date", -1).to_list(20000)
 
     # Walk newest -> oldest; first encountered booked/completed dates win.
+    # Track total event counts per doctor across all sources so the UI/counts
+    # can show "N completions across M doctors" (events, not just unique rows).
     demos: dict = {}
+
+    def _bump(did, bucket):
+        d = demos.setdefault(did, {})
+        d[f"{bucket}_events"] = d.get(f"{bucket}_events", 0) + 1
+
     for v in visits:
         ia = v.get("itero_actions") or {}
         ca = v.get("commercial_actions") or {}  # legacy fallback
@@ -1410,6 +1417,13 @@ async def itero_demos(user=Depends(get_current_user)):
         cd = ia.get("demo_completed_date") or ca.get("demo_completed_date")
         if cd and not d.get("completed_date"):
             d["completed_date"] = cd
+        # Count every event flag on the visit
+        if ia.get("demo_discussed") or ca.get("demo_discussed"):
+            _bump(v["doctor_id"], "discussed")
+        if ia.get("demo_booked") or ca.get("demo_booked") or bd:
+            _bump(v["doctor_id"], "booked")
+        if ia.get("demo_completed") or ca.get("demo_completed") or cd:
+            _bump(v["doctor_id"], "completed")
         # Track that this doctor had ANY demo signal (even just demo_discussed)
         if any([
             ia.get("demo_discussed"), ia.get("demo_booked"), ia.get("demo_completed"),
@@ -1426,8 +1440,14 @@ async def itero_demos(user=Depends(get_current_user)):
     for mt in demo_meetings:
         d = demos.setdefault(mt["doctor_id"], {})
         d["had_demo_signal"] = True
+        # Every non-cancelled demo meeting is a booking event
+        if mt.get("status") != "Cancelled":
+            _bump(mt["doctor_id"], "booked")
         # Completed (visit logged from it) → counts as completed_date if more recent than visit-derived one.
         if mt.get("status") == "Completed":
+            # If the meeting has an attached visit, the visit loop already counted it.
+            if not mt.get("visit_id"):
+                _bump(mt["doctor_id"], "completed")
             cd = (mt.get("updated_at") or mt.get("scheduled_at") or "")[:10]
             if cd and (not d.get("completed_date") or d["completed_date"] < cd):
                 d["completed_date"] = cd
@@ -1452,6 +1472,9 @@ async def itero_demos(user=Depends(get_current_user)):
             "stage": stage,
             "booked_date": d.get("booked_date"),
             "completed_date": d.get("completed_date"),
+            "discussed_events": d.get("discussed_events", 0),
+            "booked_events": d.get("booked_events", 0),
+            "completed_events": d.get("completed_events", 0),
         }
         if stage == "Lost" and d.get("had_demo_signal"):
             lost.append(row)
@@ -1487,7 +1510,16 @@ async def itero_demos(user=Depends(get_current_user)):
         "booked": booked,
         "completed": completed,
         "lost": lost,
-        "counts": {"booked": len(booked), "completed": len(completed), "lost": len(lost)},
+        "counts": {
+            "booked": len(booked),
+            "completed": len(completed),
+            "lost": len(lost),
+            # Event-level totals across the bucket — match the weekly report semantics
+            # (a doctor with 2 demos in the window contributes 2 to *_events).
+            "booked_events": sum(r.get("booked_events", 0) for r in booked),
+            "completed_events": sum(r.get("completed_events", 0) for r in completed),
+            "lost_events": sum(r.get("completed_events", 0) or r.get("booked_events", 0) for r in lost),
+        },
     }
 
 
