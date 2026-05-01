@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 6 — TM weekly report iTero demos aggregation tested end-to-end (backend + frontend). Backend: 8/8 pytest tests pass (3 demos aggregation + 3 doctor breakdown + 2 new PDF export). Verified POST /api/reports/generate populates demos_booked/demos_completed/demos_booked_list/demos_completed_list from meetings (is_demo=True), per-doctor breakdown includes demo-only rows, CSV export contains 'iTero demos booked this week' section, PDF export returns valid PDF (%PDF magic + application/pdf content-type, >500 bytes). Frontend: TM Reports page renders the [data-testid='report-demos-section'] block with per-demo rows including doctor name, clinic, scheduled date, and 'Scheduled'/'Completed' status pill (verified live with a created TM demo: row 'Dr UITestDemo_RT / UIClinic_RT · May 3, 08:38 AM / Scheduled'). Per-doctor breakdown displays the small 'X demos done' / 'X demos booked' pill for doctors with demo-only activity (no visits). Stats DEMOS BOOKED=23, DEMOS COMPLETED=10 displayed correctly in the draft modal.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_report_pdf_export.py",
+    "/app/backend/tests/test_report_demos.py",
+    "/app/backend/tests/test_report_doctor_breakdown.py",
+    "/app/test_reports/pytest/iter6_results.xml",
+    "/app/test_reports/pytest/iter6_report_demos.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is now ~3600+ lines (per file-of-reference notes) — long-standing technical debt; splitting into routers (reports, meetings, doctors, auth) would improve maintainability. Non-blocking.",
+    "Reports.jsx DemosSection renders all rows without virtualization; the seeded test database already produced 23 demo rows in the section. For TMs with many demos in a week the list could grow long — consider truncating with 'Show all' beyond ~10 items. Non-blocking.",
+    "DialogContent missing aria-describedby warnings observed in console (twice) on the Reports page weekly-report modal — accessibility nit. Non-blocking but worth adding a Description or aria-describedby to the DialogContent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_report_pdf_export.py (new)"
+  ],
+  "success_rate": {"backend": "100% (8/8 pytest)", "frontend": "100% verified flows (demo row render, status pill, per-doctor demos pill, generate/regenerate, complete-demo wiring)"},
+  "test_credentials": "tm1@field.io/tm123, manager@field.io/manager123, admin@field.io/admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Used /api/seed/init (idempotent). Created and deleted: doctor 'Dr UITestDemo_RT' + 1 demo meeting via UI integration test. Pytest tests create/delete TEST_-style doctors with teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Frontend localStorage auth key is 'fip_token' (not 'token'). Login does NOT redirect to /dashboard automatically — page goes to '/' first; just wait_for_timeout(3500) and read fip_token. Reports page uses [data-testid='reports-page'], generate button is [data-testid='generate-report-btn'], demos section is [data-testid='report-demos-section'], and each demo row has [data-testid='report-demo-{meeting_id}']. The weekly-report draft renders inside a Dialog/Portal — to read its text use page.locator on the dialog, not on reports-page (page text won't include modal content). Per-doctor breakdown wrapper is [data-testid='report-doctor-breakdown-edit'] in draft and [data-testid='report-doctor-breakdown-readonly'] in drawer view; demo-only rows show '1 demo done' / 'N demos done' / 'N demos booked' inline pills.",
+  "rca_of_the_issue": "n/a — feature verification, no bugs found. Original user complaint 'TM report doesn't capture iTero demos properly' is fixed: demos are aggregated from the meetings collection (is_demo=True) for both booked (created in week) and completed (status=Completed, updated_at in week), surfaced in JSON content (demos_booked/_completed plus _list arrays), per-doctor breakdown rows for demo-only doctors, CSV/PDF exports, and a dedicated UI list section with status pills."
+}

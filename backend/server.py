@@ -2998,19 +2998,94 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
     if needing:
         insights.append(f"Plan visits to: {', '.join([n['doctor_name'] for n in needing[:3]])}.")
 
-    # Commercial momentum from this week's visits
+    # Commercial momentum — visits-based (legacy manual flags) + meeting-based (new unified demo flow)
     demos_discussed = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("demo_discussed"))
-    demos_booked = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("demo_booked"))
-    demos_completed = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("demo_completed"))
     proposals_sent = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("proposal_sent"))
     proposals_followed = sum(1 for v in visits if (v.get("commercial_actions") or {}).get("proposal_follow_up_done"))
+
+    # Pull this-week's iTero demo meetings (source of truth for the new Book-a-Demo flow)
+    demo_meetings_booked = await db.meetings.find({
+        "tm_user_id": tm_id,
+        "is_demo": True,
+        "created_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+    }, {"_id": 0}).to_list(2000)
+    demo_meetings_completed = await db.meetings.find({
+        "tm_user_id": tm_id,
+        "is_demo": True,
+        "status": "Completed",
+        "updated_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+    }, {"_id": 0}).to_list(2000)
+
+    # Legacy fallback: count demos flagged directly on visits that don't have a linked meeting
+    legacy_demos_booked = sum(
+        1 for v in visits
+        if not v.get("meeting_id") and (v.get("commercial_actions") or {}).get("demo_booked")
+    )
+    legacy_demos_completed = sum(
+        1 for v in visits
+        if not v.get("meeting_id") and (
+            (v.get("commercial_actions") or {}).get("demo_completed")
+            or (v.get("itero_actions") or {}).get("demo_completed")
+        )
+    )
+
+    demos_booked = len(demo_meetings_booked) + legacy_demos_booked
+    demos_completed = len(demo_meetings_completed) + legacy_demos_completed
+
+    # Build a flat demo list (used by UI / PDF / CSV) showing each booked or completed demo this week
+    demo_doctor_ids = {m["doctor_id"] for m in (demo_meetings_booked + demo_meetings_completed)}
+    demo_doctor_lookup = {}
+    if demo_doctor_ids:
+        demo_doctor_lookup = {
+            d["id"]: d for d in await db.doctors.find(
+                {"id": {"$in": list(demo_doctor_ids)}}, {"_id": 0}
+            ).to_list(1000)
+        }
+
+    def _doctor_name_for(mt):
+        return mt.get("doctor_name") or (demo_doctor_lookup.get(mt.get("doctor_id"), {}) or {}).get("doctor_name") or "—"
+
+    demos_booked_list = sorted(
+        [
+            {
+                "meeting_id": m["id"],
+                "doctor_id": m["doctor_id"],
+                "doctor_name": _doctor_name_for(m),
+                "clinic_name": m.get("clinic_name"),
+                "scheduled_at": m.get("scheduled_at"),
+                "is_completed": m.get("status") == "Completed",
+                "status": m.get("status"),
+            }
+            for m in demo_meetings_booked
+        ],
+        key=lambda x: x.get("scheduled_at") or "",
+    )
+    demos_completed_list = sorted(
+        [
+            {
+                "meeting_id": m["id"],
+                "doctor_id": m["doctor_id"],
+                "doctor_name": _doctor_name_for(m),
+                "clinic_name": m.get("clinic_name"),
+                "scheduled_at": m.get("scheduled_at"),
+                "completed_at": m.get("updated_at"),
+            }
+            for m in demo_meetings_completed
+        ],
+        key=lambda x: x.get("completed_at") or "",
+    )
+
     if demos_completed:
-        insights.append(f"✓ {demos_completed} demo{'s' if demos_completed != 1 else ''} completed this week.")
+        insights.append(f"✓ {demos_completed} iTero demo{'s' if demos_completed != 1 else ''} completed this week.")
+    elif demos_booked:
+        insights.append(f"✓ {demos_booked} iTero demo{'s' if demos_booked != 1 else ''} booked this week.")
     if proposals_sent and not proposals_followed:
         insights.append(f"⚠️ {proposals_sent} proposal{'s' if proposals_sent != 1 else ''} sent — schedule follow-ups.")
 
     # Per-doctor breakdown for the week — one row per doctor visited
-    doctor_lookup = {d["id"]: d for d in (await db.doctors.find({"id": {"$in": list(doctor_ids)}}, {"_id": 0}).to_list(2000))}
+    # Include doctors who only have demo activity (but no visit) this week too
+    combined_doctor_ids = set(doctor_ids) | demo_doctor_ids
+    doctor_lookup = {d["id"]: d for d in (await db.doctors.find({"id": {"$in": list(combined_doctor_ids)}}, {"_id": 0}).to_list(2000))}
     # Tasks created this week, grouped by doctor
     tasks_by_doctor: dict = {}
     for tk in tasks_created:
@@ -3019,12 +3094,20 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
     visits_by_doctor: dict = {}
     for v in visits:
         visits_by_doctor.setdefault(v["doctor_id"], []).append(v)
+    # Aggregate demo meetings per doctor
+    demos_booked_by_doctor: dict = {}
+    demos_completed_by_doctor: dict = {}
+    for m in demo_meetings_booked:
+        demos_booked_by_doctor.setdefault(m["doctor_id"], []).append(m)
+    for m in demo_meetings_completed:
+        demos_completed_by_doctor.setdefault(m["doctor_id"], []).append(m)
     breakdown = []
-    for did, vs in visits_by_doctor.items():
+    for did in combined_doctor_ids:
+        vs = visits_by_doctor.get(did, [])
         d = doctor_lookup.get(did) or {}
         # Sort visits chronologically
         vs.sort(key=lambda x: x.get("visit_date", ""))
-        last_visit = vs[-1]
+        last_visit = vs[-1] if vs else {}
         topics_set = []
         barriers_set = []
         sentiments = []
@@ -3044,9 +3127,11 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         d_tasks = tasks_by_doctor.get(did, [])
         promise_titles = [t.get("task_title") for t in d_tasks if t.get("task_title")]
         # Pull a short note excerpt from the last visit (truncated)
-        note = (last_visit.get("free_text_note") or "").strip()
+        note = (last_visit.get("free_text_note") or "").strip() if last_visit else ""
         if len(note) > 220:
             note = note[:217] + "…"
+        d_booked = demos_booked_by_doctor.get(did, [])
+        d_completed = demos_completed_by_doctor.get(did, [])
         breakdown.append({
             "doctor_id": did,
             "doctor_name": d.get("doctor_name") or "—",
@@ -3054,17 +3139,22 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
             "city": d.get("city"),
             "segment": d.get("segment"),
             "visits_count": len(vs),
-            "last_visit_date": last_visit.get("visit_date", "")[:10],
+            "last_visit_date": (last_visit.get("visit_date", "") or "")[:10] if last_visit else "",
             "topics": topics_set[:5],
             "barriers": barriers_set[:5],
             "sentiment": latest_sentiment,
             "promises_count": len(promise_titles),
             "promises": promise_titles[:5],
             "note_excerpt": note,
+            "demos_booked_count": len(d_booked),
+            "demos_completed_count": len(d_completed),
+            "demo_dates": sorted([m.get("scheduled_at", "")[:10] for m in d_booked if m.get("scheduled_at")]),
         })
-    # Sort by visit count desc, then last visit desc
-    breakdown.sort(key=lambda x: (-x["visits_count"], x["last_visit_date"]), reverse=False)
-    breakdown.sort(key=lambda x: (-x["visits_count"], x["last_visit_date"] or ""), reverse=True)
+    # Sort by demo activity + visit count desc, then last visit desc
+    breakdown.sort(key=lambda x: (
+        x["demos_completed_count"] + x["demos_booked_count"] + x["visits_count"],
+        x["last_visit_date"] or "",
+    ), reverse=True)
 
     content = {
         "visits_completed": len(visits),
@@ -3082,6 +3172,8 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "demos_discussed": demos_discussed,
         "demos_booked": demos_booked,
         "demos_completed": demos_completed,
+        "demos_booked_list": demos_booked_list,
+        "demos_completed_list": demos_completed_list,
         "proposals_sent": proposals_sent,
         "proposals_followed_up": proposals_followed,
     }
@@ -3350,7 +3442,7 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
         w.writerow([])
         # Per-doctor breakdown
         w.writerow(["Per-doctor visit breakdown"])
-        w.writerow(["Doctor", "Clinic", "City", "Segment", "Visits", "Last visit", "Sentiment", "Topics", "Barriers", "Promises", "Latest note"])
+        w.writerow(["Doctor", "Clinic", "City", "Segment", "Visits", "Last visit", "Sentiment", "Topics", "Barriers", "Promises", "Demos booked", "Demos completed", "Demo dates", "Latest note"])
         for d in (c.get("doctor_breakdown", []) or []):
             w.writerow([
                 d.get("doctor_name", ""),
@@ -3363,8 +3455,22 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
                 "; ".join(d.get("topics", []) or []),
                 "; ".join(d.get("barriers", []) or []),
                 "; ".join(d.get("promises", []) or []),
+                d.get("demos_booked_count", 0),
+                d.get("demos_completed_count", 0),
+                "; ".join(d.get("demo_dates", []) or []),
                 d.get("note_excerpt", "") or "",
             ])
+        w.writerow([])
+        # iTero demos this week (booked + completed)
+        w.writerow(["iTero demos booked this week"])
+        w.writerow(["Doctor", "Clinic", "Scheduled at", "Status"])
+        for dm in (c.get("demos_booked_list", []) or []):
+            w.writerow([dm.get("doctor_name", ""), dm.get("clinic_name", "") or "", dm.get("scheduled_at", "") or "", dm.get("status", "") or ""])
+        w.writerow([])
+        w.writerow(["iTero demos completed this week"])
+        w.writerow(["Doctor", "Clinic", "Scheduled at", "Completed at"])
+        for dm in (c.get("demos_completed_list", []) or []):
+            w.writerow([dm.get("doctor_name", ""), dm.get("clinic_name", "") or "", dm.get("scheduled_at", "") or "", dm.get("completed_at", "") or ""])
         w.writerow([])
         w.writerow(["TM notes", c.get("notes_from_tm", "") or r.get("notes_from_tm", "")])
         if r.get("manager_comment"):
@@ -3480,6 +3586,44 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
         ]))
         flow.append(att)
 
+    # iTero demos this week — booked & completed
+    demos_booked_list = c.get("demos_booked_list") or []
+    demos_completed_list = c.get("demos_completed_list") or []
+    if demos_booked_list or demos_completed_list:
+        flow.append(Paragraph("iTero demos this week", styles["H2"]))
+        rows = [["Doctor", "Clinic", "Scheduled", "Status"]]
+        for dm in demos_booked_list:
+            rows.append([
+                dm.get("doctor_name", ""),
+                dm.get("clinic_name", "") or "",
+                (dm.get("scheduled_at", "") or "")[:16].replace("T", " "),
+                "Completed" if dm.get("is_completed") else (dm.get("status") or "Scheduled"),
+            ])
+        # also append completed-this-week demos whose booking isn't in this week
+        booked_ids = {dm.get("meeting_id") for dm in demos_booked_list}
+        for dm in demos_completed_list:
+            if dm.get("meeting_id") in booked_ids:
+                continue
+            rows.append([
+                dm.get("doctor_name", ""),
+                dm.get("clinic_name", "") or "",
+                (dm.get("scheduled_at", "") or "")[:16].replace("T", " "),
+                "Completed",
+            ])
+        dt = Table(rows, colWidths=[45 * mm, 45 * mm, 40 * mm, 25 * mm])
+        dt.setStyle(TableStyle([
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#274035")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#E2DDD2")),
+            ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#E2DDD2")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#FDFBF7"), colors.white]),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        flow.append(dt)
+
     # Per-doctor breakdown — what was discussed at each doctor this week
     breakdown = c.get("doctor_breakdown") or []
     if breakdown:
@@ -3499,6 +3643,17 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
             if d.get("sentiment") and d["sentiment"] != "—":
                 sub_bits.append(f"sentiment: {d['sentiment']}")
             head_bits.append(Paragraph(" · ".join(sub_bits), styles["Muted"]))
+            db_count = d.get("demos_booked_count", 0)
+            dc_count = d.get("demos_completed_count", 0)
+            if db_count or dc_count:
+                dm_line = []
+                if db_count:
+                    dm_line.append(f"{db_count} booked")
+                if dc_count:
+                    dm_line.append(f"{dc_count} completed")
+                if d.get("demo_dates"):
+                    dm_line.append("on " + ", ".join(d["demo_dates"]))
+                head_bits.append(Paragraph("<b>iTero demos:</b> " + " · ".join(dm_line), styles["Body"]))
             if d.get("topics"):
                 head_bits.append(Paragraph("<b>Topics:</b> " + ", ".join(d["topics"]), styles["Body"]))
             if d.get("barriers"):

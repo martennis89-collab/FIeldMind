@@ -280,6 +280,8 @@ function ReportEditor({ open, onClose, draft, setDraft, readonly, saving, onSave
             <Stat label="Proposals sent" value={c.proposals_sent || 0} />
           </div>
 
+          <DemosSection content={c} />
+
           <section>
             <Label className="text-xs uppercase tracking-widest mb-2 block" style={{ color: "var(--text-muted)" }}>Key insights</Label>
             <div className="space-y-2">
@@ -359,6 +361,11 @@ function ReportEditor({ open, onClose, draft, setDraft, readonly, saving, onSave
                     </div>
                     <div className="flex flex-col items-end gap-0.5">
                       <span className="pill pill-info">{d.visits_count} visit{d.visits_count !== 1 ? "s" : ""}</span>
+                      {(d.demos_booked_count > 0 || d.demos_completed_count > 0) && (
+                        <span className="pill pill-success text-[10px]">
+                          {d.demos_completed_count > 0 ? `${d.demos_completed_count} demo${d.demos_completed_count !== 1 ? "s" : ""} done` : `${d.demos_booked_count} demo${d.demos_booked_count !== 1 ? "s" : ""} booked`}
+                        </span>
+                      )}
                       {d.sentiment && d.sentiment !== "—" && (
                         <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{d.sentiment}</span>
                       )}
@@ -433,6 +440,57 @@ function Stat({ label, value, kind = "muted" }) {
       <div className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{label}</div>
       <div className="font-display text-2xl font-medium" style={{ color: fg }}>{value ?? 0}</div>
     </div>
+  );
+}
+
+function fmtDemoWhen(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return iso;
+  }
+}
+
+function DemosSection({ content }) {
+  const booked = content?.demos_booked_list || [];
+  const completed = content?.demos_completed_list || [];
+  if (booked.length === 0 && completed.length === 0) return null;
+  const bookedIds = new Set(booked.map((d) => d.meeting_id));
+  const extraCompleted = completed.filter((d) => !bookedIds.has(d.meeting_id));
+  return (
+    <section data-testid="report-demos-section">
+      <Label className="text-xs uppercase tracking-widest mb-2 block" style={{ color: "var(--text-muted)" }}>
+        iTero demos this week ({booked.length + extraCompleted.length})
+      </Label>
+      <div className="space-y-1.5">
+        {booked.map((d) => (
+          <div key={d.meeting_id} className="rounded border p-2 text-sm flex items-center justify-between gap-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }} data-testid={`report-demo-${d.meeting_id}`}>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium truncate" style={{ color: "var(--text-primary)" }}>{d.doctor_name}</div>
+              <div className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                {[d.clinic_name, fmtDemoWhen(d.scheduled_at)].filter(Boolean).join(" · ")}
+              </div>
+            </div>
+            <span className={`pill ${d.is_completed ? "pill-success" : "pill-info"}`}>
+              {d.is_completed ? "Completed" : (d.status || "Scheduled")}
+            </span>
+          </div>
+        ))}
+        {extraCompleted.map((d) => (
+          <div key={d.meeting_id} className="rounded border p-2 text-sm flex items-center justify-between gap-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }} data-testid={`report-demo-${d.meeting_id}`}>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium truncate" style={{ color: "var(--text-primary)" }}>{d.doctor_name}</div>
+              <div className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                {[d.clinic_name, `Scheduled ${fmtDemoWhen(d.scheduled_at)}`].filter(Boolean).join(" · ")}
+              </div>
+            </div>
+            <span className="pill pill-success">Completed</span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -581,6 +639,10 @@ function ReportDrawer({ reportId, onClose }) {
           <Stat label="Proposals sent" value={c.proposals_sent || 0} />
         </div>
 
+        <div className="mt-5">
+          <DemosSection content={c} />
+        </div>
+
         {(c.key_insights || []).length > 0 && (
           <section className="mt-5">
             <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>Key insights</div>
@@ -635,6 +697,11 @@ function ReportDrawer({ reportId, onClose }) {
                     </div>
                     <div className="flex flex-col items-end gap-0.5">
                       <span className="pill pill-info">{d.visits_count} visit{d.visits_count !== 1 ? "s" : ""}</span>
+                      {(d.demos_booked_count > 0 || d.demos_completed_count > 0) && (
+                        <span className="pill pill-success text-[10px]">
+                          {d.demos_completed_count > 0 ? `${d.demos_completed_count} demo${d.demos_completed_count !== 1 ? "s" : ""} done` : `${d.demos_booked_count} demo${d.demos_booked_count !== 1 ? "s" : ""} booked`}
+                        </span>
+                      )}
                       {d.sentiment && d.sentiment !== "—" && (
                         <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{d.sentiment}</span>
                       )}
