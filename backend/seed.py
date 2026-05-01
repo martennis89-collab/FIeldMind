@@ -13,27 +13,30 @@ def _iso(dt=None):
 
 
 async def seed_owner(db) -> dict:
-    """Idempotently create the platform Owner (Martin Petrov).
-    Runs on every startup; no-op if Owner already exists with that email.
+    """Idempotently create the platform Admin account (Martin Petrov).
+    Runs on every startup. Keeps email/password/role consistent with test_credentials.md.
     """
     OWNER_EMAIL = "martennis89@gmail.com"
+    OWNER_PASSWORD = "1234"
+    OWNER_ROLE = "Admin"
     existing = await db.users.find_one({"email": OWNER_EMAIL})
     if existing:
-        # If somehow a non-owner role exists with that email, upgrade them
-        if existing.get("role") != "Owner":
-            await db.users.update_one(
-                {"id": existing["id"]},
-                {"$set": {"role": "Owner", "active_status": True, "updated_at": _iso()}},
-            )
-            return {"upgraded": True, "id": existing["id"]}
-        return {"skipped": True}
+        updates = {"updated_at": _iso()}
+        if existing.get("role") != OWNER_ROLE:
+            updates["role"] = OWNER_ROLE
+        if not existing.get("active_status"):
+            updates["active_status"] = True
+        # Always re-assert the canonical password so the account is reliably accessible
+        updates["password_hash"] = hash_password(OWNER_PASSWORD)
+        await db.users.update_one({"id": existing["id"]}, {"$set": updates})
+        return {"synced": True, "id": existing["id"], "role": OWNER_ROLE}
     now = _iso()
     doc = {
         "id": _uuid(),
         "full_name": "Martin Petrov",
         "email": OWNER_EMAIL,
-        "password_hash": hash_password("1234."),
-        "role": "Owner",
+        "password_hash": hash_password(OWNER_PASSWORD),
+        "role": OWNER_ROLE,
         "team_id": None,
         "manager_user_id": None,
         "region": None,
@@ -42,7 +45,7 @@ async def seed_owner(db) -> dict:
         "updated_at": now,
     }
     await db.users.insert_one(doc)
-    return {"created": True, "id": doc["id"], "email": OWNER_EMAIL}
+    return {"created": True, "id": doc["id"], "email": OWNER_EMAIL, "role": OWNER_ROLE}
 
 
 
