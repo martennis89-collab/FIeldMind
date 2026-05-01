@@ -5,8 +5,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { toast } from "sonner";
-import api from "../lib/api";
-import { Brain, Lock, ShieldCheck } from "lucide-react";
+import { Brain, Lock } from "lucide-react";
 
 export default function Login() {
   const { login } = useAuth();
@@ -27,20 +26,6 @@ export default function Login() {
     } finally {
       setBusy(false);
     }
-  };
-
-  const seed = async () => {
-    try {
-      const { data } = await api.post("/seed/init");
-      if (data.skipped) toast.info("Demo data already present.");
-      else toast.success(`Seeded: ${data.created.users} users, ${data.created.doctors} doctors, ${data.created.visits} visits`);
-    } catch (err) {
-      toast.error("Seed failed");
-    }
-  };
-
-  const quickFill = (e, p) => {
-    setEmail(e); setPassword(p);
   };
 
   return (
@@ -103,41 +88,6 @@ export default function Login() {
               {busy ? "Signing in..." : "Sign in securely"}
             </Button>
           </form>
-
-          <div className="mt-8 p-4 rounded-md border" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}>
-            <div className="flex items-center gap-2 mb-3">
-              <ShieldCheck className="w-4 h-4" style={{ color: "var(--brand-primary)" }} />
-              <div className="text-sm font-medium" style={{ color: "var(--brand-primary)" }}>Demo accounts</div>
-            </div>
-            <div className="space-y-1.5 text-sm">
-              {[
-                ["admin@field.io", "admin123", "Admin"],
-                ["manager@field.io", "manager123", "Manager"],
-                ["tm1@field.io", "tm123", "Territory Manager"],
-                ["tm2@field.io", "tm123", "Territory Manager"],
-              ].map(([e, p, r]) => (
-                <button
-                  key={e}
-                  type="button"
-                  onClick={() => quickFill(e, p)}
-                  data-testid={`demo-fill-${r.toLowerCase().replace(/\s/g, "-")}`}
-                  className="w-full flex items-center justify-between px-2 py-1.5 rounded hover:bg-[var(--bg-muted)] transition-colors"
-                >
-                  <span className="font-mono text-xs">{e}</span>
-                  <span className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{r}</span>
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={seed}
-              data-testid="seed-btn"
-              className="mt-3 w-full text-xs underline"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Initialize demo data
-            </button>
-          </div>
         </div>
       </div>
 
