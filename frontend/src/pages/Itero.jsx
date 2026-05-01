@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import api from "../lib/api";
 import { StatusPill } from "../components/StatusPill";
-import { ScanLine, AlertTriangle, Activity, Flame, ArrowRight } from "lucide-react";
+import { ScanLine, AlertTriangle, Activity, Flame, ArrowRight, X } from "lucide-react";
 
 function FunnelRow({ label, value, max, color, testId }) {
   const pct = max ? Math.round((value / max) * 100) : 0;
@@ -231,14 +231,102 @@ function ManagerItero({ data }) {
 }
 
 function TMItero({ data }) {
-  const f = data.demo_funnel;
+  const [scope, setScope] = useState("week"); // 'week' | 'all'
+  const [breakdown, setBreakdown] = useState(null);
+  const [openBucket, setOpenBucket] = useState(null); // 'discussed' | 'booked' | 'completed' | null
+
+  useEffect(() => {
+    setBreakdown(null);
+    api.get("/itero/demo-breakdown", { params: { scope } })
+      .then((r) => setBreakdown(r.data))
+      .catch(() => setBreakdown({ counts: { discussed: 0, booked: 0, completed: 0 }, discussed: [], booked: [], completed: [] }));
+  }, [scope]);
+
+  const counts = breakdown?.counts || { discussed: 0, booked: 0, completed: 0 };
+
   return (
     <>
-      <div className="grid grid-cols-3 gap-3 mb-6">
-        <Stat label="Discussed" value={f.discussed} testId="tm-itero-discussed" />
-        <Stat label="Booked" value={f.booked} testId="tm-itero-booked" />
-        <Stat label="Completed" value={f.completed} kind="success" testId="tm-itero-completed" />
+      {/* Week / All-time toggle */}
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+            Demo funnel
+          </div>
+          <h3 className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>
+            {scope === "week" ? "This week" : "All time"} · click a tile to see doctors
+          </h3>
+        </div>
+        <div
+          className="inline-flex rounded-md border overflow-hidden text-xs"
+          style={{ borderColor: "var(--border-default)" }}
+          data-testid="itero-scope-toggle"
+        >
+          <button
+            type="button"
+            onClick={() => setScope("week")}
+            data-testid="itero-scope-week"
+            className="px-3 py-1.5 font-medium transition-colors"
+            style={{
+              background: scope === "week" ? "var(--brand-primary)" : "transparent",
+              color: scope === "week" ? "white" : "var(--text-secondary)",
+            }}
+          >
+            This week
+          </button>
+          <button
+            type="button"
+            onClick={() => setScope("all")}
+            data-testid="itero-scope-all"
+            className="px-3 py-1.5 font-medium transition-colors"
+            style={{
+              background: scope === "all" ? "var(--brand-primary)" : "transparent",
+              color: scope === "all" ? "white" : "var(--text-secondary)",
+            }}
+          >
+            All time
+          </button>
+        </div>
       </div>
+
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        <ClickableStat
+          label="Discussed"
+          value={counts.discussed}
+          testId="tm-itero-discussed"
+          onClick={() => counts.discussed > 0 && setOpenBucket("discussed")}
+        />
+        <ClickableStat
+          label="Booked"
+          value={counts.booked}
+          testId="tm-itero-booked"
+          onClick={() => counts.booked > 0 && setOpenBucket("booked")}
+        />
+        <ClickableStat
+          label="Completed"
+          value={counts.completed}
+          kind="success"
+          testId="tm-itero-completed"
+          onClick={() => counts.completed > 0 && setOpenBucket("completed")}
+        />
+      </div>
+      <p className="text-[11px] -mt-4 mb-6" style={{ color: "var(--text-muted)" }}>
+        Counts every demo <strong>event</strong> — a doctor with two demos in the window counts twice.
+        {scope === "week" && " Resets every Monday."}
+      </p>
+
+      {openBucket && (
+        <BreakdownDialog
+          title={
+            openBucket === "discussed" ? "Demos discussed"
+              : openBucket === "booked" ? "Demos booked"
+                : "Demos completed"
+          }
+          scope={scope}
+          rows={breakdown?.[openBucket] || []}
+          bucket={openBucket}
+          onClose={() => setOpenBucket(null)}
+        />
+      )}
 
       <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
         <h3 className="font-display text-lg font-medium mb-4" style={{ color: "var(--brand-primary)" }}>Demo follow-ups</h3>
@@ -271,6 +359,150 @@ function TMItero({ data }) {
         </div>
       </div>
     </>
+  );
+}
+
+function ClickableStat({ label, value, kind = "muted", testId, onClick }) {
+  const fg = kind === "success" ? "var(--status-success)" : "var(--brand-primary)";
+  const disabled = !value || value === 0;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      data-testid={testId}
+      className="text-left rounded-md border p-4 transition-all enabled:hover:border-[var(--brand-primary)] enabled:hover:shadow-sm disabled:cursor-default"
+      style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+    >
+      <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{label}</div>
+      <div className="font-display text-3xl font-medium mt-1" style={{ color: fg }}>{value ?? 0}</div>
+      {!disabled && (
+        <div className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "var(--text-muted)" }}>
+          See doctors →
+        </div>
+      )}
+    </button>
+  );
+}
+
+function BreakdownDialog({ title, scope, rows, bucket, onClose }) {
+  const fmt = (iso) => {
+    if (!iso) return "—";
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    } catch {
+      return iso;
+    }
+  };
+  // Group events by doctor so the same doctor appears once with all their event dates
+  const byDoctor = new Map();
+  rows.forEach((r) => {
+    if (!byDoctor.has(r.doctor_id)) {
+      byDoctor.set(r.doctor_id, {
+        doctor_id: r.doctor_id,
+        doctor_name: r.doctor_name,
+        clinic_name: r.clinic_name,
+        city: r.city,
+        segment: r.segment,
+        itero_stage: r.itero_stage,
+        events: [],
+      });
+    }
+    byDoctor.get(r.doctor_id).events.push(r);
+  });
+  const groups = Array.from(byDoctor.values());
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(39,64,53,0.55)" }}
+      onClick={onClose}
+      data-testid="itero-breakdown-dialog"
+    >
+      <div
+        className="w-full max-w-xl rounded-lg border shadow-xl max-h-[85vh] flex flex-col"
+        style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between p-5 border-b" style={{ borderColor: "var(--border-default)" }}>
+          <div>
+            <div className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+              {scope === "week" ? "This week" : "All time"} · {rows.length} event{rows.length === 1 ? "" : "s"}
+            </div>
+            <h3 className="font-display text-xl font-medium" style={{ color: "var(--brand-primary)" }}>{title}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="itero-breakdown-close"
+            className="p-1 rounded hover:bg-[var(--bg-paper)]"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" style={{ color: "var(--text-secondary)" }} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          {groups.length === 0 && (
+            <div className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>
+              No {bucket} demos in this window.
+            </div>
+          )}
+          {groups.map((g) => (
+            <Link
+              key={g.doctor_id}
+              to={`/doctors/${g.doctor_id}`}
+              onClick={onClose}
+              data-testid={`itero-breakdown-row-${g.doctor_id}`}
+              className="block rounded-md border p-3 transition-colors hover:border-[var(--brand-primary)]"
+              style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}
+            >
+              <div className="flex items-start justify-between gap-2 flex-wrap">
+                <div className="min-w-0">
+                  <div className="font-medium" style={{ color: "var(--brand-primary)" }}>{g.doctor_name}</div>
+                  <div className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                    {[g.clinic_name, g.city, g.segment].filter(Boolean).join(" · ") || "—"}
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-0.5 shrink-0">
+                  {g.events.length > 1 && (
+                    <StatusPill kind="info">{g.events.length} events</StatusPill>
+                  )}
+                  {g.itero_stage && (
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+                      {g.itero_stage}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {g.events.slice(0, 6).map((ev, idx) => (
+                  <span
+                    key={idx}
+                    className="text-[11px] px-2 py-0.5 rounded border"
+                    style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+                  >
+                    {fmt(ev.event_date)}
+                    {ev.source === "meeting" && " · via meeting"}
+                    {ev.interest_level && ` · interest: ${ev.interest_level}`}
+                  </span>
+                ))}
+                {g.events.length > 6 && (
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    +{g.events.length - 6} more
+                  </span>
+                )}
+              </div>
+            </Link>
+          ))}
+        </div>
+
+        <div className="p-4 border-t text-xs" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+          Click any row to open that doctor's profile.
+        </div>
+      </div>
+    </div>
   );
 }
 

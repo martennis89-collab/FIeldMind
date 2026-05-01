@@ -2942,6 +2942,183 @@ async def tm_itero(user=Depends(get_current_user)):
     }
 
 
+@api.get("/itero/demo-breakdown")
+async def itero_demo_breakdown(scope: str = "week", user=Depends(get_current_user)):
+    """Event-level breakdown of iTero demos.
+    scope=week → events whose date falls in the current ISO week (reset every Monday).
+    scope=all  → every event ever logged.
+
+    A demo "event" is counted from two sources:
+      • meetings with is_demo=True  (the Book-a-Demo flow) — date = scheduled_at
+      • visit.itero_actions / commercial_actions flags (legacy) — date = visit_date
+
+    Scoping:
+      • TM      → only the TM's own doctors
+      • Manager → all doctors in their team
+      • Admin/Owner → everyone
+    """
+    if scope not in ("week", "all"):
+        raise HTTPException(status_code=400, detail="scope must be 'week' or 'all'")
+
+    # Build owner scope filters
+    visit_filter: dict = {}
+    meeting_filter: dict = {"is_demo": True}
+    doctor_filter: dict = {}
+    if user["role"] == "TM":
+        visit_filter["tm_user_id"] = user["id"]
+        meeting_filter["tm_user_id"] = user["id"]
+        doctor_filter["assigned_tm_id"] = user["id"]
+    elif user["role"] == "Manager":
+        visit_filter["team_id"] = user.get("team_id")
+        meeting_filter["team_id"] = user.get("team_id")
+        doctor_filter["team_id"] = user.get("team_id")
+    # Admin/Owner — no extra filter
+
+    # Window
+    week_start_iso = week_end_iso = None
+    if scope == "week":
+        monday, sunday = _week_bounds()
+        week_start_iso = monday.isoformat()
+        week_end_iso = sunday.isoformat()
+
+    # Fetch the data we need
+    visits = await db.visits.find(visit_filter, {"_id": 0}).to_list(10000)
+    meetings = await db.meetings.find(meeting_filter, {"_id": 0}).to_list(10000)
+
+    # Doctor lookup for naming
+    doc_ids = {v.get("doctor_id") for v in visits if v.get("doctor_id")} | \
+              {m.get("doctor_id") for m in meetings if m.get("doctor_id")}
+    doctor_lookup: dict = {}
+    if doc_ids:
+        doctor_lookup = {
+            d["id"]: d
+            for d in await db.doctors.find({"id": {"$in": list(doc_ids)}}, {"_id": 0}).to_list(10000)
+        }
+
+    def _in_window(iso_str: Optional[str]) -> bool:
+        if scope == "all":
+            return True
+        if not iso_str:
+            return False
+        return week_start_iso <= iso_str <= (week_end_iso + "T23:59:59")
+
+    def _doc_info(did: str) -> dict:
+        d = doctor_lookup.get(did) or {}
+        return {
+            "doctor_id": did,
+            "doctor_name": d.get("doctor_name") or "—",
+            "clinic_name": d.get("clinic_name"),
+            "city": d.get("city"),
+            "segment": d.get("segment"),
+            "itero_stage": d.get("itero_stage"),
+        }
+
+    discussed: list = []
+    booked: list = []
+    completed: list = []
+
+    # 1) Visit-derived events (legacy flags)
+    #    Any visit whose itero_actions / commercial_actions has the flag set.
+    #    For demo_booked / demo_completed we prefer the explicit *_date on the action
+    #    if present; otherwise fall back to visit_date.
+    for v in visits:
+        ia = v.get("itero_actions") or {}
+        ca = v.get("commercial_actions") or {}
+        vd = v.get("visit_date") or ""
+        did = v.get("doctor_id")
+
+        # demo_discussed — use visit_date
+        if (ia.get("demo_discussed") or ca.get("demo_discussed")) and _in_window(vd):
+            discussed.append({
+                **_doc_info(did),
+                "event_date": vd,
+                "source": "visit",
+                "visit_id": v.get("id"),
+            })
+
+        # demo_booked — prefer ca.demo_booked_date (YYYY-MM-DD) or ia.demo_booked_date else visit_date
+        if ia.get("demo_booked") or ca.get("demo_booked"):
+            booked_date = ca.get("demo_booked_date") or ia.get("demo_booked_date") or vd
+            # Skip visit-based booked events that were also captured as a meeting
+            # (the meetings loop below already covers those). Dedup later by (doctor_id, ~date).
+            if _in_window(booked_date):
+                booked.append({
+                    **_doc_info(did),
+                    "event_date": booked_date,
+                    "source": "visit",
+                    "visit_id": v.get("id"),
+                })
+
+        # demo_completed — prefer ia.demo_completed_date or ca.demo_completed_date else visit_date
+        if ia.get("demo_completed") or ca.get("demo_completed"):
+            completed_date = ia.get("demo_completed_date") or ca.get("demo_completed_date") or vd
+            if _in_window(completed_date):
+                completed.append({
+                    **_doc_info(did),
+                    "event_date": completed_date,
+                    "source": "visit",
+                    "visit_id": v.get("id"),
+                    "interest_level": ia.get("scanner_interest_level"),
+                })
+
+    # 2) Meeting-derived events (Book-a-Demo flow is the source of truth going forward)
+    for m in meetings:
+        did = m.get("doctor_id")
+        sched = m.get("scheduled_at") or ""
+        created = m.get("created_at") or sched
+        # A booked demo event's date = when it was booked (created_at), so the week tab
+        # reflects "demos you booked *this* week" — matching the weekly report semantics.
+        if _in_window(created):
+            booked.append({
+                **_doc_info(did),
+                "event_date": created,
+                "scheduled_at": sched,
+                "source": "meeting",
+                "meeting_id": m.get("id"),
+                "status": m.get("status"),
+            })
+        if m.get("status") == "Completed":
+            completed_at = m.get("updated_at") or sched
+            if _in_window(completed_at):
+                completed.append({
+                    **_doc_info(did),
+                    "event_date": completed_at,
+                    "scheduled_at": sched,
+                    "source": "meeting",
+                    "meeting_id": m.get("id"),
+                })
+
+    # Dedup booked/completed: when a visit was generated from a meeting (meeting_id present),
+    # we'd double-count. The visit loop intentionally keeps them — we de-dup here by removing
+    # visit rows whose visit_id is referenced as a meeting's visit_id.
+    linked_visit_ids = {m.get("visit_id") for m in meetings if m.get("visit_id")}
+    def _dedup(rows):
+        return [r for r in rows if not (r.get("source") == "visit" and r.get("visit_id") in linked_visit_ids)]
+
+    booked = _dedup(booked)
+    completed = _dedup(completed)
+
+    # Sort newest first
+    discussed.sort(key=lambda r: r.get("event_date") or "", reverse=True)
+    booked.sort(key=lambda r: r.get("event_date") or "", reverse=True)
+    completed.sort(key=lambda r: r.get("event_date") or "", reverse=True)
+
+    return {
+        "scope": scope,
+        "week_start": week_start_iso,
+        "week_end": week_end_iso,
+        "counts": {
+            "discussed": len(discussed),
+            "booked": len(booked),
+            "completed": len(completed),
+            "unique_doctors_completed": len({r["doctor_id"] for r in completed}),
+        },
+        "discussed": discussed,
+        "booked": booked,
+        "completed": completed,
+    }
+
+
 @api.get("/dashboard/tm/invisalign")
 async def tm_invisalign(user=Depends(get_current_user)):
     if user["role"] != "TM":
