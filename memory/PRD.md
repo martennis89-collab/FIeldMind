@@ -332,6 +332,23 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
 - **Larger imports**: row cap raised from 2 000 → **5 000** in `/doctors/import/preview` and `/commit` (HTTP 413 above that).
 - Test coverage: 4 new tests in `tests/test_doctor_import.py` (`test_first_last_name_merge`, `test_new_segment_accepted` (now also asserts Lapsed), `test_manual_add_new_segment`) + template-shape assertion updated. **16/16 import+manual-add tests green.**
 
+
+## Iteration 22 (May 2026) — TM Weekly Report captures iTero demos
+**Problem**: `_build_report_draft` in `/app/backend/server.py` was only counting demos from legacy `visits.commercial_actions.demo_*` flags. The new unified Book-a-Demo flow stores demos in the `meetings` collection (`is_demo=True`), and the one-tap "Mark demo done" flow sets `itero_actions.demo_completed` (not `commercial_actions`). Consequently, TMs who booked/completed demos via the new flow saw **0 demos** on their weekly report.
+
+**Fix**:
+- `_build_report_draft` now queries `meetings` for `is_demo=True` & TM ownership, counting:
+  - `demos_booked` = meetings with `created_at` in the report week (+ legacy visits without `meeting_id`)
+  - `demos_completed` = meetings with `status="Completed"` & `updated_at` in the week (+ legacy visits without `meeting_id`; includes `itero_actions.demo_completed` fallback)
+- Added `content.demos_booked_list` and `content.demos_completed_list` payload arrays (each row: doctor_id, doctor_name, clinic_name, scheduled_at, meeting_id, status/completed_at) — surfaced in the Reports UI.
+- Per-doctor breakdown now includes rows for doctors with demo-only activity (no visit this week) and each row exposes `demos_booked_count`, `demos_completed_count`, `demo_dates`.
+- CSV export adds two new sections: "iTero demos booked this week" and "iTero demos completed this week".
+- PDF export adds an "iTero demos this week" table + "iTero demos" line on each per-doctor breakdown card.
+- Frontend `Reports.jsx`: new `<DemosSection>` block under the demo stats in both Draft and Manager drawer views; each per-doctor breakdown card now shows an inline "N demos done" / "N demos booked" success pill.
+
+**Tests**: `backend/tests/test_report_demos.py` (3/3) + full testing-agent E2E — 8/8 backend pytest + live UI verification (`[data-testid='report-demos-section']` renders, status pill correct, per-doctor demo pill visible).
+
+
 ## Backlog (next phases)
 **P1**
 - Refactor `server.py` (~3 200 lines) into FastAPI APIRouter modules (`routers/users.py`, `doctors.py`, `visits.py`, `tasks.py`, `expenses.py`, `reports.py`, `dashboards.py`, `taxonomy.py`)
