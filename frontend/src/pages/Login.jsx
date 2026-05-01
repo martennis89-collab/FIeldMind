@@ -29,28 +29,59 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-2" style={{ background: "var(--bg-default)" }}>
+    <div
+      className="grid lg:grid-cols-2 min-h-screen lg:h-screen lg:overflow-hidden"
+      style={{ background: "var(--bg-default)" }}
+    >
       {/* Left form */}
-      <div className="flex flex-col justify-center px-6 sm:px-12 lg:px-20 py-10">
+      <div className="flex flex-col justify-center px-6 sm:px-12 lg:px-16 py-8 lg:py-6 lg:overflow-y-auto">
         <div className="max-w-md w-full mx-auto">
-          <div className="flex items-center gap-2 mb-10">
-            <div className="w-10 h-10 rounded-md flex items-center justify-center" style={{ background: "var(--brand-primary)" }}>
+          <div className="flex items-center gap-2 mb-6 lg:mb-8">
+            <div
+              className="w-10 h-10 rounded-md flex items-center justify-center"
+              style={{ background: "var(--brand-primary)" }}
+            >
               <Brain className="w-5 h-5 text-white" />
             </div>
             <div>
-              <div className="font-display text-xl font-semibold" style={{ color: "var(--brand-primary)" }}>FieldMind</div>
-              <div className="text-[11px] uppercase tracking-[0.2em]" style={{ color: "var(--text-muted)" }}>Field Intelligence</div>
+              <div
+                className="font-display text-xl font-semibold"
+                style={{ color: "var(--brand-primary)" }}
+              >
+                FieldMind
+              </div>
+              <div
+                className="text-[11px] uppercase tracking-[0.2em]"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Field Intelligence
+              </div>
             </div>
           </div>
 
-          <h1 className="font-display text-4xl sm:text-5xl font-light tracking-tight" style={{ color: "var(--brand-primary)" }}>
-            Your secure<br />second brain<br /><span className="font-medium">in the field.</span>
+          <h1
+            className="font-display text-3xl sm:text-4xl lg:text-[2.5rem] font-light tracking-tight leading-[1.1]"
+            style={{ color: "var(--brand-primary)" }}
+          >
+            Your secure
+            <br />
+            second brain
+            <br />
+            <span className="font-medium">in the field.</span>
           </h1>
-          <p className="mt-4 text-base leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-            Remember every conversation. Track every promise. Surface the doctors who need attention next.
+          <p
+            className="mt-3 text-sm sm:text-base leading-relaxed"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            Remember every conversation. Track every promise. Surface the
+            doctors who need attention next.
           </p>
 
-          <form onSubmit={submit} className="mt-10 space-y-5" data-testid="login-form">
+          <form
+            onSubmit={submit}
+            className="mt-6 lg:mt-8 space-y-4"
+            data-testid="login-form"
+          >
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -88,22 +119,60 @@ export default function Login() {
               {busy ? "Signing in..." : "Sign in securely"}
             </Button>
           </form>
+
+          {/* Mobile quote — shown below the form so it's visible with at most a small scroll */}
+          <div
+            className="lg:hidden mt-8 rounded-lg border p-5"
+            style={{
+              background: "var(--brand-primary)",
+              borderColor: "var(--brand-primary)",
+            }}
+            data-testid="mobile-quote-block"
+          >
+            <p className="text-[10px] uppercase tracking-[0.3em] text-white/70 mb-2">
+              Not a CRM
+            </p>
+            <p className="font-display text-base leading-snug text-white">
+              "Salesforce records that an activity happened.{" "}
+              <span className="font-medium">
+                FieldMind remembers what was discussed, what was promised, and
+                what the market is saying.
+              </span>
+              "
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Right hero */}
-      <div className="hidden lg:block relative overflow-hidden" style={{ background: "var(--bg-paper)" }}>
+      {/* Right hero (desktop only) */}
+      <div
+        className="hidden lg:block relative overflow-hidden"
+        style={{ background: "var(--bg-paper)" }}
+      >
         <img
           src="https://images.pexels.com/photos/29390707/pexels-photo-29390707.jpeg"
           alt=""
           className="absolute inset-0 w-full h-full object-cover"
         />
-        <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, rgba(39,64,53,0.35), rgba(39,64,53,0.6))" }} />
-        <div className="relative h-full flex items-end p-12">
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(135deg, rgba(39,64,53,0.35), rgba(39,64,53,0.6))",
+          }}
+        />
+        <div className="relative h-full flex items-end p-10 xl:p-12">
           <div className="text-white max-w-md">
-            <p className="text-xs uppercase tracking-[0.3em] opacity-80 mb-4">Not a CRM</p>
-            <p className="font-display text-3xl font-light leading-tight">
-              "Salesforce records that an activity happened. <span className="font-medium">FieldMind remembers what was discussed, what was promised, and what the market is saying.</span>"
+            <p className="text-xs uppercase tracking-[0.3em] opacity-80 mb-3">
+              Not a CRM
+            </p>
+            <p className="font-display text-2xl xl:text-3xl font-light leading-snug">
+              "Salesforce records that an activity happened.{" "}
+              <span className="font-medium">
+                FieldMind remembers what was discussed, what was promised, and
+                what the market is saying.
+              </span>
+              "
             </p>
           </div>
         </div>
