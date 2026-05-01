@@ -26,6 +26,7 @@ import Meetings from "@/pages/Meetings";
 import BookMeeting from "@/pages/BookMeeting";
 import IteroPipeline from "@/pages/IteroPipeline";
 import IteroDemos from "@/pages/IteroDemos";
+import Account from "@/pages/Account";
 
 export default function App() {
   return (
@@ -200,6 +201,15 @@ export default function App() {
             element={
               <ProtectedRoute roles={["TM", "Admin"]}>
                 <Layout><AddDoctor /></Layout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/account"
+            element={
+              <ProtectedRoute>
+                <Layout><Account /></Layout>
               </ProtectedRoute>
             }
           />

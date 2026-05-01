@@ -447,6 +447,30 @@ async def logout(request: Request, user=Depends(get_current_user)):
     return {"ok": True}
 
 
+class ChangePasswordBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@api.post("/auth/change-password")
+async def change_password(body: ChangePasswordBody, user=Depends(get_current_user)):
+    """Self-service password change — any authenticated user can reset their own password."""
+    if len(body.new_password) < 4:
+        raise HTTPException(status_code=400, detail="New password must be at least 4 characters")
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="New password must be different from the current one")
+    # Re-fetch to get the current password_hash (get_current_user strips it)
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not verify_password(body.current_password, full.get("password_hash", "")):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": _now_iso()}},
+    )
+    await _audit(user, "change_password", "user", user["id"])
+    return {"ok": True}
+
+
 # ====================================================
 # SEED (gated — only available when ENABLE_DEMO_SEED=true, i.e. preview/dev)
 # ====================================================

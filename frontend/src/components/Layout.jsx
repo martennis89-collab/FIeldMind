@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
   X,
   Layers,
+  UserRound,
 } from "lucide-react";
 import { Button } from "./ui/button";
 
@@ -61,6 +62,7 @@ const TM_MORE = [
   { to: "/meetings", label: "Meetings", icon: Calendar, testId: "more-meetings" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
+  { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
 ];
 
 // Manager: Dashboard / Intervention / iTero / Invisalign / More
@@ -76,6 +78,7 @@ const MANAGER_MORE = [
   { to: "/team-performance", label: "Team performance", icon: TrendingUp, testId: "more-team" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
+  { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
 ];
 
 export default function Layout({ children }) {
@@ -136,10 +139,24 @@ export default function Layout({ children }) {
             )}
           </nav>
           <div className="flex items-center gap-3">
-            <div className="hidden sm:block text-right leading-tight">
+            <Link
+              to="/account"
+              data-testid="nav-account"
+              className="hidden sm:block text-right leading-tight px-2 py-1 rounded hover:bg-[var(--bg-paper)] transition-colors"
+              title="My account"
+            >
               <div className="text-sm font-medium" data-testid="current-user-name">{user?.full_name}</div>
-              <div className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{user?.role}</div>
-            </div>
+              <div className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{user?.role} · My account</div>
+            </Link>
+            <Link
+              to="/account"
+              data-testid="nav-account-mobile"
+              className="sm:hidden p-2 rounded hover:bg-[var(--bg-paper)] transition-colors"
+              title="My account"
+              aria-label="My account"
+            >
+              <UserRound className="w-5 h-5" style={{ color: "var(--text-secondary)" }} />
+            </Link>
             <Button
               variant="ghost"
               size="sm"
