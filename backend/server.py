@@ -1993,7 +1993,10 @@ async def tm_dashboard(user=Depends(get_current_user)):
     enriched.sort(key=lambda d: d["visit_priority_score"], reverse=True)
 
     today = datetime.now(timezone.utc).date().isoformat()
-    week_start = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    now_iso = _now_iso()
+    monday, sunday = _week_bounds()
+    week_start = monday.isoformat()
+    week_end_inclusive = sunday.isoformat()
 
     task_q = {}
     if user["role"] == "TM":
@@ -2005,11 +2008,29 @@ async def tm_dashboard(user=Depends(get_current_user)):
     open_total = await db.tasks.count_documents({**task_q, "status": {"$in": ["Open", "Overdue"]}})
 
     visit_q = {}
+    meeting_q = {}
     if user["role"] == "TM":
         visit_q["tm_user_id"] = user["id"]
+        meeting_q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         visit_q["team_id"] = user.get("team_id")
-    visits_week = await db.visits.count_documents({**visit_q, "visit_date": {"$gte": week_start}})
+        meeting_q["team_id"] = user.get("team_id")
+    # Visits logged in the current ISO week (resets every Monday)
+    visits_week = await db.visits.count_documents({
+        **visit_q,
+        "visit_date": {"$gte": week_start, "$lte": week_end_inclusive + "T23:59:59"},
+    })
+    # Meetings — open (scheduled, not yet completed) and completed this week
+    open_meetings = await db.meetings.count_documents({
+        **meeting_q,
+        "status": "Scheduled",
+        "scheduled_at": {"$gte": now_iso[:10]},  # today or later
+    })
+    completed_meetings_week = await db.meetings.count_documents({
+        **meeting_q,
+        "status": "Completed",
+        "updated_at": {"$gte": week_start, "$lte": week_end_inclusive + "T23:59:59"},
+    })
 
     priorities = enriched[:8]
     overdue_doctors = [d for d in enriched if d["overdue_promises"] > 0][:6]
@@ -2022,6 +2043,8 @@ async def tm_dashboard(user=Depends(get_current_user)):
             "due_today": due_today,
             "visits_this_week": visits_week,
             "doctors_total": len(enriched),
+            "open_meetings": open_meetings,
+            "completed_meetings_this_week": completed_meetings_week,
         },
         "top_priorities": priorities,
         "overdue_doctors": overdue_doctors,
@@ -2037,11 +2060,26 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "Admin"))):
     users = await db.users.find({**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}, {"_id": 0, "password_hash": 0}).to_list(200)
 
     today = datetime.now(timezone.utc).date().isoformat()
-    week_start = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    now_iso = _now_iso()
+    monday, sunday = _week_bounds()
+    week_start = monday.isoformat()
+    week_end_inclusive = sunday.isoformat() + "T23:59:59"
     month_start = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
-    visits_week = [v for v in visits if v["visit_date"] >= week_start]
+    visits_week = [v for v in visits if week_start <= v["visit_date"] <= week_end_inclusive]
     visits_month = [v for v in visits if v["visit_date"] >= month_start]
+
+    # Meetings — open & completed-this-week counts (team-scoped)
+    open_meetings = await db.meetings.count_documents({
+        **team_q,
+        "status": "Scheduled",
+        "scheduled_at": {"$gte": now_iso[:10]},
+    })
+    completed_meetings_week = await db.meetings.count_documents({
+        **team_q,
+        "status": "Completed",
+        "updated_at": {"$gte": week_start, "$lte": week_end_inclusive},
+    })
 
     # by TM
     by_tm: dict = {}
@@ -2103,6 +2141,8 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "Admin"))):
             "doctors": len(docs),
             "tms": len(users),
             "overdue_promises": sum(b["overdue"] for b in by_tm.values()),
+            "open_meetings": open_meetings,
+            "completed_meetings_this_week": completed_meetings_week,
         },
         "by_tm": list(by_tm.values()),
         "top_topics": top_topics,

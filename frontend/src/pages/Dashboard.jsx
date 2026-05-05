@@ -4,7 +4,7 @@ import api from "../lib/api";
 import { Link, useNavigate } from "react-router-dom";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import {
-  Activity, AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, Flame, MapPin, TrendingDown, TrendingUp, Users,
+  Activity, AlertTriangle, Calendar, CalendarClock, CheckCircle2, ClipboardList, Flame, MapPin, TrendingDown, TrendingUp, Users,
   Sparkles, ChevronRight, ChevronDown, Target,
 } from "lucide-react";
 
@@ -208,11 +208,15 @@ function ManagerView({ data, performance, commercial, interventions, crossSell }
 
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
         <StatCard label="Visits this week" value={data.stats.visits_week} icon={Activity} kind="info" testId="stat-visits-week" />
         <StatCard label="Doctors" value={data.stats.doctors} icon={Users} kind="muted" testId="stat-doctors" />
         <StatCard label="Critical" value={critCount} icon={AlertTriangle} kind="danger" testId="stat-critical" />
         <StatCard label="High opportunity" value={oppCount} icon={Sparkles} kind="success" testId="stat-opportunity" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <StatCard label="Open meetings" value={data.stats.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
+        <StatCard label="Meetings done this week" value={data.stats.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
       </div>
 
       {(commercial?.drop_offs || []).length > 0 && (
@@ -305,11 +309,15 @@ function TMView({ data }) {
   if (!data) return null;
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
         <StatCard label="Visits this week" value={data.stats.visits_this_week} icon={Activity} kind="info" testId="stat-visits-week" />
         <StatCard label="Open promises" value={data.stats.open_promises} icon={ClipboardList} kind="muted" testId="stat-open-promises" />
         <StatCard label="Overdue" value={data.stats.overdue_promises} icon={AlertTriangle} kind="danger" testId="stat-overdue" />
         <StatCard label="Due today" value={data.stats.due_today} icon={CalendarClock} kind="warning" testId="stat-due-today" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <StatCard label="Open meetings" value={data.stats.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
+        <StatCard label="Meetings done this week" value={data.stats.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
       </div>
 
       <UpcomingDemosWidget />
