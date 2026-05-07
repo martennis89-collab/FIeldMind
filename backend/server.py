@@ -1732,6 +1732,46 @@ async def complete_demo_meeting(meeting_id: str, body: CompleteDemoBody, user=De
     return {"ok": True, "meeting_id": meeting_id, "visit_id": visit_id, "task_id": task_id}
 
 
+class CompleteMeetingBody(BaseModel):
+    outcome_note: Optional[str] = None
+
+
+@api.post("/meetings/{meeting_id}/complete")
+async def complete_meeting(meeting_id: str, body: CompleteMeetingBody, user=Depends(get_current_user)):
+    """One-tap completion for any meeting. Sets status=Completed.
+    For demo meetings this is a thin wrapper that delegates to /complete-demo
+    (so the pipeline auto-advance to 'Demo Completed' still happens).
+    For regular meetings it just marks them done — no pipeline change.
+    """
+    m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if m["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if m.get("status") == "Completed":
+        raise HTTPException(status_code=400, detail="Meeting already completed")
+    if m.get("is_demo"):
+        # Delegate so the iTero pipeline still auto-advances to "Demo Completed"
+        return await complete_demo_meeting(
+            meeting_id,
+            CompleteDemoBody(
+                interest_level="Medium",
+                outcome_note=body.outcome_note or None,
+            ),
+            user,
+        )
+    now = _now_iso()
+    update = {"status": "Completed", "updated_at": now}
+    if body.outcome_note and body.outcome_note.strip():
+        # Persist the note on the meeting subject if provided so it isn't lost
+        existing_subj = (m.get("subject") or "").strip()
+        suffix = body.outcome_note.strip()
+        update["subject"] = f"{existing_subj} — {suffix}" if existing_subj else suffix
+    await db.meetings.update_one({"id": meeting_id}, {"$set": update})
+    await _audit(user, "complete", "meeting", meeting_id, new={"status": "Completed"})
+    return {"ok": True, "meeting_id": meeting_id, "is_demo": False}
+
+
 # ====================================================
 # EVENTS  (generic agenda items, no doctor link)
 # ====================================================

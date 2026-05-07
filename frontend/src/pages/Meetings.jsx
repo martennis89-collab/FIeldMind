@@ -113,6 +113,17 @@ export default function Meetings() {
 
   const logVisit = (m) => navigate(`/log-visit?doctor_id=${m.doctor_id}&meeting_id=${m.id}`);
 
+  const markMeetingDone = async (m) => {
+    if (!window.confirm(`Mark meeting with ${m.doctor_name} as done?`)) return;
+    try {
+      await api.post(`/meetings/${m.id}/complete`, {});
+      toast.success("Meeting marked done");
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
+
   const total = combined.length;
 
   return (
@@ -197,7 +208,7 @@ export default function Meetings() {
                 <div className="space-y-2">
                   {grouped[sec].map((r) =>
                     r._kind === "meeting"
-                      ? <MeetingCard key={`m-${r.id}`} m={r} onLog={() => logVisit(r)} onCancel={() => cancelMeeting(r)} onMarkDemoDone={() => setDemoDoneFor(r)} />
+                      ? <MeetingCard key={`m-${r.id}`} m={r} onLog={() => logVisit(r)} onCancel={() => cancelMeeting(r)} onMarkDemoDone={() => setDemoDoneFor(r)} onMarkDone={() => markMeetingDone(r)} />
                       : <EventCard key={`e-${r.id}`} e={r} onEdit={() => setEventDialog(r)} onDone={() => markEventDone(r)} onDelete={() => deleteEvent(r)} />,
                   )}
                 </div>
@@ -223,7 +234,7 @@ export default function Meetings() {
   );
 }
 
-function MeetingCard({ m, onLog, onCancel, onMarkDemoDone }) {
+function MeetingCard({ m, onLog, onCancel, onMarkDemoDone, onMarkDone }) {
   const cancelled = m.status === "Cancelled";
   const completed = m.status === "Completed";
   const isDemo = !!m.is_demo;
@@ -264,15 +275,19 @@ function MeetingCard({ m, onLog, onCancel, onMarkDemoDone }) {
           {cancelled && <span className="pill pill-muted">Cancelled</span>}
           {!completed && !cancelled && (
             <div className="flex flex-wrap gap-1 justify-end">
-              {isDemo && (
+              {isDemo ? (
                 <Button size="sm" onClick={onMarkDemoDone} data-testid={`meeting-mark-demo-done-${m.id}`}
                   style={{ background: "#A8542F", color: "white" }}>
                   <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Mark demo done
                 </Button>
+              ) : (
+                <Button size="sm" onClick={onMarkDone} data-testid={`meeting-mark-done-${m.id}`}
+                  style={{ background: "var(--status-success)", color: "white" }}>
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Mark done
+                </Button>
               )}
               <Button size="sm" onClick={onLog} data-testid={`meeting-log-${m.id}`}
-                variant={isDemo ? "outline" : "default"}
-                style={isDemo ? {} : { background: "var(--brand-primary)", color: "white" }}>
+                variant="outline">
                 <ClipboardList className="w-3.5 h-3.5 mr-1" /> Log visit
               </Button>
               <Button size="sm" variant="outline" onClick={onCancel} data-testid={`meeting-cancel-${m.id}`}>
