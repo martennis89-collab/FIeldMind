@@ -249,3 +249,89 @@ async def analyze_note(note: str, session_id: str) -> dict:
     except Exception as e:
         logger.exception("AI analyze_note failed: %s", e)
         return _empty_result(f"AI error: {type(e).__name__}")
+
+
+async def extract_task_from_text(text: str, doctor_names: Optional[list] = None) -> dict:
+    """Extract a single structured task/promise from a quick voice or typed note.
+
+    Returns: {
+      "task_title": str,           # short imperative; empty if nothing actionable
+      "task_description": str,     # one-sentence context
+      "is_promise": bool,          # true if the TM committed to do something
+      "suggested_due_date": str|None,  # YYYY-MM-DD, default = 3 business days out
+      "priority": "Low"|"Medium"|"High",
+      "doctor_hint": str|None,     # best-match doctor name from the provided list
+    }
+
+    No AI invented facts — if no actionable task is detected, task_title is "".
+    """
+    text = (text or "").strip()
+    if not text:
+        return {
+            "task_title": "", "task_description": "",
+            "is_promise": False, "suggested_due_date": None,
+            "priority": "Medium", "doctor_hint": None,
+        }
+    if not EMERGENT_KEY:
+        return {
+            "task_title": text[:120],
+            "task_description": text[:400],
+            "is_promise": False,
+            "suggested_due_date": None,
+            "priority": "Medium",
+            "doctor_hint": None,
+        }
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_KEY,
+            session_id="task-extract",
+            system_message=(
+                "You convert a TM's short note into ONE actionable task or promise.\n"
+                "Output STRICT JSON with these keys ONLY: task_title (string, short imperative <=160 chars), "
+                "task_description (string, one sentence, <=400 chars), is_promise (bool — true if the TM said they'd do it), "
+                "suggested_due_date (YYYY-MM-DD or null; if no date specified, suggest 3 business days from today), "
+                "priority ('Low'|'Medium'|'High'), doctor_hint (string|null — only echo a name from the provided list if you find a clear match in the note).\n"
+                "Never invent details. If the note isn't actionable, return task_title as empty string."
+            ),
+        ).with_model(MODEL_PROVIDER, MODEL_NAME)
+
+        names_block = ""
+        if doctor_names:
+            names_block = "\n\nDoctor names available:\n- " + "\n- ".join(doctor_names[:200])
+        msg = UserMessage(text=f"Note:\n{text}{names_block}\n\nReturn JSON only.")
+        raw = await chat.send_message(msg)
+
+        m = re.search(r"\{[\s\S]+\}", raw or "")
+        data = json.loads(m.group(0)) if m else {}
+        title = (data.get("task_title") or "").strip()[:160]
+        desc = (data.get("task_description") or "").strip()[:400]
+        is_promise = bool(data.get("is_promise"))
+        due = data.get("suggested_due_date")
+        if due and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(due)):
+            due = None
+        prio = data.get("priority")
+        if prio not in ("Low", "Medium", "High"):
+            prio = "Medium"
+        hint = (data.get("doctor_hint") or None)
+        if hint and doctor_names and hint not in doctor_names:
+            # Keep only an exact match — never let the model invent a doctor
+            hint = None
+        return {
+            "task_title": title,
+            "task_description": desc,
+            "is_promise": is_promise,
+            "suggested_due_date": due,
+            "priority": prio,
+            "doctor_hint": hint,
+        }
+    except Exception as e:
+        logger.exception("AI extract_task_from_text failed: %s", e)
+        return {
+            "task_title": text[:120],
+            "task_description": text[:400],
+            "is_promise": False,
+            "suggested_due_date": None,
+            "priority": "Medium",
+            "doctor_hint": None,
+            "ai_error": f"{type(e).__name__}",
+        }

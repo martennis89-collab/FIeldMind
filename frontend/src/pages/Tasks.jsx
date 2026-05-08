@@ -8,8 +8,9 @@ import { Textarea } from "../components/ui/textarea";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { StatusPill, priorityKind } from "../components/StatusPill";
-import { CalendarClock, CheckCircle2, AlertTriangle, Brain, Clock, Pencil, Trash2, Undo2, Plus, Search as SearchIcon } from "lucide-react";
+import { CalendarClock, CheckCircle2, AlertTriangle, Brain, Clock, Pencil, Trash2, Undo2, Plus, Wand2, Search as SearchIcon } from "lucide-react";
 import { toast } from "sonner";
+import QuickCaptureDialog from "../components/QuickCaptureDialog";
 
 const KINDS = [
   { key: "open", label: "Open" },
@@ -37,6 +38,7 @@ export default function Tasks() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [quickCapture, setQuickCapture] = useState(false);
   const [allDoctors, setAllDoctors] = useState([]);
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -166,13 +168,23 @@ export default function Tasks() {
             Things you <span className="font-medium">owe.</span>
           </h1>
         </div>
-        <Button
-          onClick={() => setCreating(true)}
-          data-testid="new-task-btn"
-          style={{ background: "var(--brand-secondary)", color: "white" }}
-        >
-          <Plus className="w-4 h-4 mr-1" /> New task
-        </Button>
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            onClick={() => setQuickCapture(true)}
+            data-testid="quick-capture-btn"
+            variant="outline"
+            style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}
+          >
+            <Wand2 className="w-4 h-4 mr-1" /> Quick capture
+          </Button>
+          <Button
+            onClick={() => setCreating(true)}
+            data-testid="new-task-btn"
+            style={{ background: "var(--brand-secondary)", color: "white" }}
+          >
+            <Plus className="w-4 h-4 mr-1" /> New task
+          </Button>
+        </div>
       </div>
 
       {/* Open / Completed toggle */}
@@ -246,6 +258,12 @@ export default function Tasks() {
           setOpen((prev) => [t, ...prev]);
           if (doctor) setDoctors((m) => ({ ...m, [doctor.id]: doctor }));
         }}
+      />
+
+      <QuickCaptureDialog
+        open={quickCapture}
+        onClose={() => setQuickCapture(false)}
+        onCreated={() => { setQuickCapture(false); load(); }}
       />
     </div>
   );

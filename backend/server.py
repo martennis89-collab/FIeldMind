@@ -60,6 +60,7 @@ from models import (
     ITERO_STAGE_RANK,
 )
 from ai import analyze_note as ai_analyze_note
+from ai import extract_task_from_text as ai_extract_task
 from seed import seed_demo, seed_owner
 
 ROOT_DIR = Path(__file__).parent
@@ -1770,6 +1771,95 @@ async def complete_meeting(meeting_id: str, body: CompleteMeetingBody, user=Depe
     await db.meetings.update_one({"id": meeting_id}, {"$set": update})
     await _audit(user, "complete", "meeting", meeting_id, new={"status": "Completed"})
     return {"ok": True, "meeting_id": meeting_id, "is_demo": False}
+
+
+@api.post("/doctors/{doctor_id}/itero/quick-complete-demo")
+async def quick_complete_demo_for_doctor(doctor_id: str, user=Depends(get_current_user)):
+    """One-tap "Mark demo done" from the iTero pipeline column.
+    Strategy:
+      1. If the doctor has any open (Scheduled) demo meeting -> complete the most recent one
+         (this fires the existing /complete-demo flow: visit + pipeline auto-advance).
+      2. If no open demo meeting but doctor has any non-cancelled non-completed demo meeting,
+         complete that one.
+      3. Otherwise, just bump the iTero stage to "Demo Completed" via /itero_stage so the
+         pipeline still moves forward (no synthetic visit/meeting created).
+    """
+    doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    if user["role"] == "TM" and doc.get("assigned_tm_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "Manager" and doc.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Look for a non-completed, non-cancelled demo meeting
+    candidate = await db.meetings.find_one(
+        {"doctor_id": doctor_id, "is_demo": True, "status": {"$nin": ["Completed", "Cancelled"]}},
+        {"_id": 0},
+        sort=[("scheduled_at", -1)],
+    )
+    if candidate:
+        result = await complete_demo_meeting(
+            candidate["id"],
+            CompleteDemoBody(interest_level="Medium", outcome_note=None),
+            user,
+        )
+        return {**result, "via": "meeting"}
+
+    # No meeting → just advance the stage
+    new_stage = "Demo Completed"
+    if doc.get("itero_stage") == new_stage:
+        raise HTTPException(status_code=400, detail="Doctor is already in Demo Completed")
+    await db.doctors.update_one(
+        {"id": doctor_id},
+        {"$set": {"itero_stage": new_stage, "updated_at": _now_iso()}},
+    )
+    # Record the stage change in history (matches the manual move flow)
+    await db.itero_stage_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "doctor_id": doctor_id,
+        "old_stage": doc.get("itero_stage"),
+        "new_stage": new_stage,
+        "changed_by": user["id"],
+        "changed_at": _now_iso(),
+        "note": "Quick-complete demo (no booked demo meeting)",
+    })
+    await _audit(user, "quick_complete_demo", "doctor", doctor_id,
+                 new={"itero_stage": new_stage, "from_stage": doc.get("itero_stage")})
+    return {"ok": True, "doctor_id": doctor_id, "via": "stage_only", "itero_stage": new_stage}
+
+
+# ============================================================
+# Quick-capture: voice / text → AI suggested task
+# ============================================================
+class ExtractTaskBody(BaseModel):
+    note: str
+    doctor_id: Optional[str] = None  # optional: pre-bind suggestion to a known doctor
+
+
+@api.post("/ai/extract-task")
+async def extract_task(body: ExtractTaskBody, user=Depends(get_current_user)):
+    """Extract a single structured task suggestion from a quick voice/typed note.
+    The user reviews and confirms before the task is actually created."""
+    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    note = (body.note or "").strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="Note is empty")
+
+    # Pull doctor names that the user can reach so the model can softly bind a doctor
+    doc_q = await _doctor_query_for(user)
+    docs = await db.doctors.find(doc_q, {"_id": 0, "id": 1, "doctor_name": 1, "clinic_name": 1, "city": 1}).to_list(2000)
+    name_to_id = {d["doctor_name"]: d["id"] for d in docs if d.get("doctor_name")}
+    suggestion = await ai_extract_task(note, doctor_names=list(name_to_id.keys()))
+
+    # Resolve doctor_hint -> doctor_id
+    if not body.doctor_id and suggestion.get("doctor_hint"):
+        suggestion["doctor_id"] = name_to_id.get(suggestion["doctor_hint"])
+    elif body.doctor_id:
+        suggestion["doctor_id"] = body.doctor_id
+
+    return {"suggestion": suggestion, "raw_note": note}
 
 
 # ====================================================

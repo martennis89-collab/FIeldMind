@@ -6,7 +6,7 @@ import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Textarea } from "../components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { ChevronRight, ScanLine, MapPin, RefreshCw, Trophy, XCircle } from "lucide-react";
+import { ChevronRight, ScanLine, MapPin, RefreshCw, Trophy, XCircle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 const STAGES = [
@@ -72,6 +72,21 @@ export default function IteroPipeline() {
       });
       toast.success(`${stageDialog.card.doctor_name} → ${stageDialog.targetStage}`);
       setStageDialog(null);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
+
+  const quickCompleteDemo = async (card) => {
+    if (!window.confirm(`Mark ${card.doctor_name}'s demo as done?`)) return;
+    try {
+      const { data } = await api.post(`/doctors/${card.id}/itero/quick-complete-demo`, {});
+      toast.success(
+        data.via === "stage_only"
+          ? `${card.doctor_name}: pipeline advanced to Demo Completed`
+          : `${card.doctor_name}: demo marked done`,
+      );
       load();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed");
@@ -157,6 +172,17 @@ export default function IteroPipeline() {
                           <span>{c.days_since_last_visit != null ? `${c.days_since_last_visit}d since visit` : "no visits"}</span>
                         </div>
                         <div className="mt-2 flex gap-1">
+                          {(c.stage === "Demo Discussed" || c.stage === "Demo Booked") && (
+                            <Button
+                              size="sm"
+                              className="flex-1 h-8"
+                              onClick={() => quickCompleteDemo(c)}
+                              data-testid={`pipeline-quick-complete-${c.id}`}
+                              style={{ background: "var(--status-success)", color: "white" }}
+                            >
+                              <CheckCircle2 className="w-3 h-3 mr-1" /> Demo done
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"
