@@ -10,7 +10,8 @@ import { Command, CommandInput, CommandList, CommandItem, CommandEmpty } from ".
 import { Popover, PopoverTrigger, PopoverContent } from "../components/ui/popover";
 import { StatusPill, sentimentKind, SegmentBadge } from "../components/StatusPill";
 import { toast } from "sonner";
-import { Brain, ChevronRight, ChevronLeft, Sparkles, Check, AlertTriangle, X, Clock, Plus, Mic, Square, Loader2 } from "lucide-react";
+import { Brain, ChevronRight, ChevronLeft, Sparkles, Check, AlertTriangle, X, Clock, Plus, Mic, Square, Loader2, UserPlus } from "lucide-react";
+import InlineAddDoctor from "../components/InlineAddDoctor";
 
 const VISIT_TYPES = ["In-person visit", "Phone call", "Online meeting", "Event conversation", "Training/session", "Other"];
 const SENTIMENTS = ["Very Negative", "Negative", "Neutral", "Positive", "Very Positive"];
@@ -27,6 +28,8 @@ export default function LogVisit() {
   const [taxonomy, setTaxonomy] = useState(null);
   const [doctorId, setDoctorId] = useState(initialDoctorId || "");
   const [docPickerOpen, setDocPickerOpen] = useState(false);
+  const [docPickerQuery, setDocPickerQuery] = useState("");
+  const [addingDoctor, setAddingDoctor] = useState(false);
   const [visitType, setVisitType] = useState("In-person visit");
   const [visitDate, setVisitDate] = useState(() => {
     const d = new Date();
@@ -293,7 +296,12 @@ export default function LogVisit() {
               </PopoverTrigger>
               <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
                 <Command>
-                  <CommandInput placeholder="Search doctor…" data-testid="doctor-picker-input" />
+                  <CommandInput
+                    placeholder="Search doctor…"
+                    data-testid="doctor-picker-input"
+                    value={docPickerQuery}
+                    onValueChange={setDocPickerQuery}
+                  />
                   <CommandList className="max-h-72">
                     <CommandEmpty>No doctors</CommandEmpty>
                     {doctors.map((d) => (
@@ -305,6 +313,18 @@ export default function LogVisit() {
                       </CommandItem>
                     ))}
                   </CommandList>
+                  <div className="border-t p-2" style={{ borderColor: "var(--border-default)" }}>
+                    <button
+                      type="button"
+                      onClick={() => { setDocPickerOpen(false); setAddingDoctor(true); }}
+                      data-testid="log-visit-add-doctor"
+                      className="w-full text-xs flex items-center gap-1 px-2 py-1.5 rounded hover:bg-[var(--bg-paper)] transition-colors"
+                      style={{ color: "var(--brand-primary)" }}
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>Can't find them? Add new doctor{docPickerQuery ? ` "${docPickerQuery}"` : ""}</span>
+                    </button>
+                  </div>
                 </Command>
               </PopoverContent>
             </Popover>
@@ -616,6 +636,18 @@ export default function LogVisit() {
           </div>
         </div>
       )}
+
+      <InlineAddDoctor
+        open={addingDoctor}
+        prefillName={docPickerQuery}
+        onClose={() => setAddingDoctor(false)}
+        onCreated={(d) => {
+          setDoctors((prev) => [d, ...prev]);
+          setDoctorId(d.id);
+          setDocPickerQuery("");
+          setAddingDoctor(false);
+        }}
+      />
     </div>
   );
 }
