@@ -5,13 +5,19 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "./ui/dialog";
-import { Mic, Square, Sparkles, Plus, Loader2, Wand2 } from "lucide-react";
+import { Mic, Square, Sparkles, Plus, Loader2, Wand2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
+import InlineAddDoctor from "./InlineAddDoctor";
 
 const STEP_RECORD = "record";       // pick mic or paste text
 const STEP_EXTRACTING = "extract";  // calling AI
 const STEP_REVIEW = "review";       // user confirms suggestion
 const STEP_SAVING = "saving";
+
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDoctorId = null }) {
   const [step, setStep] = useState(STEP_RECORD);
@@ -25,6 +31,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
   const [suggestion, setSuggestion] = useState(null); // { task_title, task_description, ... }
   const [doctors, setDoctors] = useState([]);
   const [doctorSearch, setDoctorSearch] = useState("");
+  const [addingDoctor, setAddingDoctor] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -110,7 +117,8 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
         task_title: sug.task_title || "",
         task_description: sug.task_description || "",
         is_promise: !!sug.is_promise,
-        suggested_due_date: sug.suggested_due_date || "",
+        // Default to today if AI didn't suggest a date — the TM is capturing right now.
+        suggested_due_date: sug.suggested_due_date || todayISO(),
         priority: sug.priority || "Medium",
         doctor_id: sug.doctor_id || defaultDoctorId || "",
         doctor_hint: sug.doctor_hint || "",
@@ -312,9 +320,21 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
                   </button>
                 ))}
                 {filteredDoctors.length === 0 && (
-                  <div className="text-xs px-2 py-3 text-center" style={{ color: "var(--text-muted)" }}>No doctors match.</div>
+                  <div className="px-2 py-3 text-center text-xs space-y-2" style={{ color: "var(--text-muted)" }}>
+                    <div>No doctors match{doctorSearch ? ` "${doctorSearch}"` : ""}.</div>
+                  </div>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() => setAddingDoctor(true)}
+                data-testid="quick-capture-add-doctor"
+                className="mt-1.5 text-xs flex items-center gap-1 hover:underline"
+                style={{ color: "var(--brand-primary)" }}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                Can't find them? Add new doctor{doctorSearch ? ` "${doctorSearch}"` : ""}
+              </button>
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "var(--text-secondary)" }}>
               <input
@@ -340,6 +360,17 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
           </div>
         )}
       </DialogContent>
+      <InlineAddDoctor
+        open={addingDoctor}
+        prefillName={doctorSearch}
+        onClose={() => setAddingDoctor(false)}
+        onCreated={(doc) => {
+          setDoctors((prev) => [doc, ...prev]);
+          setSuggestion((s) => ({ ...(s || {}), doctor_id: doc.id, doctor_hint: doc.doctor_name }));
+          setDoctorSearch("");
+          setAddingDoctor(false);
+        }}
+      />
     </Dialog>
   );
 }

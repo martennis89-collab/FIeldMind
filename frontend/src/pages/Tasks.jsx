@@ -8,9 +8,10 @@ import { Textarea } from "../components/ui/textarea";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { StatusPill, priorityKind } from "../components/StatusPill";
-import { CalendarClock, CheckCircle2, AlertTriangle, Brain, Clock, Pencil, Trash2, Undo2, Plus, Wand2, Search as SearchIcon } from "lucide-react";
+import { CalendarClock, CheckCircle2, AlertTriangle, Brain, Clock, Pencil, Trash2, Undo2, Plus, Wand2, UserPlus, Search as SearchIcon } from "lucide-react";
 import { toast } from "sonner";
 import QuickCaptureDialog from "../components/QuickCaptureDialog";
+import InlineAddDoctor from "../components/InlineAddDoctor";
 
 const KINDS = [
   { key: "open", label: "Open" },
@@ -253,6 +254,7 @@ export default function Tasks() {
         open={creating}
         doctors={allDoctors}
         onClose={() => setCreating(false)}
+        onDoctorAdded={(d) => setAllDoctors((prev) => [d, ...prev])}
         onCreated={(t, doctor) => {
           // optimistic insert into open list and doctor cache
           setOpen((prev) => [t, ...prev]);
@@ -434,7 +436,7 @@ function EditTaskDialog({ open, task, onClose, onSaved }) {
 }
 
 
-function NewTaskDialog({ open, doctors, onClose, onCreated }) {
+function NewTaskDialog({ open, doctors, onClose, onCreated, onDoctorAdded }) {
   const [doctorId, setDoctorId] = useState("");
   const [docQuery, setDocQuery] = useState("");
   const [title, setTitle] = useState("");
@@ -442,12 +444,13 @@ function NewTaskDialog({ open, doctors, onClose, onCreated }) {
   const [dueDate, setDueDate] = useState(todayISO());
   const [priority, setPriority] = useState("Medium");
   const [saving, setSaving] = useState(false);
+  const [addingDoctor, setAddingDoctor] = useState(false);
 
   // Reset form whenever dialog opens
   useEffect(() => {
     if (open) {
       setDoctorId(""); setDocQuery(""); setTitle(""); setDescription("");
-      setDueDate(todayISO()); setPriority("Medium");
+      setDueDate(todayISO()); setPriority("Medium"); setAddingDoctor(false);
     }
   }, [open]);
 
@@ -537,6 +540,16 @@ function NewTaskDialog({ open, doctors, onClose, onCreated }) {
                     ))
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setAddingDoctor(true)}
+                  data-testid="new-task-add-doctor"
+                  className="mt-2 text-xs flex items-center gap-1 hover:underline"
+                  style={{ color: "var(--brand-primary)" }}
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  Can't find them? Add new doctor{docQuery ? ` "${docQuery}"` : ""}
+                </button>
               </>
             )}
           </div>
@@ -594,6 +607,17 @@ function NewTaskDialog({ open, doctors, onClose, onCreated }) {
           </Button>
         </DialogFooter>
       </DialogContent>
+      <InlineAddDoctor
+        open={addingDoctor}
+        prefillName={docQuery}
+        onClose={() => setAddingDoctor(false)}
+        onCreated={(d) => {
+          onDoctorAdded?.(d);
+          setDoctorId(d.id);
+          setDocQuery("");
+          setAddingDoctor(false);
+        }}
+      />
     </Dialog>
   );
 }

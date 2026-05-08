@@ -5,8 +5,9 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
-import { Search as SearchIcon, CalendarPlus, ChevronLeft } from "lucide-react";
+import { Search as SearchIcon, CalendarPlus, ChevronLeft, UserPlus } from "lucide-react";
 import { toast } from "sonner";
+import InlineAddDoctor from "../components/InlineAddDoctor";
 
 function defaultDateTime() {
   // Tomorrow at 10:00 (local) → input value YYYY-MM-DDTHH:mm
@@ -160,6 +161,16 @@ export default function BookMeeting() {
                   ))
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() => setAddingDoctor(true)}
+                data-testid="book-meeting-add-doctor"
+                className="mt-2 text-xs flex items-center gap-1 hover:underline"
+                style={{ color: "var(--brand-primary)" }}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                Can't find them? Add new doctor{docQuery ? ` "${docQuery}"` : ""}
+              </button>
             </>
           )}
         </div>
@@ -215,6 +226,18 @@ export default function BookMeeting() {
           </Button>
         </div>
       </div>
+
+      <InlineAddDoctor
+        open={addingDoctor}
+        prefillName={docQuery}
+        onClose={() => setAddingDoctor(false)}
+        onCreated={(d) => {
+          setDoctors((prev) => [d, ...prev]);
+          setDoctorId(d.id);
+          setDocQuery("");
+          setAddingDoctor(false);
+        }}
+      />
     </div>
   );
 }
