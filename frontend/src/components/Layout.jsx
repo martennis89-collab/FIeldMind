@@ -22,8 +22,10 @@ import {
   X,
   Layers,
   UserRound,
+  Wand2,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import QuickCaptureDialog from "./QuickCaptureDialog";
 
 // ---------- Top-level (header) ----------
 const TM_TOP = [
@@ -90,6 +92,7 @@ export default function Layout({ children }) {
   const TOP = isManager ? MANAGER_TOP : TM_TOP;
   const [tmAddOpen, setTmAddOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg-default)" }}>
@@ -139,6 +142,17 @@ export default function Layout({ children }) {
             )}
           </nav>
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setQuickCaptureOpen(true)}
+              data-testid="header-quick-capture"
+              className="p-2 rounded-md hover:bg-[var(--bg-paper)] transition-colors flex items-center justify-center"
+              title="Quick capture (voice note → AI task)"
+              aria-label="Quick capture"
+              style={{ color: "var(--brand-primary)" }}
+            >
+              <Wand2 className="w-[18px] h-[18px]" />
+            </button>
             <Link
               to="/account"
               data-testid="nav-account"
@@ -225,6 +239,12 @@ export default function Layout({ children }) {
           {moreOpen && (
             <BottomSheet onClose={() => setMoreOpen(false)} testId="tm-more-sheet">
               <SheetTitle>More</SheetTitle>
+              <SheetItem
+                icon={Wand2}
+                label="Quick capture"
+                testId="more-quick-capture"
+                onClick={() => { setMoreOpen(false); setQuickCaptureOpen(true); }}
+              />
               {TM_MORE.map((m) => (
                 <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
               ))}
@@ -252,6 +272,12 @@ export default function Layout({ children }) {
           {moreOpen && (
             <BottomSheet onClose={() => setMoreOpen(false)} testId="manager-more-sheet">
               <SheetTitle>More</SheetTitle>
+              <SheetItem
+                icon={Wand2}
+                label="Quick capture"
+                testId="more-quick-capture"
+                onClick={() => { setMoreOpen(false); setQuickCaptureOpen(true); }}
+              />
               {MANAGER_MORE.map((m) => (
                 <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
               ))}
@@ -283,6 +309,13 @@ export default function Layout({ children }) {
           Log Visit
         </button>
       )}
+
+      {/* Global Quick Capture dialog — reachable from header & More sheet */}
+      <QuickCaptureDialog
+        open={quickCaptureOpen}
+        onClose={() => setQuickCaptureOpen(false)}
+        onCreated={() => setQuickCaptureOpen(false)}
+      />
     </div>
   );
 }
