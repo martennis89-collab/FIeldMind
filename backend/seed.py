@@ -18,7 +18,7 @@ async def seed_owner(db) -> dict:
     """
     OWNER_EMAIL = "martennis89@gmail.com"
     OWNER_PASSWORD = "1234"
-    OWNER_ROLE = "Admin"
+    OWNER_ROLE = "Owner"
     existing = await db.users.find_one({"email": OWNER_EMAIL})
     if existing:
         updates = {"updated_at": _iso()}

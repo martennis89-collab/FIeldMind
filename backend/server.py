@@ -152,23 +152,160 @@ async def _audit(
 
 
 async def _doctor_query_for(user) -> dict:
-    """Return base mongo query enforcing access scope."""
+    """Return base mongo query enforcing access scope (RBAC + company isolation)."""
+    q: dict = {}
     if user["role"] == "Admin":
-        return {}
-    if user["role"] == "Manager":
-        return {"team_id": user.get("team_id")}
-    # TM
-    return {"assigned_tm_id": user["id"]}
+        pass
+    elif user["role"] == "Manager":
+        q["team_id"] = user.get("team_id")
+    else:  # TM
+        q["assigned_tm_id"] = user["id"]
+    return _apply_company_scope(q, user)
 
 
 async def _can_access_doctor(user, doctor) -> bool:
     if not doctor:
         return False
+    # Phase C — block cross-company first.
+    if not _same_company(user, doctor):
+        return False
+    if user["role"] == "Owner":
+        return True
     if user["role"] == "Admin":
         return True
     if user["role"] == "Manager":
         return doctor.get("team_id") == user.get("team_id")
     return doctor.get("assigned_tm_id") == user["id"]
+
+
+# ============================================================
+# PHASE C — Multi-tenant company helpers
+# ============================================================
+ENFORCE_COMPANY_ISOLATION = os.environ.get("ENFORCE_COMPANY_ISOLATION", "true").lower() == "true"
+
+
+def _company_id_for(user) -> Optional[str]:
+    """The company_id that should be stamped on every write made by `user`."""
+    if not user:
+        return None
+    return user.get("company_id")
+
+
+def _company_query_for(user) -> dict:
+    """Mongo query fragment that enforces company isolation for reads.
+    Owner role bypasses isolation for support. If the feature flag is off,
+    returns {} — legacy behaviour preserved.
+    """
+    if not ENFORCE_COMPANY_ISOLATION:
+        return {}
+    if not user:
+        return {}
+    # Owner bypasses isolation for cross-company support visibility.
+    if user.get("role") == "Owner":
+        return {}
+    cid = user.get("company_id")
+    if not cid:
+        return {}
+    return {"company_id": cid}
+
+
+def _apply_company_scope(q: dict, user) -> dict:
+    """Merge company-scope clause into an existing query dict."""
+    extra = _company_query_for(user)
+    if not extra:
+        return q
+    out = dict(q)
+    out.update(extra)
+    return out
+
+
+def _same_company(user, entity) -> bool:
+    """Cross-company guard for individual records."""
+    if not ENFORCE_COMPANY_ISOLATION:
+        return True
+    if not user or not entity:
+        return False
+    if user.get("role") == "Owner":
+        return True
+    ucid = user.get("company_id")
+    ecid = entity.get("company_id") if isinstance(entity, dict) else None
+    if not ucid:
+        # Pre-migration user with no company — fail closed.
+        return False
+    return ucid == ecid
+
+
+def _assert_same_company(user, entity, *, code: int = 403, detail: str = "Cross-company access forbidden"):
+    """Raise HTTP 403 if `entity` doesn't belong to `user`'s company.
+    Use immediately after fetching a record by id but before mutating it."""
+    if _same_company(user, entity):
+        return
+    raise HTTPException(status_code=code, detail=detail)
+
+
+def _stamp_company(doc: dict, user) -> dict:
+    """In-place attach `company_id` from `user` if not already set."""
+    if not doc.get("company_id"):
+        cid = _company_id_for(user)
+        if cid:
+            doc["company_id"] = cid
+    return doc
+
+
+async def _ensure_default_company_and_backfill() -> dict:
+    """Idempotent Phase C migration.
+
+    1. Ensure the default company exists (`slug=default`).
+    2. Stamp `company_id=<default>` on every existing row in every relevant collection
+       that does not already have one.
+    Safe to run on every boot.
+    """
+    from models import DEFAULT_COMPANY  # imported here to avoid import-time cycles
+
+    existing = await db.companies.find_one({"slug": "default"}, {"_id": 0})
+    if existing:
+        default_id = existing["id"]
+        # Make sure mandatory fields are present even on older default rows.
+        patch = {k: v for k, v in DEFAULT_COMPANY.items() if k not in existing}
+        if patch:
+            patch["updated_at"] = _now_iso()
+            await db.companies.update_one({"id": default_id}, {"$set": patch})
+    else:
+        import uuid as _uuid_mod
+        default_id = _uuid_mod.uuid4().hex
+        doc = {"id": default_id, **DEFAULT_COMPANY,
+               "created_at": _now_iso(), "updated_at": _now_iso()}
+        await db.companies.insert_one(doc)
+
+    collections = [
+        "users", "teams", "doctors", "visits", "meetings", "tasks", "events",
+        "track_signals", "clinical_patterns", "audit_logs", "expenses", "reports",
+        "taxonomy_terms", "itero_stage_history", "doctor_imports",
+    ]
+    counts: dict[str, int] = {}
+    for c in collections:
+        coll = db[c]
+        # Only stamp rows that don't have a company_id set yet.
+        r = await coll.update_many(
+            {"$or": [{"company_id": {"$exists": False}}, {"company_id": None}]},
+            {"$set": {"company_id": default_id}},
+        )
+        if r.modified_count:
+            counts[c] = r.modified_count
+
+    # Indexes (sparse-friendly) — keep them lightweight.
+    await db.companies.create_index("id", unique=True)
+    await db.companies.create_index("slug", unique=True)
+    for c in ["users", "doctors", "visits", "meetings", "tasks", "events",
+              "track_signals", "clinical_patterns", "audit_logs", "expenses",
+              "reports", "teams"]:
+        try:
+            await db[c].create_index("company_id")
+        except Exception:
+            pass
+
+    return {"default_company_id": default_id, "backfilled": counts,
+            "enforce_isolation": ENFORCE_COMPANY_ISOLATION}
 
 
 def _cadence_status(days_since: Optional[int], segment: str) -> str:
@@ -662,7 +799,7 @@ async def _insert_track_signal(
         "signal_status": signal_status,
         "signal_date": signal_date or datetime.now(timezone.utc).date().isoformat(),
         "source": source,
-        "company_id": None,
+        "company_id": _company_id_for(user) or doctor.get("company_id"),
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
         "deleted_at": None,
@@ -839,6 +976,7 @@ async def _auto_advance_itero_stage(doctor_id: str, itero_actions, commercial_ac
         "note": "Auto-advanced from visit log",
         "auto": True,
         "at": now,
+        "company_id": _company_id_for(user),
     })
 
 
@@ -1502,8 +1640,9 @@ from routers import (
     expenses,
     ai_extract,
     root,
+    companies,
 )
-_ = (auth, users, doctors, visits, track_signals, clinical_patterns, meetings, events, tasks, dashboards, itero, search, taxonomy, reports, audit_logs, expenses, ai_extract, root)  # silence unused-import linters
+_ = (auth, users, doctors, visits, track_signals, clinical_patterns, meetings, events, tasks, dashboards, itero, search, taxonomy, reports, audit_logs, expenses, ai_extract, root, companies)  # silence unused-import linters
 
 app.include_router(api)
 
@@ -1570,6 +1709,13 @@ async def on_startup():
         logger.info(f"Owner seed: {owner_report}")
     except Exception as e:
         logger.error(f"Owner seed failed: {e}")
+
+    # PHASE C — multi-tenant Company spine
+    try:
+        c_report = await _ensure_default_company_and_backfill()
+        logger.info(f"Phase C company: {c_report}")
+    except Exception as e:
+        logger.error(f"Phase C company init failed: {e}")
 
     # PHASE A — backfill nullable defaults for backward compatibility
     try:

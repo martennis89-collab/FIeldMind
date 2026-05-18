@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -73,7 +80,7 @@ async def list_track_signals(
     since: Optional[str] = None,  # YYYY-MM-DD
     user=Depends(get_current_user),
 ):
-    q: dict = {"deleted_at": None}
+    q: dict = {"deleted_at": None, **_company_query_for(user)}
     if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
@@ -120,6 +127,7 @@ async def delete_track_signal(signal_id: str, user=Depends(get_current_user)):
     s = await db.track_signals.find_one({"id": signal_id, "deleted_at": None}, {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Track signal not found")
+    _assert_same_company(user, s, detail="Track signal not found", code=404)
     if s["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
     await db.track_signals.update_one(

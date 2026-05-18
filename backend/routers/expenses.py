@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -137,6 +144,7 @@ async def create_expense(
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
+    _stamp_company(exp, user)
     await db.expenses.insert_one(exp)
     exp.pop("_id", None)
     await _audit(user, "create", "expense", exp["id"], new={"category": category, "amount": amount})
@@ -177,7 +185,7 @@ async def list_expenses(
     - Manager: team expenses, optionally filtered by tm_user_id and/or status.
     - Admin: all expenses.
     """
-    q: dict = {}
+    q: dict = dict(_company_query_for(user))
     if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
@@ -426,7 +434,7 @@ async def download_receipts_zip(
     from motor.motor_asyncio import AsyncIOMotorGridFSBucket
     from fastapi.responses import Response
 
-    q: dict = {}
+    q: dict = dict(_company_query_for(user))
     if user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
     if month:

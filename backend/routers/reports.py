@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     _week_bounds,
     _classify_flags,
     _classify_insights,
@@ -110,6 +117,7 @@ async def create_report(body: ReportCreate, user=Depends(get_current_user)):
         content=body.content,
         notes_from_tm=body.notes_from_tm,
     ).model_dump()
+    _stamp_company(doc, user)
     await db.reports.insert_one(doc)
     await _audit(user, "create", "report", doc["id"], new={"week_start": body.week_start})
     _strip_id(doc)
@@ -194,7 +202,7 @@ async def list_reports(
         reports = await db.reports.find(q, {"_id": 0}).sort("week_start", -1).to_list(200)
         return {"reports": reports}
 
-    team_q = {} if user["role"] == "Admin" else {"team_id": user.get("team_id")}
+    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
     user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
 

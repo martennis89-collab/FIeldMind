@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -88,6 +95,7 @@ async def create_meeting(body: MeetingCreate, user=Depends(get_current_user)):
         is_demo=body.is_demo,
         status="Scheduled",
     ).model_dump()
+    _stamp_company(m, user)
     await db.meetings.insert_one(m)
     await _audit(user, "create", "meeting", m["id"],
                  new={"doctor_id": body.doctor_id, "scheduled_at": body.scheduled_at, "is_demo": body.is_demo})
@@ -112,6 +120,7 @@ async def create_meeting(body: MeetingCreate, user=Depends(get_current_user)):
                 "note": "Auto-advanced from booked iTero demo",
                 "auto": True,
                 "at": now,
+                "company_id": _company_id_for(user),
             })
     return m
 
@@ -120,7 +129,7 @@ async def list_meetings(
     when: Optional[str] = Query(None, description="upcoming | past | all"),
     user=Depends(get_current_user),
 ):
-    q: dict = {}
+    q: dict = dict(_company_query_for(user))
     if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
@@ -239,6 +248,7 @@ async def complete_demo_meeting(meeting_id: str, body: CompleteDemoBody, user=De
         "created_at": today_iso,
         "updated_at": today_iso,
     }
+    _stamp_company(visit_doc, user)
     await db.visits.insert_one(visit_doc)
     await _audit(user, "create", "visit", visit_id, new={"doctor_id": m["doctor_id"], "from": "demo-complete"})
 
@@ -264,6 +274,7 @@ async def complete_demo_meeting(meeting_id: str, body: CompleteDemoBody, user=De
             "doctor_id": m["doctor_id"],
             "tm_user_id": user["id"],
             "team_id": m.get("team_id"),
+            "company_id": _company_id_for(user) or m.get("company_id"),
             "task_title": body.next_step.strip(),
             "task_description": "",
             "due_date": body.next_step_due or None,

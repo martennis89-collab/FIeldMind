@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -116,7 +123,7 @@ async def wipe_test_data(user=Depends(require_roles("Admin", "Owner"))):
 
 @api.get("/users")
 async def list_users(user=Depends(require_roles("Admin", "Manager"))):
-    q = {}
+    q = dict(_company_query_for(user))
     if user["role"] == "Manager":
         q = {"team_id": user.get("team_id")}
     users = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
@@ -144,6 +151,7 @@ async def create_user(body: UserCreate, request: Request, user=Depends(require_r
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
+    _stamp_company(doc, user)
     await db.users.insert_one(doc)
     await _audit(user, "create", "user", doc["id"], new={"email": doc["email"], "role": doc["role"]})
     _strip_user(doc)
@@ -228,7 +236,7 @@ async def delete_user(user_id: str, user=Depends(require_roles("Admin"))):
 
 @api.get("/teams")
 async def list_teams(user=Depends(get_current_user)):
-    q = {}
+    q = dict(_company_query_for(user))
     if user["role"] == "Manager":
         q = {"id": user.get("team_id")}
     elif user["role"] == "TM":
@@ -239,6 +247,7 @@ async def list_teams(user=Depends(get_current_user)):
 @api.post("/teams")
 async def create_team(body: TeamCreate, user=Depends(require_roles("Admin"))):
     team = Team(**body.model_dump()).model_dump()
+    _stamp_company(team, user)
     await db.teams.insert_one(team)
     await _audit(user, "create", "team", team["id"], new={"team_name": team["team_name"]})
     _strip_id(team)

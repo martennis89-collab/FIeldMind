@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -100,6 +107,7 @@ async def create_event(body: EventCreate, user=Depends(get_current_user)):
         notes=body.notes,
         status="Scheduled",
     ).model_dump()
+    _stamp_company(e, user)
     await db.events.insert_one(e)
     await _audit(user, "create", "event", e["id"], new={"title": e["title"], "scheduled_at": e["scheduled_at"], "ends_at": e["ends_at"]})
     return e
@@ -109,7 +117,7 @@ async def list_events(
     when: Optional[str] = Query(None, description="upcoming | past | all"),
     user=Depends(get_current_user),
 ):
-    q: dict = {}
+    q: dict = dict(_company_query_for(user))
     if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":

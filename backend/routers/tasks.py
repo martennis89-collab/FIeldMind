@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -70,7 +77,7 @@ async def list_tasks(
     bucket: Optional[str] = Query(None, description="overdue|today|week|upcoming|completed|open"),
     user=Depends(get_current_user),
 ):
-    q = {}
+    q = dict(_company_query_for(user))
     if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
@@ -129,6 +136,7 @@ async def create_task(body: TaskCreate, user=Depends(get_current_user)):
         # Manual creates default to True (the user is the creator).
         ai_confirmed=body.ai_confirmed if not body.created_from_ai else bool(body.ai_confirmed),
     ).model_dump()
+    _stamp_company(task, user)
     await db.tasks.insert_one(task)
     await _audit(
         user, "create", "task", task["id"],

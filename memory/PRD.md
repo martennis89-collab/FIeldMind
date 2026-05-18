@@ -443,16 +443,55 @@ routers/taxonomy.py    (5)
 ### Migration safety prep — why this matters before Phase C
 The Phase C migration will add `company_id` to every doc in every collection. With handlers now grouped by domain, the `company_id` plumbing can be applied router-by-router with reviewable, isolated diffs (e.g. inject a `_company_query_for(user)` helper into `routers/doctors.py` then `routers/visits.py` etc.) rather than scrolling a 5 k-line monolith.
 
+## Iteration 25 (Feb 2026) — Phase C: Multi-tenant Company + company_id migration
+
+**Goal**: Add company-level isolation across the entire app as the foundation for multi-tenancy, with zero behaviour change for single-tenant installs. Future-proofs the data model for Phase D-H without requiring another migration.
+
+### 1. `Company` model — `/app/backend/models.py`
+Full 14-field model per spec — `{id, company_name, slug, industry, country, market, region, team_size_category, sales_motion, account_type, plan, benchmark_opt_in, active_status, created_at, updated_at}`.
+- `team_size_category`: `1-5 | 6-15 | 16-50 | 51-100 | 101+` (Literal-enforced)
+- `sales_motion`: `field sales | medical device sales | pharma field team | dental/orthodontic field team | B2B distribution | equipment sales | other`
+- `benchmark_opt_in` defaults to **False** — Phase G gating.
+- `active_status`: `Active | Inactive`.
+
+### 2. `company_id` on every collection
+Added `company_id: Optional[str] = None` to **Pydantic models**: `UserPublic, Team, Doctor, Visit, Task, AuditLog, WeeklyReport, Expense, Meeting, Event, TrackSignal, ClinicalPattern`. MongoDB collections also indexed on `company_id` at startup.
+
+### 3. Migration helper (`_ensure_default_company_and_backfill`)
+Runs on every startup, idempotent. Live snapshot after migration: 56 users, 325 doctors, 46 visits, 151 meetings, 109 tasks, 199 track_signals, 13 clinical_patterns, 8 353 audit_logs, 14 expenses, 4 reports, 2 teams — **all stamped with `company_id=<default>`**, 0 without.
+
+### 4. Helper functions (`server.py`)
+- `_company_id_for(user)`, `_company_query_for(user)`, `_apply_company_scope(q, user)`, `_same_company(user, entity)`, `_assert_same_company(user, entity)`, `_stamp_company(doc, user)`.
+
+### 5. Feature flag
+`ENFORCE_COMPANY_ISOLATION` env var (default **`true`**). When `false`, `_company_query_for()` returns `{}` and `_same_company()` returns `True` — legacy team-scope behaviour preserved as safe rollback.
+
+### 6. Route coverage
+**Every router** (auth, users, doctors, visits, meetings, tasks, reports, expenses, track_signals, clinical_patterns, audit_logs, dashboards, events, taxonomy, search, ai_extract, itero) updated to stamp `company_id` on writes (15 `insert_one` calls + 4 inline-dict inserts patched) and filter reads via `_company_query_for(user)` in every base-query dict.
+
+### 7. Admin company management — `/app/backend/routers/companies.py`
+- `GET /api/companies/mine` — any authenticated user.
+- `GET /api/companies/{id}` — own company, or Owner for any.
+- `GET /api/companies` — **Owner only**.
+- `POST /api/companies` — Owner only; slug uniqueness; `benchmark_opt_in` forced `False`.
+- `PUT /api/companies/{id}` — Owner: full edit. Admin: limited edit on own company (no `active_status/slug/plan/benchmark_opt_in`).
+- `POST /api/companies/{id}/deactivate` — Owner only; default-company protected.
+
+### 8. Test coverage — `tests/test_phase_c_company_isolation.py` (19/19 ✅)
+Covers: default-company auto-seed, `benchmark_opt_in=False`, all backfilled collections, new-write auto-stamping, cross-company TM seeing zero doctors/meetings/tasks, dashboard counters company-scoped, search company-scoped, track signals + clinical patterns company-scoped, Owner-vs-Admin company-list RBAC, no external benchmark endpoint exposed (`/benchmark`, `/benchmarks`, `/companies/benchmark`, `/dashboard/benchmark` all 404/405).
+
+**Full regression**: 167/167 passing (148 pre-existing + 19 new Phase C). 4 pre-existing data-dependent failures (`test_field_intelligence` doctor-count asserts, `test_commercial_and_control_tower` seed-demo asserts) unrelated to Phase C.
+
+### 9. Owner role re-asserted
+`seed_owner` previously seeded `martennis89@gmail.com` as `Admin`. Phase C **requires** this user to be `Owner` for cross-company support. Reverted to `OWNER_ROLE="Owner"`. `test_credentials.md` updated.
+
+### 10. Risks / limitations
+- Owner cross-company access has no explicit "support-mode" audit guard yet — P2 hardening item.
+- `ENFORCE_COMPANY_ISOLATION=false` fallback path validated manually (toggling requires a backend restart) but not automated.
+
 ## Backlog (next phases)
 **P0 — pending user sign-off**
-- Phase C — Multi-tenant `Company` entity + `company_id` migration. Plan:
-  1. **`Company` model** (`id, name, slug, country, plan, benchmark_opt_in=false, created_at`).
-  2. **Default company** auto-seeded on first boot (`slug=default`, `name="Default Company"`) — every existing user/doctor/visit/meeting/task/event/track_signal/clinical_pattern/audit_log/expense/report row is backfilled to its id (idempotent migration in `on_startup`).
-  3. **`company_id`** added to every collection's writes via a single helper `_company_id_for(user)`. Reads scoped via `_company_query_for(user)` injected at the top of each router's RBAC base-query.
-  4. **`User.company_id`** required on create (defaults to caller's company). Cross-company access blocked at the API layer with HTTP 403.
-  5. **Feature-flag**: `ENFORCE_COMPANY_ISOLATION` env var (default `true`). When `false`, falls back to legacy team-scope only — safe rollback.
-  6. **Admin/Manager/TM** RBAC unchanged inside the company boundary. Owner role retains cross-company visibility for support/debug.
-  7. **`benchmark_opt_in` stays `False`** for the default company. Benchmark / cross-company endpoints will not exist until Phase G.
+- Phase D — Metric Registry, V1 metrics, Field Execution Index (0–100), scores per TM/doctor/team.
 
 **P1**
 - Refactor `server.py` (~3 200 lines) into FastAPI APIRouter modules (`routers/users.py`, `doctors.py`, `visits.py`, `tasks.py`, `expenses.py`, `reports.py`, `dashboards.py`, `taxonomy.py`)

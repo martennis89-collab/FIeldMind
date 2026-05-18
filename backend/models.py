@@ -13,6 +13,87 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ============================================================
+# PHASE C — COMPANY (multi-tenant root entity)
+# ============================================================
+TeamSizeCategory = Literal["1-5", "6-15", "16-50", "51-100", "101+"]
+SalesMotion = Literal[
+    "field sales",
+    "medical device sales",
+    "pharma field team",
+    "dental/orthodontic field team",
+    "B2B distribution",
+    "equipment sales",
+    "other",
+]
+CompanyStatus = Literal["Active", "Inactive"]
+
+
+class CompanyCreate(BaseModel):
+    company_name: str
+    slug: Optional[str] = None
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    market: Optional[str] = None
+    region: Optional[str] = None
+    team_size_category: Optional[TeamSizeCategory] = None
+    sales_motion: Optional[SalesMotion] = None
+    account_type: Optional[str] = None
+    plan: Optional[str] = "internal"
+    benchmark_opt_in: bool = False
+    active_status: CompanyStatus = "Active"
+
+
+class CompanyUpdate(BaseModel):
+    company_name: Optional[str] = None
+    slug: Optional[str] = None
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    market: Optional[str] = None
+    region: Optional[str] = None
+    team_size_category: Optional[TeamSizeCategory] = None
+    sales_motion: Optional[SalesMotion] = None
+    account_type: Optional[str] = None
+    plan: Optional[str] = None
+    benchmark_opt_in: Optional[bool] = None
+    active_status: Optional[CompanyStatus] = None
+
+
+class Company(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    company_name: str
+    slug: Optional[str] = None
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    market: Optional[str] = None
+    region: Optional[str] = None
+    team_size_category: Optional[TeamSizeCategory] = None
+    sales_motion: Optional[SalesMotion] = None
+    account_type: Optional[str] = None
+    plan: Optional[str] = "internal"
+    benchmark_opt_in: bool = False
+    active_status: CompanyStatus = "Active"
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+
+
+DEFAULT_COMPANY = {
+    "company_name": "FieldMind Default Company",
+    "slug": "default",
+    "industry": "dental/orthodontic field team",
+    "country": "Bulgaria",
+    "market": "Bulgaria",
+    "region": "Bulgaria",
+    "team_size_category": "1-5",
+    "sales_motion": "dental/orthodontic field team",
+    "account_type": "doctors/clinics",
+    "plan": "internal",
+    "benchmark_opt_in": False,
+    "active_status": "Active",
+}
+
+
 # ---------- USERS / TEAMS ----------
 Role = Literal["TM", "Manager", "Admin", "Owner"]
 
@@ -48,6 +129,7 @@ class UserPublic(BaseModel):
     manager_user_id: Optional[str] = None
     region: Optional[str] = None
     active_status: bool = True
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     created_at: str
     updated_at: str
 
@@ -71,6 +153,7 @@ class TeamCreate(BaseModel):
 class Team(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     team_name: str
     manager_user_id: Optional[str] = None
     region: Optional[str] = None
@@ -138,6 +221,7 @@ ITERO_STAGE_RANK = {
 class Doctor(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     doctor_name: str
     clinic_name: Optional[str] = None
     city: Optional[str] = None
@@ -270,6 +354,7 @@ class VisitCreate(BaseModel):
 class Visit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     doctor_id: str
     tm_user_id: str
     team_id: Optional[str] = None
@@ -340,6 +425,7 @@ class TaskUpdate(BaseModel):
 class Task(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     doctor_id: str
     tm_user_id: str
     team_id: Optional[str] = None
@@ -466,6 +552,7 @@ class ReportUpdate(BaseModel):
 class WeeklyReport(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     tm_user_id: str
     tm_name: str = ""
     team_id: Optional[str] = None
@@ -498,6 +585,7 @@ class ExpenseUpdate(BaseModel):
 
 class Expense(BaseModel):
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     tm_user_id: str
     tm_name: str = ""
     team_id: Optional[str] = None
@@ -542,6 +630,7 @@ class MeetingUpdate(BaseModel):
 class Meeting(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     doctor_id: str
     doctor_name: str = ""
     clinic_name: Optional[str] = None
@@ -592,6 +681,7 @@ class EventUpdate(BaseModel):
 class Event(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     title: str
     tm_user_id: str
     tm_name: str = ""
@@ -663,6 +753,7 @@ class TrackSignalCreate(BaseModel):
 class TrackSignal(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     doctor_id: str
     tm_user_id: str
     team_id: Optional[str] = None
@@ -718,6 +809,7 @@ class ClinicalPatternCreate(BaseModel):
 class ClinicalPattern(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None  # Phase C — multi-tenant root
     doctor_id: str
     tm_user_id: str
     team_id: Optional[str] = None

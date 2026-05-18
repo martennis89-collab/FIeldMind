@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -99,6 +106,7 @@ async def admin_create_taxonomy(body: dict, user=Depends(require_roles("Admin"))
         raise HTTPException(status_code=409, detail="Term already exists")
     doc = {"id": str(uuid.uuid4()), "kind": kind, "category": category,
            "term": term, "active": True, "created_at": _now_iso(), "updated_at": _now_iso()}
+    _stamp_company(doc, user)
     await db.taxonomy_terms.insert_one(doc)
     await _audit(user, "create", "taxonomy_term", doc["id"], new={"kind": kind, "category": category, "term": term})
     doc.pop("_id", None)

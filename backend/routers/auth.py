@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -114,4 +121,11 @@ async def seed_init():
     if os.environ.get("ENABLE_DEMO_SEED", "").lower() not in ("1", "true", "yes"):
         raise HTTPException(status_code=404, detail="Not found")
     report = await seed_demo(db)
+    # Phase C — stamp company_id on the freshly seeded demo rows.
+    try:
+        from server import _ensure_default_company_and_backfill
+        c = await _ensure_default_company_and_backfill()
+        report["company_backfill"] = c.get("backfilled", {})
+    except Exception:
+        pass
     return report

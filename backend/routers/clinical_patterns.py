@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -70,7 +77,7 @@ async def list_clinical_patterns(
     doctor_id: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    q: dict = {"deleted_at": None}
+    q: dict = {"deleted_at": None, **_company_query_for(user)}
     if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
@@ -107,6 +114,7 @@ async def create_clinical_pattern(body: ClinicalPatternCreate, user=Depends(get_
         "updated_at": _now_iso(),
         "deleted_at": None,
     }
+    _stamp_company(row, user)
     await db.clinical_patterns.insert_one(row)
     await _audit(
         user, "create", "clinical_pattern", row["id"],
@@ -122,6 +130,7 @@ async def delete_clinical_pattern(pattern_id: str, user=Depends(get_current_user
     p = await db.clinical_patterns.find_one({"id": pattern_id, "deleted_at": None}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Clinical pattern not found")
+    _assert_same_company(user, p, detail="Clinical pattern not found", code=404)
     if p["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
     await db.clinical_patterns.update_one(

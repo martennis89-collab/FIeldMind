@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -106,6 +113,7 @@ async def create_doctor(body: DoctorCreate, user=Depends(require_roles("Admin", 
         doc["team_id"] = user.get("team_id")
     elif user["role"] == "Manager" and not doc.get("team_id"):
         doc["team_id"] = user.get("team_id")
+    _stamp_company(doc, user)
     await db.doctors.insert_one(doc)
     await _audit(user, "create", "doctor", doc["id"], new={"doctor_name": doc["doctor_name"]})
     _strip_id(doc)
@@ -272,6 +280,7 @@ async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "
             "created_at": now,
             "updated_at": now,
         }
+        _stamp_company(new_doc, user)
         await db.doctors.insert_one(new_doc)
         created.append({"row_index": v["row_index"], "doctor_id": new_id, "doctor_name": p["doctor_name"]})
         # Update local indexes so duplicates inside the same import are caught
@@ -297,6 +306,7 @@ async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "
         "details": {"created": created, "updated": updated, "skipped": skipped, "failed": failed},
         "created_at": now,
     }
+    _stamp_company(summary, user)
     await db.doctor_imports.insert_one(summary)
     summary.pop("_id", None)
     await _audit(user, "import", "doctors", import_id, new={
@@ -450,6 +460,7 @@ async def set_itero_stage(doctor_id: str, body: IteroStageUpdate, user=Depends(g
         "note": (body.note or None),
         "auto": False,
         "at": now,
+        "company_id": _company_id_for(user) or doc.get("company_id"),
     })
     await _audit(user, "stage_change", "doctor", doctor_id,
                  prev={"itero_stage": current}, new={"itero_stage": body.stage, "note": body.note})
@@ -514,6 +525,7 @@ async def quick_complete_demo_for_doctor(doctor_id: str, user=Depends(get_curren
         "changed_by": user["id"],
         "changed_at": _now_iso(),
         "note": "Quick-complete demo (no booked demo meeting)",
+        "company_id": _company_id_for(user) or doc.get("company_id"),
     })
     await _audit(user, "quick_complete_demo", "doctor", doctor_id,
                  new={"itero_stage": new_stage, "from_stage": doc.get("itero_stage")})

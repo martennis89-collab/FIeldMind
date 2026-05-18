@@ -55,6 +55,13 @@ from server import (
     _month_of,
     _expense_visible_to,
     _add_business_days,
+    _company_id_for,
+    _company_query_for,
+    _apply_company_scope,
+    _same_company,
+    _assert_same_company,
+    _stamp_company,
+    ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -80,7 +87,7 @@ async def audit_logs_filtered(
 ):
     """Filtered event ledger reader (spec §3.12 — Activity Event Ledger).
     Returns a plain list (newest first) so analytics callers can consume directly."""
-    q: dict = {}
+    q: dict = dict(_company_query_for(user))
     if entity_type:
         q["entity_type"] = entity_type
     if entity_id:
