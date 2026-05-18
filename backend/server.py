@@ -1242,12 +1242,19 @@ async def _insert_track_signal(
 ):
     """Insert a TrackSignal row + (optionally) an event_ledger entry.
     Uses idempotency_key = (visit_id, track_type, signal_type) so re-saving a
-    visit twice doesn't produce duplicate signals/events."""
+    visit twice doesn't produce duplicate signals/events. For manual entries
+    (visit_id=None) the key is randomised so independent manual signals are
+    never blocked by an earlier (or soft-deleted) row."""
     import uuid as _uuid_mod
-    idem = f"ts:{visit_id}:{track_type}:{signal_type}"
-    existing = await db.track_signals.find_one({"idempotency_key": idem}, {"_id": 0, "id": 1})
-    if existing:
-        return existing["id"]
+    if visit_id:
+        idem = f"ts:{visit_id}:{track_type}:{signal_type}"
+        existing = await db.track_signals.find_one(
+            {"idempotency_key": idem, "deleted_at": None}, {"_id": 0, "id": 1}
+        )
+        if existing:
+            return existing["id"]
+    else:
+        idem = f"ts:manual:{doctor['id']}:{track_type}:{signal_type}:{_uuid_mod.uuid4().hex}"
     row = {
         "id": _uuid_mod.uuid4().hex,
         "doctor_id": doctor["id"],
@@ -2016,7 +2023,7 @@ async def list_meetings(
 @api.get("/meetings/{meeting_id}", response_model=Meeting)
 async def get_meeting(meeting_id: str, user=Depends(get_current_user)):
     m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
-    if not m:
+    if not m or m.get("deleted_at"):
         raise HTTPException(status_code=404, detail="Meeting not found")
     if user["role"] == "TM" and m["tm_user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -4568,6 +4575,27 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
 @api.get("/audit")
 async def audit_logs(limit: int = 100, user=Depends(require_roles("Admin"))):
     logs = await db.audit_logs.find({}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
+    return logs
+
+
+@api.get("/audit_logs")
+async def audit_logs_filtered(
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = 200,
+    user=Depends(require_roles("Admin")),
+):
+    """Filtered event ledger reader (spec §3.12 — Activity Event Ledger).
+    Returns a plain list (newest first) so analytics callers can consume directly."""
+    q: dict = {}
+    if entity_type:
+        q["entity_type"] = entity_type
+    if entity_id:
+        q["entity_id"] = entity_id
+    if event_type:
+        q["event_type"] = event_type
+    logs = await db.audit_logs.find(q, {"_id": 0}).sort("timestamp", -1).to_list(limit)
     return logs
 
 

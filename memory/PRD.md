@@ -349,7 +349,44 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
 **Tests**: `backend/tests/test_report_demos.py` (3/3) + full testing-agent E2E — 8/8 backend pytest + live UI verification (`[data-testid='report-demos-section']` renders, status pill correct, per-doctor demo pill visible).
 
 
+## Iteration 23 (Feb 2026) — FieldMind Phase A + B (data spine + Track Signals + Clinical Patterns)
+
+**Goal**: Lay the multi-tenant-ready foundation for FieldMind. Phase A = data-model spine (soft-deletes, track separation, draft flag, promise categories, +3-business-day default, event ledger with idempotency). Phase B = first-class `track_signals` and `clinical_patterns` collections with strict iTero/Invisalign separation and AI-confirmation flow.
+
+### Phase A — data spine
+- **`track_type`** added to visits/meetings: `iTero | Invisalign | Both | General`. Hard-separation enforced at all read paths.
+- **`is_draft`** flag added on visit/meeting models (`is_draft=true` rows excluded from analytics until confirmed).
+- **Soft-delete (`deleted_at`)** on `meetings`, `visits`, `tasks`, `track_signals`, `clinical_patterns`. Read paths (`GET /meetings`, `GET /meetings/{id}`, `GET /track-signals`, `GET /clinical-patterns`, `GET /tasks`) filter out soft-deleted rows.
+- **Promise categories** (`Task.category`): `arrange demo | send proposal | follow up on proposal | resolve barrier | provide info | invite to event | other`. Invalid values rejected with HTTP 422.
+- **`created_from_ai` / `ai_confirmed`** flags on tasks for AI-extraction provenance.
+- **+3 business-days default `due_date`** when none provided (skips Sat/Sun via `_add_business_days`).
+- **Activity Event Ledger** (`audit_logs`) extended with `event_type` (spec §3.12 named events: `promise_created`, `promise_completed`, `meeting_logged`, `meeting_deleted`, `itero_demo_booked`, `itero_demo_completed`, `invisalign_growth_program_explained`, `track_signal_created`, `clinical_pattern_created`, …) and `idempotency_key` so re-emits of the same logical event are deduped at the DB layer.
+- **`GET /api/audit_logs?entity_type=&entity_id=&event_type=&limit=`** — Admin/Owner-only filtered reader (legacy `/api/audit` kept for back-compat).
+
+### Phase B — Track Signals + Clinical Patterns
+- **New collection `track_signals`** — `{id, doctor_id, tm_user_id, team_id, meeting_id, track_type (iTero|Invisalign), signal_type, signal_value, signal_status, signal_date, source (Manual|AI Suggested|AI Confirmed), idempotency_key, deleted_at, created_at, updated_at}`. Vocabularies `ITERO_SIGNAL_TYPES` (12) and `INVISALIGN_SIGNAL_TYPES` (26) enforced server-side.
+- **Endpoints**:
+  - `POST /api/track-signals` — manual create (TM/Manager/Admin/Owner). RBAC by doctor ownership. Invalid `signal_type` → 400.
+  - `GET /api/track-signals?doctor_id=&track_type=&signal_type=&since=` — RBAC-scoped (TM=own, Manager=team, Admin=all).
+  - `DELETE /api/track-signals/{id}` — soft-delete.
+- **Visit save auto-materialization**: `POST /api/visits` calls `_materialize_track_signals_from_visit` which fans out confirmed `itero_actions`/`invisalign_actions`/legacy `commercial_actions` flags into the new `track_signals` collection (source = `AI Confirmed` when the visit had an `ai_extraction`, else `Manual`). Each row carries an idempotency key `ts:{visit_id}:{track_type}:{signal_type}` so re-saving never double-counts.
+- **Backfill helper** `_backfill_track_signals_from_visits()` (idempotent — re-uses the same idempotency keys) seeded historical visits into the new collection.
+- **New collection `clinical_patterns`** — `{id, doctor_id, tm_user_id, team_id, meeting_id, case_type, treatment_preference, treatment_strategy, confidence_level, barrier_type, source, deleted_at, …}`. Controlled enums on case_type (`Class I/II/III/Skeletal discrepancy/Mixed complex/Unknown`), treatment_preference, treatment_strategy, confidence_level, barrier_type. Invalid enum → 422.
+- **Endpoints**: `POST /api/clinical-patterns`, `GET /api/clinical-patterns`, `DELETE /api/clinical-patterns/{id}` — same RBAC pattern.
+
+### Quick-Capture + Inline Add-Doctor UX (this iteration)
+- Global **Quick Capture** dialog (Wand icon) — TM can voice/text-record straight to a task with optional doctor binding.
+- **InlineAddDoctor** dialog wired into all four doctor pickers (Quick Capture, Tasks, Book Meeting, Log Visit) — creates a doctor + selects it inline without leaving the flow.
+- Fixed `addingDoctor` state crash on Book Meeting page.
+
+### Tests
+- **`backend/tests/test_phase_a_and_b.py`** — 13/13 green covering: +3 business-day default, explicit due-date respected, promise category persisted, invalid category rejected (422), meeting soft-delete + list exclusion, `promise_created` named event in ledger via filtered `/audit_logs`, manual iTero signal CRUD, invalid signal_type rejected (400), iTero/Invisalign list separation, RBAC isolation between TMs, visit-save materializes track signals (3 across both tracks), clinical pattern CRUD, invalid case_type rejected (422).
+- `test_meetings.py` + `test_mark_demo_done.py` updated to match the new soft-delete contract and use a relative future due-date (no more hard-coded past dates).
+
 ## Backlog (next phases)
+**P0 — pending user sign-off**
+- Phase C — Multi-tenant `Company` entity + `company_id` migration across every collection.
+
 **P1**
 - Refactor `server.py` (~3 200 lines) into FastAPI APIRouter modules (`routers/users.py`, `doctors.py`, `visits.py`, `tasks.py`, `expenses.py`, `reports.py`, `dashboards.py`, `taxonomy.py`)
 - Per-region scoping for taxonomy terms (currently global; users.region exists but not yet enforced)

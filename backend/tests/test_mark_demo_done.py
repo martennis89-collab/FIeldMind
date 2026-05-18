@@ -72,12 +72,13 @@ class TestMarkDemoDone:
         assert r2.status_code == 400
 
     def test_mark_done_creates_follow_up_task(self):
+        future_due = (datetime.now(timezone.utc) + timedelta(days=14)).date().isoformat()
         r = requests.post(f"{API}/meetings/{self.meeting['id']}/complete-demo",
                           headers=H(self.tm),
                           json={
                               "interest_level": "Medium",
                               "next_step": "iter22 send pricing proposal",
-                              "next_step_due": "2026-05-15",
+                              "next_step_due": future_due,
                           }, timeout=15)
         assert r.status_code == 200, r.text
         body = r.json()

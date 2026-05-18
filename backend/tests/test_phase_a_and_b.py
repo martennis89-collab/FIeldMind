@@ -202,7 +202,7 @@ class TestPhaseBTrackSignals:
 
     def test_visit_save_materializes_track_signals(self):
         # Save a visit with confirmed iTero + Invisalign actions, expect rows in track_signals
-        v = requests.post(f"{API}/visits", headers=H(self.tm), json={
+        resp = requests.post(f"{API}/visits", headers=H(self.tm), json={
             "doctor_id": self.doctor["id"],
             "free_text_note": "demo booked and growth programme explained",
             "track_type": "BOTH",
@@ -210,10 +210,14 @@ class TestPhaseBTrackSignals:
             "itero_actions": {"demo_booked": True, "demo_discussed": True},
             "invisalign_actions": {"growth_program_explained": True},
         }, timeout=20).json()
+        # /api/visits returns {"visit": {...}, "created_tasks": [...]}
+        v = resp.get("visit") or resp
+        visit_id = v.get("id")
+        assert visit_id, f"visit_id missing in response: {resp}"
         # Force a list query — should include 3 new signals on this doctor
         listed = requests.get(f"{API}/track-signals?doctor_id=" + self.doctor["id"],
                               headers=H(self.tm), timeout=10).json()
-        sigs_for_visit = [x for x in listed if x.get("meeting_id") == v.get("id")]
+        sigs_for_visit = [x for x in listed if x.get("meeting_id") == visit_id]
         types = sorted(x["signal_type"] for x in sigs_for_visit)
         # demo_booked should appear (from itero_actions) — at least
         assert "demo_booked" in types, f"expected demo_booked, got {types}"
