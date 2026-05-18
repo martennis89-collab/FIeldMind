@@ -825,3 +825,48 @@ class ClinicalPattern(BaseModel):
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
     deleted_at: Optional[str] = None
+
+
+
+# ============================================================
+# PHASE E — INSIGHT CARDS + ADVISORY LAYER
+# ============================================================
+InsightSeverity = Literal["Low", "Medium", "High", "Critical"]
+InsightStatus = Literal["New", "Seen", "Resolved", "Dismissed"]
+InsightScopeType = Literal["TM", "Manager", "Admin", "Team", "Company"]
+InsightCategory = Literal[
+    "Promise Discipline",
+    "iTero Execution",
+    "Reporting",
+    "Meeting Follow-through",
+    "Field Execution",
+    "Data Quality",
+    "General",
+]
+
+
+class InsightCard(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None
+    team_id: Optional[str] = None
+    tm_user_id: Optional[str] = None
+    manager_id: Optional[str] = None
+    scope_type: InsightScopeType
+    scope_id: str
+    severity: InsightSeverity
+    category: InsightCategory
+    title: str
+    body: str
+    related_metric_slug: Optional[str] = None
+    metric_value: Optional[float] = None
+    comparison_value: Optional[float] = None
+    suggested_action: str
+    status: InsightStatus = "New"
+    # Deterministic dedup key so repeated generation runs don't create duplicates.
+    dedup_key: Optional[str] = None
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+    seen_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+    dismissed_at: Optional[str] = None

@@ -544,23 +544,108 @@ Each test class creates an isolated fresh TM, seeds known data, asserts EXACT `n
 - All V1 metrics are TM-scoped. Team/company aggregations and per-doctor metrics will come with Insight Cards (Phase E).
 - `meeting_to_visit_followthrough_rate` uses `meetings.visit_id` populated on visit log; older meetings without that link will read as "no follow-through" which is the correct semantic.
 
+## Iteration 27 (Feb 2026) — Phase E: Insight Cards + Advisory Layer
+
+**Goal**: Turn the Phase D V1 metric set into role-specific, actionable cards. Deterministic, rule-based — **no AI generation in this phase**. Build strictly on the V1 metrics; do not invent metrics, do not fake Invisalign insights, do not expose benchmarks.
+
+> **Scope note**: This is the deterministic V1 advisory layer. AI-generated insights, predictive lift, and trend-based "improving / worsening" advisories are future enhancements gated behind Phase D V2 metrics (delta / trend tracking).
+
+### 1. InsightCard model — `/app/backend/models.py`
+Fields: `id, company_id, team_id, tm_user_id, manager_id, scope_type {TM|Manager|Admin|Team|Company}, scope_id, severity {Low|Medium|High|Critical}, category {Promise Discipline | iTero Execution | Reporting | Meeting Follow-through | Field Execution | Data Quality | General}, title, body, related_metric_slug, metric_value, comparison_value, suggested_action, status {New|Seen|Resolved|Dismissed}, dedup_key, created_at, updated_at, seen_at, resolved_at, dismissed_at`.
+
+### 2. Deterministic insight rules — `/app/backend/metrics/insights.py`
+Six rules + one FEI rule. Severity bucketing:
+- `higher_is_better`: value < 0.50 → **High**, < 0.70 → **Medium**, ≥ 0.70 → no card.
+- `lower_is_better`: value > 0.30 → **High**, > 0.20 → **Medium**, ≤ 0.20 → no card.
+- `FEI`: < 50 → **High** (titled "Field Execution Index is low"), 50–74 → **Medium**, ≥ 75 → no card.
+Each rule emits: `title (severity-specific), body (with current value + sample size), category, suggested_action, related_metric_slug, metric_value, dedup_key`.
+
+**Dedup**: `dedup_key = "insight:<scope_id>:<slug>:<yyyymmdd>"`. Re-running `/generate` the same day **updates** the card body/severity/metric_value in place — never duplicates. User-set `status`, `seen_at`, `resolved_at`, `dismissed_at` are preserved across regenerations.
+
+### 3. API endpoints — `/app/backend/routers/insights.py`
+- `POST /api/insights/generate` — RBAC-scoped: TM→self, Manager→team TMs, Admin→all company TMs, Owner→all company TMs (Owner uses /companies for cross-company).
+- `GET  /api/insights/me` — caller's cards (excludes Resolved/Dismissed by default; `?include_resolved=true`/`?include_dismissed=true` to widen).
+- `GET  /api/insights/team` — Manager/Admin/Owner: cards for all TMs in scope.
+- `GET  /api/insights/company` — Admin/Owner: `{cards, by_severity, by_category, total}` rollup.
+- `POST /api/insights/{id}/seen` — TM-only state change (idempotent: New→Seen; Resolved/Dismissed untouched).
+- `POST /api/insights/{id}/resolve` → status=Resolved, `resolved_at` set; row preserved.
+- `POST /api/insights/{id}/dismiss` → status=Dismissed, `dismissed_at` set; row preserved.
+
+**Company isolation**: every endpoint wraps `_company_query_for(user)` over the cards query. Cross-company TMs see empty lists. Cross-company action attempts → 404 (treated as "doesn't exist for you").
+
+### 4. Test coverage — `tests/test_phase_e_insights.py` (15/15 ✅)
+| # | Test | Result |
+|---|---|---|
+| 1 | TM with no data → 0 cards (no fake insights) | ✅ |
+| 2 | promise_completion 3/10 → **High** "Promise completion is weak" | ✅ |
+| 3 | overdue_promise 4/10 → **High** "Overdue promise risk is high" | ✅ |
+| 4 | iTero discussed→booked 1/6 → **High** "iTero demo discussions are not converting" | ✅ |
+| 5 | iTero booked→completed 0/4 → **High** "Booked iTero demos are not being completed" | ✅ |
+| 6 | weekly_report 2/4 → Medium/High "Weekly reporting" | ✅ |
+| 7 | Low FEI (3/10 completed, 7 overdue) → FEI 18.75 → **High** "Field Execution Index is low" | ✅ |
+| 8 | Idempotent generation — re-run does NOT duplicate cards | ✅ |
+| 9 | TM sees only own cards | ✅ |
+| 10 | Admin company rollup contains team TM cards | ✅ |
+| 11 | TM cannot call `/insights/company` (403) | ✅ |
+| 12 | Cross-company TM sees empty `/insights/me` | ✅ |
+| 13 | Resolve marks status=Resolved + `resolved_at` set + excluded from default list + reappears with `?include_resolved=true` | ✅ |
+| 14 | Dismiss marks status=Dismissed + `dismissed_at` set + history preserved | ✅ |
+| 15 | Seen marks status=Seen + `seen_at` set | ✅ |
+
+**Full Phase A+B+C+D+E suite: 59/59 ✅** (13 + 19 + 12 + 15).
+
+### 5. Example generated insight cards (live, from test fixtures)
+```json
+{"category": "Promise Discipline", "severity": "High",
+ "title": "Promise completion is weak",
+ "body": "Doctors remember unkept commitments. … Current value: 30.0% (sample size: 10).",
+ "related_metric_slug": "promise_completion_rate", "metric_value": 0.30,
+ "suggested_action": "Focus on closing open commitments before creating new ones.",
+ "scope_type": "TM", "status": "New"}
+
+{"category": "Field Execution", "severity": "High",
+ "title": "Field Execution Index is low",
+ "body": "Your Field Execution Index is 18.75/100. Start with overdue promises and weak iTero follow-through — those move the score fastest.",
+ "related_metric_slug": "field_execution_index", "metric_value": 0.1875,
+ "suggested_action": "Open your weakest metric first; fix one card at a time."}
+```
+
+### 6. Risks / limitations
+- "Improved vs previous period" / trend-based cards are NOT implemented in Phase E. They require Phase D V2 (delta snapshots) — explicitly listed in the user's spec but parked.
+- Manager / Admin advisories ride on top of the same per-TM cards (no team-level aggregate card generation yet). The `/insights/team` and `/insights/company` rollups are pure read-side aggregations of TM cards. Team-aggregate cards (e.g. "team-level weakest area") are Phase F territory.
+- No frontend yet — Phase E ships the backend engine + endpoints; the React UI surfaces ("What to Do Next" panel, "What Needs Attention" panel, "Company Priorities" panel) are tracked as the next P0 frontend deliverable.
+- Severity thresholds are hard-coded constants in `metrics/insights.py`. Per-company threshold customization is a future Phase G dependency.
+
+### 7. What remains for Phase F
+- Intervention entity (a Manager creates an action item targeted at a TM in response to an insight card).
+- Manager Intervention tab (UI + tests).
+- Closing the loop: when an Intervention is created from a card, set `comparison_value` and link to the intervention id.
+
 ## Backlog (next phases)
 **P0 — pending user sign-off**
-- Phase E — Insight Cards + Advisory Layer ("What to fix next" UI surfaces built on top of the Phase D engine).
+- Phase F — Intervention entity + Manager Intervention tab.
 
-**P1 — Security / Enterprise Hardening** (deferred per user)
+**Frontend P0**
+- React UI surfaces for Phase E: TM "What to Do Next" panel, Manager "What Needs Attention" panel, Admin "Company Priorities" panel, card actions (seen/resolve/dismiss).
+
+**P1 — Security / Enterprise Hardening** (deferred)
 - Owner support-mode toggle + per-cross-company-read audit row.
 - Defensive `company_id` filters on dashboard sub-tm_q constructions.
 - Automated test for `ENFORCE_COMPANY_ISOLATION=false` fallback.
-- Clean analytics test fixture/reset strategy so Phase D/E tests don't rely on accumulated DB state.
+- Clean analytics test fixture/reset strategy.
 
-**P2 — Cleanup** (deferred per user)
+**P1 — Phase D V2** (gating Phase E follow-on advisories)
+- Trend / delta snapshots so "improved vs previous period" insights become possible.
+- Team / company / per-doctor scope metrics.
+
+**P2 — Cleanup** (deferred)
 - Move shared helpers from `server.py` into `routers/_deps.py`.
 - Per-region scoping for taxonomy terms.
 - Swagger tags per router.
 - Snapshot scheduler / cron / weekly autorun.
+- "My FEI" badge on TM dashboard (Phase D follow-on UI).
 
-**P3 — Branding** (deferred per user)
+**P3 — Branding** (deferred)
 - Company logo + brand color for report PDFs and exports.
 - Refactor `server.py` (~3 200 lines) into FastAPI APIRouter modules (`routers/users.py`, `doctors.py`, `visits.py`, `tasks.py`, `expenses.py`, `reports.py`, `dashboards.py`, `taxonomy.py`)
 - Per-region scoping for taxonomy terms (currently global; users.region exists but not yet enforced)
