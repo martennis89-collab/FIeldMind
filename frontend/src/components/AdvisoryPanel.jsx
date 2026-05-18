@@ -179,7 +179,8 @@ export default function AdvisoryPanel({ variant = "tm" }) {
     try {
       await api.post(`/insights/${id}/${action}`);
       await load();
-      toast.success(`Insight ${action === "seen" ? "marked seen" : action + "d"}.`);
+      const msg = { seen: "Insight marked seen.", dismiss: "Insight dismissed.", resolve: "Insight resolved." }[action] || "Insight updated.";
+      toast.success(msg);
     } catch {
       toast.error("Action failed.");
     }

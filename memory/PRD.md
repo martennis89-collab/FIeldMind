@@ -621,12 +621,69 @@ Each rule emits: `title (severity-specific), body (with current value + sample s
 - Manager Intervention tab (UI + tests).
 - Closing the loop: when an Intervention is created from a card, set `comparison_value` and link to the intervention id.
 
+## Iteration 28 (Feb 2026) — Phase E Frontend: Advisory UI Surfaces
+
+**Goal**: Expose the Phase E backend Insight Cards + Advisory engine in the actual app. No new backend logic added — surface the existing endpoints (`/insights/me`, `/insights/team`, `/insights/company`, `/insights/generate`, `/insights/{id}/seen|resolve|dismiss`) through role-specific dashboards.
+
+### 1. Single new component — `/app/frontend/src/components/AdvisoryPanel.jsx`
+Driven by a `variant` prop:
+- `variant="tm"` → GET `/insights/me` — title "What to do next".
+- `variant="team"` → GET `/insights/team` — title "What needs attention".
+- `variant="company"` → GET `/insights/company` — title "Company priorities" with rollup tiles (Total / Critical / High / Medium).
+
+Internal sort: severity (Critical→High→Medium→Low), then status (New before Seen), then newest first.
+Filters: severity (`All|Critical|High|Medium|Low`) and TM (`team`/`company` variants only).
+Empty states with the exact spec copy ("No urgent actions right now. Keep logging meetings and completing promises." etc).
+Resolved/Dismissed cards excluded by default; checkbox toggle brings them back.
+Per-card action buttons: **Mark seen**, **Dismiss**, **Resolve** (last two visible until status is final).
+"Refresh insights" button calls `POST /insights/generate` and reloads — success/failure toasts wired through sonner.
+
+### 2. Dashboard integration — `/app/frontend/src/pages/Dashboard.jsx`
+- `TMView` renders `<AdvisoryPanel variant="tm" />` after the upcoming-demos widget.
+- `ManagerView` renders `<AdvisoryPanel variant="team" />`. When `user.role === "Admin"`, **also** renders `<AdvisoryPanel variant="company" />`.
+- Existing dashboard widgets (priority doctors, TM performance table, cross-sell panel, alerts strip) untouched — Advisory sits alongside them.
+
+### 3. Data-testids exposed (for automated tests)
+`advisory-panel-{variant}`, `advisory-{variant}-refresh`, `advisory-{variant}-show-done`, `advisory-{variant}-filter-severity`, `advisory-{variant}-filter-tm`, `advisory-{variant}-empty`, `advisory-{variant}-list`, `advisory-{variant}-loading`, `advisory-company-rollup`, `insight-card-{id}`, `insight-severity-{id}`, `insight-status-{id}`, `insight-seen-{id}`, `insight-dismiss-{id}`, `insight-resolve-{id}`, `insight-metric-{id}`, `insight-scope-{id}`.
+
+### 4. Frontend integration test — **10/10 acceptance criteria ✅** (`/app/test_reports/iteration_7.json`)
+1. ✅ TM dashboard renders `advisory-panel-tm`. No team/company panel leaked to TM.
+2. ✅ Empty state OR cards render depending on data (component branch verified; current seed produces 3 cards for tm1).
+3. ✅ Refresh button (`advisory-tm-refresh`) → `POST /api/insights/generate` succeeds + reloads + success toast.
+4. ✅ Each card displays severity badge + title + body + suggested action + 3 action buttons.
+5. ✅ Resolve removes card from default view; "Show resolved/dismissed" checkbox brings it back.
+6. ✅ Manager dashboard renders `advisory-panel-team` with TM + severity filters.
+7. ✅ Admin dashboard renders BOTH `advisory-panel-team` + `advisory-panel-company`; rollup shows TOTAL=2, CRITICAL=0, HIGH=1, MEDIUM=1 on seed.
+8. ✅ TM page does NOT render `advisory-panel-company` (RBAC honoured client-side as well).
+9. ✅ No "benchmark" text appears anywhere in advisory panels.
+10. ✅ Loading state (`advisory-{variant}-loading`) shown before content loads.
+
+**Backend regression**: 59/59 across Phases A+B+C+D+E (13 + 19 + 12 + 15) still green.
+
+### 5. Cosmetic fix applied post-test
+Action toast strings now use a small map (`{seen:"Insight marked seen.", dismiss:"Insight dismissed.", resolve:"Insight resolved."}`) — fixed the `${action}d` typo that produced "dismissd".
+
+### 6. Known limitations
+- **TM filter dropdown** in `team`/`company` variants currently displays the truncated UUID (`tm.slice(0,8)…`) because `/insights/team` and `/insights/company` payloads don't include `scope_name`. Backend payload augmentation to ship `full_name` alongside `scope_id` is a P2 UX nit — backlogged.
+- **Empty-state path** is not currently exercisable end-to-end on the seeded dataset (every demo TM has enough recent activity to produce at least one card). The component branch is verified by code review; future Phase E2 should add a "Clear all cards" affordance or seed an empty-data TM for visual regression.
+- Visual-edit dev instrumentation wraps dynamic `<option>` labels in a `<span>`, producing a benign React hydration warning in dev console — disappears in production builds; non-blocking.
+
+### 7. Phase F can safely start
+- All Phase E acceptance criteria met (backend + frontend).
+- No regressions in Phase A/B/C/D suites.
+- Intervention entity (Phase F) can now reference live `InsightCard.id` to close-the-loop ("manager creates intervention from card X").
+
 ## Backlog (next phases)
 **P0 — pending user sign-off**
 - Phase F — Intervention entity + Manager Intervention tab.
 
-**Frontend P0**
-- React UI surfaces for Phase E: TM "What to Do Next" panel, Manager "What Needs Attention" panel, Admin "Company Priorities" panel, card actions (seen/resolve/dismiss).
+**P1 — Frontend follow-ups**
+- Augment `/insights/team` and `/insights/company` to include `scope_name` (full_name) so the TM filter dropdown shows readable names instead of UUID prefixes.
+
+**P1 — Phase D V2** (gating Phase E follow-on advisories)
+- Trend / delta snapshots so "improved vs previous period" insights become possible.
+- Team / company / per-doctor scope metrics.
+- `comparison_value` back-fill on `/insights/generate` (parked per user instruction).
 
 **P1 — Security / Enterprise Hardening** (deferred)
 - Owner support-mode toggle + per-cross-company-read audit row.
@@ -634,16 +691,12 @@ Each rule emits: `title (severity-specific), body (with current value + sample s
 - Automated test for `ENFORCE_COMPANY_ISOLATION=false` fallback.
 - Clean analytics test fixture/reset strategy.
 
-**P1 — Phase D V2** (gating Phase E follow-on advisories)
-- Trend / delta snapshots so "improved vs previous period" insights become possible.
-- Team / company / per-doctor scope metrics.
-
 **P2 — Cleanup** (deferred)
 - Move shared helpers from `server.py` into `routers/_deps.py`.
 - Per-region scoping for taxonomy terms.
 - Swagger tags per router.
 - Snapshot scheduler / cron / weekly autorun.
-- "My FEI" badge on TM dashboard (Phase D follow-on UI).
+- "My FEI" badge UI.
 
 **P3 — Branding** (deferred)
 - Company logo + brand color for report PDFs and exports.
