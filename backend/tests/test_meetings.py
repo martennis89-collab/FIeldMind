@@ -34,7 +34,7 @@ class TestMeetings:
     def teardown_method(self):
         # Clean any meetings created by these tests
         try:
-            owner = _login("martennis89@gmail.com", "1234.")
+            owner = _login("martennis89@gmail.com", "1234")
             meetings = requests.get(f"{API}/meetings?when=all", headers=H(owner), timeout=10).json()
             for m in meetings:
                 if (m.get("subject") or "").startswith("iter15"):

@@ -30,7 +30,7 @@ class TestEvents:
 
     def teardown_method(self):
         try:
-            owner = _login("martennis89@gmail.com", "1234.")
+            owner = _login("martennis89@gmail.com", "1234")
             for ev in requests.get(f"{API}/events?when=all", headers=H(owner), timeout=10).json():
                 if (ev.get("title") or "").startswith("iter18"):
                     requests.delete(f"{API}/events/{ev['id']}", headers=H(owner), timeout=5)

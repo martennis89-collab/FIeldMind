@@ -383,9 +383,76 @@ Mobile-first, food/petrol-only, image-driven expense capture with monthly submis
 - **`backend/tests/test_phase_a_and_b.py`** — 13/13 green covering: +3 business-day default, explicit due-date respected, promise category persisted, invalid category rejected (422), meeting soft-delete + list exclusion, `promise_created` named event in ledger via filtered `/audit_logs`, manual iTero signal CRUD, invalid signal_type rejected (400), iTero/Invisalign list separation, RBAC isolation between TMs, visit-save materializes track signals (3 across both tracks), clinical pattern CRUD, invalid case_type rejected (422).
 - `test_meetings.py` + `test_mark_demo_done.py` updated to match the new soft-delete contract and use a relative future due-date (no more hard-coded past dates).
 
+## Iteration 24 (Feb 2026) — Phase C0: Router Refactor + Migration Safety Prep
+
+**Goal**: Split the 5 165-line `server.py` into per-domain FastAPI APIRouter modules before any Phase C multi-tenant work. Zero behaviour change. Zero route-name change. All existing tests stay green.
+
+### Architecture
+- `server.py` (now **1 612 lines**) keeps: imports, Mongo init, `app`/`api` instances, every shared helper (`_audit`, `_enrich_doctor`, `_aggregate_*`, `_build_report_draft`, `_materialize_track_signals_from_visit`, etc.), startup/shutdown hooks, and the CORS middleware.
+- New package **`routers/`** — one module per business domain. Each module:
+  - `from server import api, db, _audit, get_current_user, require_roles, _now_iso, ...`
+  - Re-registers handlers on the shared `api: APIRouter(prefix="/api")` via the original `@api.<verb>(...)` decorators.
+- `server.py` imports the router modules at the bottom (BEFORE `app.include_router(api)`) so the decorator side-effects run before route mounting.
+
+### Files created
+```
+routers/__init__.py           routers/ai_extract.py   (1 handler)
+routers/auth.py        (5)    routers/audit_logs.py   (2 handlers)
+routers/users.py       (7)    routers/clinical_patterns.py (3)
+routers/doctors.py    (16)    routers/dashboards.py  (10)
+routers/visits.py      (4)    routers/events.py       (5)
+routers/meetings.py    (7)    routers/expenses.py    (10)
+routers/tasks.py       (4)    routers/itero.py        (3)
+routers/track_signals.py (3)  routers/reports.py      (8)
+routers/search.py      (1)    routers/root.py         (1)
+routers/taxonomy.py    (5)
+```
+**95 handlers** redistributed; not a single one renamed.
+
+### Routes preserved (sample — all 95 unchanged)
+`POST /auth/login`, `GET /auth/me`, `POST /auth/logout`, `POST /auth/change-password`,
+`POST /seed/init`, `POST /admin/wipe-test-data`,
+`GET|POST|PUT|DELETE /users[/{id}]`, `GET|POST /teams`,
+`GET|POST|PUT|DELETE /doctors[/{id}]`, `POST /doctors/bulk-delete`, `GET/POST /doctors/import/*`,
+`GET /doctors/{id}/{visits|tasks|prepare|itero-stage-history}`, `POST /doctors/{id}/itero-stage`, `POST /doctors/{id}/itero/quick-complete-demo`,
+`POST /visits[/analyze|/transcribe]`, `GET /visits`,
+`GET|POST|DELETE /track-signals[/{id}]`, `GET|POST|DELETE /clinical-patterns[/{id}]`,
+`GET|POST|PUT|DELETE /meetings[/{id}]`, `POST /meetings/{id}/{complete|complete-demo}`,
+`GET|POST|PUT|DELETE /events[/{id}]`, `GET|POST|PUT|DELETE /tasks[/{id}]`,
+`GET /dashboard/{tm|manager|manager/commercial|manager/interventions|manager/itero|manager/invisalign|manager/cross-sell|tm/itero|tm/invisalign}`,
+`GET /itero/{pipeline|demos|demo-breakdown}`,
+`GET /search`, `GET /taxonomy`, `*/admin/taxonomy*`,
+`GET|POST|PUT /reports[/{id}]`, `POST /reports/{id}/{submit|comment}`, `GET /reports/{id}/export`,
+`GET /audit`, `GET /audit_logs`,
+`POST|GET|PUT|DELETE /expenses[/{id}]`, `POST /expenses/{extract|submit-month}`, `GET /expenses/{summary|team-summary|{id}/receipt}`, `GET /expenses/receipts.zip`,
+`POST /ai/extract-task`, `GET /`.
+
+### Test proof
+- `tests/test_phase_a_and_b.py` — **13/13 PASSED** post-refactor.
+- Full regression batch (`test_meetings, test_mark_demo_done, test_book_demo, test_events, test_itero_demos, test_itero_pipeline, test_tasks_ux, test_tasks_and_visit_date, test_dashboard_counters, test_inline_add_doctor, test_quick_capture_and_pipeline_demo, test_complete_meeting, test_doctor_delete, test_taxonomy_editable, test_change_password, test_admin_guardrails, test_voice_transcription, test_reports_and_performance, test_report_export, test_report_demos, test_report_doctor_breakdown, test_report_pdf_export, test_doctor_import, test_manual_doctor_add, test_iter4_itero_invisalign, test_itero_demo_breakdown, test_itero_demos_event_counts`) — **148/148 PASSED**.
+- 6 failures remain in `test_owner_and_admin` / `test_field_intelligence` / `test_commercial_and_control_tower` — **all pre-existing data-dependency issues** (confirmed by re-running against the pre-refactor `server.py.bak` — same failures).
+
+### Bugs fixed inline (regression caught + fixed in same iteration)
+- `routers/doctors.py::quick_complete_demo_for_doctor` referenced `complete_demo_meeting` and `CompleteDemoBody` which were moved into `routers/meetings.py`. Added a local-scope `from routers.meetings import complete_demo_meeting, CompleteDemoBody` to avoid a cross-router top-level circular import.
+
+### Risks / limitations
+- `from models import *` in every router file: triggers ruff F405 noise (no functional impact). Cleanup is P2.
+- A handful of routers shadow stdlib imports (`uuid`, `io`) locally inside functions: pre-existing, kept verbatim to satisfy the "no behaviour change" constraint.
+- Helpers `_audit`, `_now_iso`, etc. still live in `server.py`. A later refactor can move them to `routers/_deps.py` for cleaner separation, but it is **not** required for Phase C.
+
+### Migration safety prep — why this matters before Phase C
+The Phase C migration will add `company_id` to every doc in every collection. With handlers now grouped by domain, the `company_id` plumbing can be applied router-by-router with reviewable, isolated diffs (e.g. inject a `_company_query_for(user)` helper into `routers/doctors.py` then `routers/visits.py` etc.) rather than scrolling a 5 k-line monolith.
+
 ## Backlog (next phases)
 **P0 — pending user sign-off**
-- Phase C — Multi-tenant `Company` entity + `company_id` migration across every collection.
+- Phase C — Multi-tenant `Company` entity + `company_id` migration. Plan:
+  1. **`Company` model** (`id, name, slug, country, plan, benchmark_opt_in=false, created_at`).
+  2. **Default company** auto-seeded on first boot (`slug=default`, `name="Default Company"`) — every existing user/doctor/visit/meeting/task/event/track_signal/clinical_pattern/audit_log/expense/report row is backfilled to its id (idempotent migration in `on_startup`).
+  3. **`company_id`** added to every collection's writes via a single helper `_company_id_for(user)`. Reads scoped via `_company_query_for(user)` injected at the top of each router's RBAC base-query.
+  4. **`User.company_id`** required on create (defaults to caller's company). Cross-company access blocked at the API layer with HTTP 403.
+  5. **Feature-flag**: `ENFORCE_COMPANY_ISOLATION` env var (default `true`). When `false`, falls back to legacy team-scope only — safe rollback.
+  6. **Admin/Manager/TM** RBAC unchanged inside the company boundary. Owner role retains cross-company visibility for support/debug.
+  7. **`benchmark_opt_in` stays `False`** for the default company. Benchmark / cross-company endpoints will not exist until Phase G.
 
 **P1**
 - Refactor `server.py` (~3 200 lines) into FastAPI APIRouter modules (`routers/users.py`, `doctors.py`, `visits.py`, `tasks.py`, `expenses.py`, `reports.py`, `dashboards.py`, `taxonomy.py`)

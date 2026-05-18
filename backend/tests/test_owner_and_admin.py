@@ -6,7 +6,7 @@ BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
 API = f"{BASE_URL}/api"
 
 OWNER_EMAIL = "martennis89@gmail.com"
-OWNER_PASS = "1234."
+OWNER_PASS = "1234"
 
 
 def _login(email, password, expect=200):
