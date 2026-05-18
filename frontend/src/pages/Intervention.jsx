@@ -3,6 +3,7 @@ import api from "../lib/api";
 import { Link } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { StatusPill } from "../components/StatusPill";
+import InterventionList from "../components/InterventionList";
 import { AlertOctagon, AlertTriangle, Sparkles, ArrowRight, Flame } from "lucide-react";
 
 const BUCKETS = [
@@ -96,6 +97,10 @@ export default function Intervention() {
           </TabsContent>
         ))}
       </Tabs>
+
+      <div className="mt-10">
+        <InterventionList variant="manager" />
+      </div>
     </div>
   );
 }

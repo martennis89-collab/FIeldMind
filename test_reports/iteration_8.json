@@ -1,0 +1,31 @@
+{
+  "summary": "Phase F frontend smoke test passed. Verified Manager Intervention panel, AdvisoryPanel 'Create intervention' button, TM follow-up panel, and RBAC visibility across Manager/Admin/TM.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Manager /dashboard advisory team filter", "issues": ["React hydration warning: '<span> cannot be a child of <option>' originating from AdvisoryPanel.jsx line 269 (TM filter <option>). Cosmetic dev-tooling artifact (Emergent injects a span around dynamic JSX expressions inside <option>); does not affect functionality. Pre-existing, not introduced by Phase F."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "InterventionList.jsx is well-factored, uses data-testid on every interactive control, handles loading/empty/error states, soft-delete confirmation, and reuses the Tabs primitive correctly.",
+    "AdvisoryPanel correctly gates 'Create intervention' button behind variant !== 'tm' AND Manager/Admin/Owner role — verified TM does not see it.",
+    "window.prompt() flow works under headless; consider replacing with a small modal for better UX/test ergonomics in future."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not retested)", "frontend": "100%"},
+  "test_credentials": "Manager: manager@field.io / manager123; Admin: admin@field.io / admin123; TM: tm1@field.io / tm123",
+  "seed_data_creation": "None. Created one intervention from insight via UI click (Manager) — soft-state, not destructive.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase F UI is fully wired. Verified data-testids: interventions-manager-panel, intervention-tab-{open|in-progress|completed|dismissed}, interventions-filter-{tm|severity|track}, interventions-{status}-empty, insight-create-intervention-{id}, tm-followup-panel. Manager has 8 team insight cards; TM (tm1) has at least 1 manager follow-up (panel rendered). Admin also sees Manager panel on /intervention. Pre-existing hydration warning in AdvisoryPanel TM filter <option> is dev-tooling cosmetic; can be silenced by removing data-ve-dynamic wrapping (out of scope).",
+  "evidence": {
+    "manager_intervention_page": {"intervention-page": true, "interventions-manager-panel": true, "status_tabs": 4, "filters": 3, "bucket_tabs": 3, "open_empty_state": true},
+    "manager_dashboard": {"advisory-panel-team": true, "insight_cards": 8, "create_intervention_buttons": 8, "create_click_toast": "Intervention created from insight."},
+    "tm_dashboard": {"dashboard-page": true, "tm-followup-panel": true, "create_intervention_buttons_visible": 0, "advisory-panel-tm": true},
+    "admin_intervention_page": {"interventions-manager-panel": true}
+  }
+}

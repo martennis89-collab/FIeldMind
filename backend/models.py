@@ -870,3 +870,67 @@ class InsightCard(BaseModel):
     seen_at: Optional[str] = None
     resolved_at: Optional[str] = None
     dismissed_at: Optional[str] = None
+
+
+# ============================================================
+# PHASE F — INTERVENTION ENTITY (manager corrective actions)
+# ============================================================
+InterventionStatus = Literal["Open", "In Progress", "Completed", "Dismissed"]
+InterventionSeverity = Literal["Low", "Medium", "High", "Critical"]
+InterventionTrackType = Literal["General", "iTero", "Invisalign", "Both"]
+
+
+class InterventionCreate(BaseModel):
+    """Manual intervention create payload."""
+    tm_user_id: Optional[str] = None
+    doctor_id: Optional[str] = None
+    insight_card_id: Optional[str] = None
+    related_entity_type: Optional[str] = None
+    related_entity_id: Optional[str] = None
+    track_type: InterventionTrackType = "General"
+    severity: InterventionSeverity = "Medium"
+    issue_title: str
+    issue_description: Optional[str] = None
+    suggested_action: Optional[str] = None
+    manager_note: Optional[str] = None
+    due_date: Optional[str] = None  # YYYY-MM-DD
+
+
+class InterventionUpdate(BaseModel):
+    issue_title: Optional[str] = None
+    issue_description: Optional[str] = None
+    suggested_action: Optional[str] = None
+    manager_note: Optional[str] = None
+    severity: Optional[InterventionSeverity] = None
+    track_type: Optional[InterventionTrackType] = None
+    due_date: Optional[str] = None
+    status: Optional[InterventionStatus] = None
+    tm_user_id: Optional[str] = None
+
+
+class Intervention(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    company_id: Optional[str] = None
+    team_id: Optional[str] = None
+    manager_id: str
+    tm_user_id: Optional[str] = None
+    doctor_id: Optional[str] = None
+    insight_card_id: Optional[str] = None
+    related_entity_type: Optional[str] = None
+    related_entity_id: Optional[str] = None
+    track_type: InterventionTrackType = "General"
+    severity: InterventionSeverity = "Medium"
+    issue_title: str
+    issue_description: Optional[str] = None
+    suggested_action: Optional[str] = None
+    manager_note: Optional[str] = None
+    status: InterventionStatus = "Open"
+    due_date: Optional[str] = None
+    created_from_insight: bool = False
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+    completed_at: Optional[str] = None
+    dismissed_at: Optional[str] = None
+    deleted_at: Optional[str] = None
+

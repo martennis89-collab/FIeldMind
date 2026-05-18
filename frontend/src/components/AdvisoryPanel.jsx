@@ -34,7 +34,7 @@ function sortCards(cards) {
 }
 
 // ---------- One card ----------
-function InsightCard({ card, onAction, showWho }) {
+function InsightCard({ card, onAction, onCreateIntervention, showWho, showCreateIntervention }) {
   const sev = severityColor(card.severity);
   const isDone = card.status === "Resolved" || card.status === "Dismissed";
   return (
@@ -95,6 +95,17 @@ function InsightCard({ card, onAction, showWho }) {
       </div>
       {!isDone && (
         <div className="mt-3 flex flex-wrap gap-2 justify-end">
+          {showCreateIntervention && (
+            <button
+              type="button"
+              data-testid={`insight-create-intervention-${card.id}`}
+              onClick={() => onCreateIntervention(card)}
+              className="text-xs px-3 py-1.5 rounded border flex items-center gap-1"
+              style={{ background: "var(--brand-secondary)", color: "white", borderColor: "var(--brand-secondary)" }}
+            >
+              <Sparkles className="w-3 h-3" /> Create intervention
+            </button>
+          )}
           {card.status === "New" && (
             <button
               type="button"
@@ -183,6 +194,23 @@ export default function AdvisoryPanel({ variant = "tm" }) {
       toast.success(msg);
     } catch {
       toast.error("Action failed.");
+    }
+  };
+
+  const onCreateIntervention = async (card) => {
+    const note = window.prompt(
+      `Create intervention for:\n"${card.title}"\n\nAdd a manager note (optional):`,
+      ""
+    );
+    if (note === null) return;
+    try {
+      await api.post(`/interventions/from-insight/${card.id}`, {
+        manager_note: note || null,
+      });
+      await load();
+      toast.success("Intervention created from insight.");
+    } catch {
+      toast.error("Could not create intervention.");
     }
   };
 
@@ -301,7 +329,14 @@ export default function AdvisoryPanel({ variant = "tm" }) {
       ) : (
         <div className="space-y-3" data-testid={`advisory-${variant}-list`}>
           {filtered.map((c) => (
-            <InsightCard key={c.id} card={c} onAction={onAction} showWho={variant !== "tm"} />
+            <InsightCard
+              key={c.id}
+              card={c}
+              onAction={onAction}
+              onCreateIntervention={onCreateIntervention}
+              showWho={variant !== "tm"}
+              showCreateIntervention={variant !== "tm" && (user?.role === "Manager" || user?.role === "Admin" || user?.role === "Owner")}
+            />
           ))}
         </div>
       )}

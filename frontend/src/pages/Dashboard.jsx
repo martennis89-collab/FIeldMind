@@ -4,6 +4,7 @@ import api from "../lib/api";
 import { Link, useNavigate } from "react-router-dom";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import AdvisoryPanel from "../components/AdvisoryPanel";
+import InterventionList from "../components/InterventionList";
 import {
   Activity, AlertTriangle, Calendar, CalendarClock, CheckCircle2, ClipboardList, Flame, MapPin, TrendingDown, TrendingUp, Users,
   Sparkles, ChevronRight, ChevronDown, Target,
@@ -326,6 +327,8 @@ function TMView({ data }) {
       </div>
 
       <UpcomingDemosWidget />
+
+      <InterventionList variant="tm" />
 
       <AdvisoryPanel variant="tm" />
 
