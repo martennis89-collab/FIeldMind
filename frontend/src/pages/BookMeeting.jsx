@@ -32,6 +32,7 @@ export default function BookMeeting() {
   const [subject, setSubject] = useState(preDemo ? "iTero demo" : "");
   const [isDemo, setIsDemo] = useState(preDemo);
   const [busy, setBusy] = useState(false);
+  const [addingDoctor, setAddingDoctor] = useState(false);
 
   useEffect(() => {
     api.get("/doctors").then((r) => setDoctors(Array.isArray(r.data) ? r.data : (r.data.doctors || [])));
