@@ -673,32 +673,113 @@ Action toast strings now use a small map (`{seen:"Insight marked seen.", dismiss
 - No regressions in Phase A/B/C/D suites.
 - Intervention entity (Phase F) can now reference live `InsightCard.id` to close-the-loop ("manager creates intervention from card X").
 
+## Iteration 29 (Feb 2026) — Phase F: Intervention Entity + Manager Intervention Tab
+
+**Goal**: Close the loop between insight and manager action. Insight cards tell the manager **what** is wrong; Interventions let the manager **track the corrective action** assigned to a specific TM.
+
+### 1. Intervention model — `/app/backend/models.py`
+Full spec fields: `id, company_id, team_id, manager_id, tm_user_id, doctor_id, insight_card_id, related_entity_type, related_entity_id, track_type {General|iTero|Invisalign|Both}, severity {Low|Medium|High|Critical}, issue_title, issue_description, suggested_action, manager_note, status {Open|In Progress|Completed|Dismissed}, due_date, created_from_insight, created_at, updated_at, completed_at, dismissed_at, deleted_at`.
+
+### 2. API surface — `/app/backend/routers/interventions.py`
+```
+GET    /api/interventions                          GET    /api/interventions/{id}
+POST   /api/interventions                          POST   /api/interventions/from-insight/{insight_id}
+PUT    /api/interventions/{id}
+POST   /api/interventions/{id}/in-progress         POST   /api/interventions/{id}/complete
+POST   /api/interventions/{id}/dismiss             DELETE /api/interventions/{id}     (soft delete)
+```
+- RBAC: TM read-only on own assignments. Manager full CRUD on own team. Admin company-wide. Owner cross-company.
+- Auto-team-id resolution: when manager assigns to a TM, intervention inherits the TM's `team_id` (manager can only assign to TMs in own team).
+- Soft delete only — `deleted_at` set; rows preserved.
+- Event ledger: `intervention_created`, `intervention_updated`, `intervention_in_progress`, `intervention_completed`, `intervention_dismissed`, `intervention_deleted`.
+
+### 3. from-insight pre-fill flow
+`POST /interventions/from-insight/{insight_id}` reads the insight card, derives `track_type` from `related_metric_slug` (slug contains "itero" → iTero, "invisalign" → Invisalign, else General), copies `severity`, `title`, `body`, `suggested_action`. Manager body overrides `manager_note`, `due_date`, etc. Source card is automatically transitioned `New → Seen` (never `Resolved/Dismissed`), preserving full insight history.
+
+### 4. Frontend surfaces
+**New components** (~430 LOC):
+- `/app/frontend/src/components/InterventionList.jsx` — variant-driven:
+  - `variant="manager"` (Manager Intervention Tab): 4 status tabs (Open / In Progress / Completed / Dismissed), TM/severity/track filters, per-row action buttons (Start / Edit / Dismiss / Complete / Delete), modal Edit dialog with title/severity/due-date/manager-note fields.
+  - `variant="tm"` (TM dashboard panel): read-only "Manager follow-up" panel that hides itself when empty.
+
+**Dashboard integration**:
+- `Intervention.jsx` (existing doctor-priority bucket page) **augmented** — now ALSO renders `<InterventionList variant="manager" />` below the doctor buckets.
+- `Dashboard.jsx::TMView` — renders `<InterventionList variant="tm" />` above the AdvisoryPanel.
+- `AdvisoryPanel.jsx` — Manager/Admin/Owner cards now show a **"Create intervention"** button (`insight-create-intervention-{id}`) that opens a `window.prompt` for the manager note and POSTs `/interventions/from-insight/{id}`. TMs do NOT see this button (RBAC honoured client-side).
+
+### 5. Test coverage
+**Backend — 15/15 ✅** (`tests/test_phase_f_interventions.py`):
+1. ✅ Manager creates intervention from insight card (auto-derives track_type, severity, title, body, suggested_action; insight card flips New→Seen)
+2. ✅ Intervention persists `insight_card_id` link
+3. ✅ Manager manual create (no card link, `created_from_insight=False`)
+4. ✅ Manager sees only own-team interventions (`team_id == self.team_id`)
+5. ✅ TM sees only own-assigned interventions
+6. ✅ TM cannot DELETE or COMPLETE manager intervention (403)
+7. ✅ Admin sees all company interventions
+8. ✅ Cross-company TM list returns `[]`; direct GET returns 404
+9. ✅ `POST .../in-progress` → `status=In Progress`
+10. ✅ `POST .../complete` → `status=Completed` + `completed_at` set
+11. ✅ `POST .../dismiss` → `status=Dismissed` + `dismissed_at` set
+12. ✅ `DELETE` soft-deletes (row preserved with `deleted_at`)
+13. ✅ Event ledger records `intervention_created` + `intervention_in_progress` + `intervention_completed`
+14. ✅ List filters: default excludes Dismissed; `?include_dismissed=true` brings back; `?status=Completed` returns only completed
+15. ✅ Insight card preserved after intervention creation (body and metric_value intact; status flipped to Seen)
+
+**Frontend — 100% success** (`/app/test_reports/iteration_8.json`):
+- Manager `/intervention` renders both the existing doctor-priority bucket tabs AND `interventions-manager-panel` with 4 status tabs + 3 filters.
+- Manager `/dashboard` AdvisoryPanel: 8 team insight cards each show `insight-create-intervention-{id}` button; click triggers prompt, POST succeeds, toast "Intervention created from insight."
+- TM `/dashboard`: `tm-followup-panel` renders (TM has ≥1 manager follow-up); does NOT see `insight-create-intervention-*` buttons (RBAC honoured client-side).
+- Admin `/intervention`: also sees `interventions-manager-panel` (company-wide visibility).
+- All empty-states (`interventions-{status}-empty`) render correctly when a tab has 0 items.
+- One pre-existing hydration warning in AdvisoryPanel TM filter `<option>` — Emergent dev-tooling cosmetic, does NOT affect functionality.
+
+**Full Phase A+B+C+D+E+F regression: 74/74 ✅** (13+19+12+15+15).
+
+### 6. Risks / limitations
+- **Edit dialog uses `window.confirm()` for delete** — acceptable for V1 but a custom modal would be cleaner. Backlogged P2.
+- **Create-intervention prompt uses `window.prompt()`** — works but is a single-field flow. A full modal (currently only `EditDialog` exists) for the create-from-insight path is P2 polish.
+- **TM filter dropdown** in Manager Intervention panel still uses `usersById` map; if the manager's users list is large, falls back to UUID prefix when the name isn't found. Same payload-augmentation issue tracked under Phase E P1 follow-up — single backend fix solves both.
+- **Manager assignment cross-team**: Admin/Owner can assign an intervention to any TM in own company; Manager is constrained to own team. Tests cover the Manager path; Admin cross-team assignment is currently allowed (correct per spec).
+- **Doctor association** is captured on `doctor_id` field but UI does not yet offer a doctor picker in the create-from-insight flow (deferred — insight cards are TM-scoped, not doctor-scoped, so deriving a doctor would require user input which the prompt UI cannot host).
+
+### 7. Phase G can safely start
+- Intervention entity is fully wired backend + frontend.
+- Event ledger records every lifecycle transition (foundation for Phase G benchmark cohort eligibility tracking).
+- `benchmark_opt_in` Company field still defaults `False` and zero external benchmark endpoints exist.
+- All regression suites green.
+
 ## Backlog (next phases)
 **P0 — pending user sign-off**
-- Phase F — Intervention entity + Manager Intervention tab.
+- Phase G — Benchmark Cohort infrastructure + privacy rules. **`benchmark_opt_in` Company toggle becomes meaningful**; cross-company anonymous cohort comparisons (read-only, opt-in only).
 
-**P1 — Frontend follow-ups**
-- Augment `/insights/team` and `/insights/company` to include `scope_name` (full_name) so the TM filter dropdown shows readable names instead of UUID prefixes.
+**P1 — Phase E / F follow-ups**
+- Ship `scope_name` (full_name) in `/insights/team`, `/insights/company`, `/interventions` payloads so TM filter dropdowns show readable names.
+- Replace `window.prompt` create-intervention flow with a proper modal that includes due-date and severity overrides up-front.
+- Add `doctor_id` picker in the create-intervention modal once that lands.
 
-**P1 — Phase D V2** (gating Phase E follow-on advisories)
-- Trend / delta snapshots so "improved vs previous period" insights become possible.
-- Team / company / per-doctor scope metrics.
-- `comparison_value` back-fill on `/insights/generate` (parked per user instruction).
+**P1 — Phase D V2**
+- Trend/delta snapshots so "improved vs previous period" insight cards become possible.
+- Team/company/per-doctor scope metrics.
+- `comparison_value` back-fill on `/insights/generate`.
 
-**P1 — Security / Enterprise Hardening** (deferred)
+**P1 — Security / Enterprise Hardening** (still deferred)
 - Owner support-mode toggle + per-cross-company-read audit row.
 - Defensive `company_id` filters on dashboard sub-tm_q constructions.
 - Automated test for `ENFORCE_COMPANY_ISOLATION=false` fallback.
 - Clean analytics test fixture/reset strategy.
 
-**P2 — Cleanup** (deferred)
+**P2 — Cleanup**
 - Move shared helpers from `server.py` into `routers/_deps.py`.
 - Per-region scoping for taxonomy terms.
 - Swagger tags per router.
 - Snapshot scheduler / cron / weekly autorun.
-- "My FEI" badge UI.
+- "My FEI" badge UI on TM dashboard.
+- Add empty-data TM visual regression test.
 
-**P3 — Branding** (deferred)
+**Future**
+- `/insights/me/digest` weekly email after Phase G.
+
+**P3 — Branding**
 - Company logo + brand color for report PDFs and exports.
 - Refactor `server.py` (~3 200 lines) into FastAPI APIRouter modules (`routers/users.py`, `doctors.py`, `visits.py`, `tasks.py`, `expenses.py`, `reports.py`, `dashboards.py`, `taxonomy.py`)
 - Per-region scoping for taxonomy terms (currently global; users.region exists but not yet enforced)
