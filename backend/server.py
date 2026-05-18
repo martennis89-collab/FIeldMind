@@ -9,7 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 import uuid
 from typing import List, Optional, Literal
 from pydantic import BaseModel
@@ -58,6 +58,13 @@ from models import (
     IteroStage,
     IteroStageUpdate,
     ITERO_STAGE_RANK,
+    # Phase B
+    TrackSignal,
+    TrackSignalCreate,
+    ClinicalPattern,
+    ClinicalPatternCreate,
+    ITERO_SIGNAL_TYPES,
+    INVISALIGN_SIGNAL_TYPES,
 )
 from ai import analyze_note as ai_analyze_note
 from ai import extract_task_from_text as ai_extract_task
@@ -97,20 +104,51 @@ def _strip_user(u):
     return u
 
 
-async def _audit(user, action_type, entity_type, entity_id=None, prev=None, new=None, ip=None):
+async def _audit(
+    user,
+    action_type,
+    entity_type,
+    entity_id=None,
+    prev=None,
+    new=None,
+    ip=None,
+    *,
+    event_type=None,
+    track_type=None,
+    idempotency_key=None,
+):
+    """Append an entry to the Activity Event Ledger (collection: audit_logs).
+
+    `action_type` is the legacy generic verb (create/update/delete/...).
+    `event_type` is the spec §3.12 named event (e.g. promise_completed).
+    `idempotency_key`, when provided, prevents duplicate ledger rows for the same
+    logical action (e.g. promise_overdue should be recorded once per promise).
+    """
+    if idempotency_key:
+        existing = await db.audit_logs.find_one(
+            {"idempotency_key": idempotency_key}, {"_id": 0, "id": 1}
+        )
+        if existing:
+            return existing["id"]
     doc = {
         "id": __import__("uuid").uuid4().hex,
         "user_id": user["id"] if user else None,
         "user_email": user["email"] if user else None,
         "action_type": action_type,
+        "event_type": event_type,
         "entity_type": entity_type,
         "entity_id": entity_id,
+        "track_type": track_type,
         "timestamp": _now_iso(),
         "previous_value": prev,
         "new_value": new,
         "ip": ip,
+        "idempotency_key": idempotency_key,
+        "company_id": (user or {}).get("company_id") if user else None,
+        "team_id": (user or {}).get("team_id") if user else None,
     }
     await db.audit_logs.insert_one(doc)
+    return doc["id"]
 
 
 async def _doctor_query_for(user) -> dict:
@@ -1113,6 +1151,357 @@ async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get
     return {"text": text.strip()}
 
 
+def _visit_track_type(body) -> str:
+    """Translate the legacy uppercase track_type to the spec's titlecase value."""
+    raw = (getattr(body, "track_type", None) or "BOTH").upper()
+    return {"ITERO": "iTero", "INVISALIGN": "Invisalign", "BOTH": "Both", "GENERAL": "General"}.get(raw, "General")
+
+
+# ============================================================
+# PHASE B — Track Signal materialization
+# Mirror legacy embedded itero_actions/commercial_actions/invisalign_actions
+# into the new first-class `track_signals` collection so analytics can join on it.
+# Visits stay backward-compatible — the embedded fields are still written.
+# ============================================================
+
+# Map a legacy boolean field on itero_actions to the spec's signal_type token.
+ITERO_FIELD_TO_SIGNAL = {
+    "demo_discussed": "demo_discussed",
+    "demo_booked": "demo_booked",
+    "demo_completed": "demo_completed",
+    "boost_discussed": "boost_discussed",
+    "trade_in_discussed": "trade_in_discussed",
+    "trade_in_interest": "trade_in_interest",
+    "scanner_concern": "scanner_concern",
+    "itero_value_discussed": "itero_value_discussed",
+    "face_scan_discussed": "face_scan_discussed",
+}
+# commercial_actions also carries demo/proposal flags (legacy)
+COMMERCIAL_FIELD_TO_ITERO_SIGNAL = {
+    "demo_discussed": "demo_discussed",
+    "demo_booked": "demo_booked",
+    "demo_completed": "demo_completed",
+    "proposal_sent": "proposal_sent",
+    "proposal_follow_up_done": "proposal_followed_up",
+}
+INVISALIGN_FIELD_TO_SIGNAL = {
+    "growth_program_explained": "growth_program_explained",
+    "growth_program_not_understood": "growth_program_not_understood",
+    "certification_interest": "certification_interest",
+    "tps_discussed": "tps_discussed",
+    "p2p_suggested": "p2p_suggested",
+    "staff_training_needed": "staff_training_needed",
+    "clinical_confidence_barrier": "clinical_confidence_barrier",
+    "business_confidence_barrier": "business_confidence_barrier",
+    "patient_affordability_concern": "patient_affordability_concern",
+    "case_selection_concern": "case_selection_concern",
+    "clincheck_understanding": "clincheck_understanding",
+    "smileview_smilevideo_discussed": "smileview_smilevideo_discussed",
+    "teen_confidence_cover_discussed": "teen_confidence_cover_discussed",
+    "docloc_benefits_discussed": "docloc_benefits_discussed",
+    "invited_to_event": "invited_to_event",
+    "marketing_support_discussed": "marketing_support_discussed",
+    "lead_generation_concern": "lead_generation_concern",
+    "time_constraint": "time_constraint",
+    "competition_braces": "competition_braces",
+    "competition_other_aligners": "competition_other_aligners",
+    "extraction_case_concern": "extraction_case_concern",
+    "retained_teeth_concern": "retained_teeth_concern",
+    "maob_discussed": "maob_discussed",
+    "maob_interest": "maob_interest",
+    "ipe_discussed": "ipe_discussed",
+    "ipe_interest": "ipe_interest",
+}
+
+# Map signal_type → named event_type for ledger
+SIGNAL_TO_EVENT = {
+    "demo_discussed": "itero_demo_discussed",
+    "demo_booked": "itero_demo_booked",
+    "demo_completed": "itero_demo_completed",
+    "proposal_sent": "itero_proposal_sent",
+    "proposal_followed_up": "itero_proposal_followed_up",
+    "boost_discussed": "itero_boost_discussed",
+    "trade_in_discussed": "itero_trade_in_discussed",
+    "growth_program_explained": "invisalign_growth_program_explained",
+    "certification_interest": "invisalign_certification_interest_logged",
+    "tps_discussed": "invisalign_tps_discussed",
+    "p2p_suggested": "invisalign_p2p_suggested",
+    "staff_training_needed": "invisalign_staff_training_needed",
+    "maob_discussed": "invisalign_maob_discussed",
+    "ipe_discussed": "invisalign_ipe_discussed",
+    "clinical_confidence_barrier": "invisalign_clinical_confidence_barrier_logged",
+    "business_confidence_barrier": "invisalign_business_confidence_barrier_logged",
+    "patient_affordability_concern": "invisalign_patient_affordability_concern_logged",
+    "case_selection_concern": "invisalign_case_selection_concern_logged",
+}
+
+
+async def _insert_track_signal(
+    *, doctor, visit_id, track_type, signal_type, signal_value, signal_status,
+    signal_date, source, user, fire_event=True,
+):
+    """Insert a TrackSignal row + (optionally) an event_ledger entry.
+    Uses idempotency_key = (visit_id, track_type, signal_type) so re-saving a
+    visit twice doesn't produce duplicate signals/events."""
+    import uuid as _uuid_mod
+    idem = f"ts:{visit_id}:{track_type}:{signal_type}"
+    existing = await db.track_signals.find_one({"idempotency_key": idem}, {"_id": 0, "id": 1})
+    if existing:
+        return existing["id"]
+    row = {
+        "id": _uuid_mod.uuid4().hex,
+        "doctor_id": doctor["id"],
+        "tm_user_id": user["id"],
+        "team_id": user.get("team_id") or doctor.get("team_id"),
+        "meeting_id": visit_id,
+        "track_type": track_type,
+        "signal_type": signal_type,
+        "signal_value": signal_value,
+        "signal_status": signal_status,
+        "signal_date": signal_date or datetime.now(timezone.utc).date().isoformat(),
+        "source": source,
+        "company_id": None,
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+        "deleted_at": None,
+        "idempotency_key": idem,
+    }
+    await db.track_signals.insert_one(row)
+    if fire_event:
+        await _audit(
+            user, "create", "track_signal", row["id"],
+            new={"track_type": track_type, "signal_type": signal_type},
+            event_type=SIGNAL_TO_EVENT.get(signal_type, "track_signal_created"),
+            track_type=track_type,
+            idempotency_key=f"ev:{idem}",
+        )
+    return row["id"]
+
+
+async def _materialize_track_signals_from_visit(*, visit, doctor, body, source, user):
+    """Fan out a saved visit into one row per confirmed Track Signal."""
+    visit_id = visit["id"]
+    visit_date = (visit.get("visit_date") or _now_iso())[:10]
+
+    ia = body.itero_actions
+    if ia:
+        ia_dict = ia.model_dump()
+        for field, signal_type in ITERO_FIELD_TO_SIGNAL.items():
+            if ia_dict.get(field):
+                await _insert_track_signal(
+                    doctor=doctor, visit_id=visit_id, track_type="iTero",
+                    signal_type=signal_type, signal_value=None, signal_status=None,
+                    signal_date=visit_date, source=source, user=user,
+                )
+        if ia_dict.get("scanner_interest_level"):
+            await _insert_track_signal(
+                doctor=doctor, visit_id=visit_id, track_type="iTero",
+                signal_type="scanner_interest_level",
+                signal_value=str(ia_dict["scanner_interest_level"]),
+                signal_status=None,
+                signal_date=visit_date, source=source, user=user,
+            )
+
+    ca = body.commercial_actions
+    if ca:
+        ca_dict = ca.model_dump()
+        for field, signal_type in COMMERCIAL_FIELD_TO_ITERO_SIGNAL.items():
+            if ca_dict.get(field):
+                await _insert_track_signal(
+                    doctor=doctor, visit_id=visit_id, track_type="iTero",
+                    signal_type=signal_type, signal_value=None, signal_status=None,
+                    signal_date=visit_date, source=source, user=user,
+                )
+
+    inv = body.invisalign_actions
+    if inv:
+        inv_dict = inv.model_dump()
+        for field, signal_type in INVISALIGN_FIELD_TO_SIGNAL.items():
+            if inv_dict.get(field):
+                await _insert_track_signal(
+                    doctor=doctor, visit_id=visit_id, track_type="Invisalign",
+                    signal_type=signal_type, signal_value=None, signal_status=None,
+                    signal_date=visit_date, source=source, user=user,
+                )
+
+
+# ---- Backfill helper (idempotent — uses idempotency_key) ----
+async def _backfill_track_signals_from_visits() -> int:
+    """For every existing visit, generate the track_signals rows that the new
+    write path would emit. Idempotent — re-running is safe."""
+    cursor = db.visits.find(
+        {"deleted_at": {"$in": [None, False]}},
+        {"_id": 0},
+    )
+    created = 0
+    async for v in cursor:
+        doctor = await db.doctors.find_one({"id": v["doctor_id"]}, {"_id": 0})
+        if not doctor:
+            continue
+        user_stub = {"id": v["tm_user_id"], "email": "", "team_id": v.get("team_id")}
+        # We pass a tiny shim with model_dump() returning the embedded dict
+        class _Shim:
+            def __init__(self, d): self._d = d or {}
+            def model_dump(self): return self._d
+        ia = _Shim(v.get("itero_actions"))
+        ca = _Shim(v.get("commercial_actions"))
+        inv = _Shim(v.get("invisalign_actions"))
+
+        before = await db.track_signals.count_documents({"meeting_id": v["id"]})
+        # Re-use the materialize logic with shim body
+        class _Body:
+            itero_actions = ia
+            commercial_actions = ca
+            invisalign_actions = inv
+        await _materialize_track_signals_from_visit(
+            visit={"id": v["id"], "visit_date": v.get("visit_date")},
+            doctor=doctor, body=_Body(), source="Manual", user=user_stub,
+        )
+        after = await db.track_signals.count_documents({"meeting_id": v["id"]})
+        created += max(0, after - before)
+    return created
+
+
+# ============================================================
+# PHASE B — Track Signals CRUD
+# ============================================================
+@api.get("/track-signals")
+async def list_track_signals(
+    doctor_id: Optional[str] = None,
+    track_type: Optional[str] = None,
+    signal_type: Optional[str] = None,
+    since: Optional[str] = None,  # YYYY-MM-DD
+    user=Depends(get_current_user),
+):
+    q: dict = {"deleted_at": None}
+    if user["role"] == "TM":
+        q["tm_user_id"] = user["id"]
+    elif user["role"] == "Manager":
+        q["team_id"] = user.get("team_id")
+    if doctor_id:
+        q["doctor_id"] = doctor_id
+    if track_type in ("iTero", "Invisalign"):
+        q["track_type"] = track_type
+    if signal_type:
+        q["signal_type"] = signal_type
+    if since:
+        q["signal_date"] = {"$gte": since}
+    rows = await db.track_signals.find(q, {"_id": 0}).sort("signal_date", -1).to_list(5000)
+    return rows
+
+
+@api.post("/track-signals")
+async def create_track_signal(body: TrackSignalCreate, user=Depends(get_current_user)):
+    """Manual TrackSignal creation — for when a user adds a signal outside the
+    visit-log flow (rare, but supported). RBAC restricted to TMs & above."""
+    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
+    if not doctor or not await _can_access_doctor(user, doctor):
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    if body.track_type == "iTero" and body.signal_type not in ITERO_SIGNAL_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown iTero signal_type: {body.signal_type}")
+    if body.track_type == "Invisalign" and body.signal_type not in INVISALIGN_SIGNAL_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown Invisalign signal_type: {body.signal_type}")
+    sid = await _insert_track_signal(
+        doctor=doctor,
+        visit_id=body.meeting_id,
+        track_type=body.track_type,
+        signal_type=body.signal_type,
+        signal_value=body.signal_value,
+        signal_status=body.signal_status,
+        signal_date=body.signal_date,
+        source=body.source,
+        user=user,
+    )
+    return {"ok": True, "id": sid}
+
+
+@api.delete("/track-signals/{signal_id}")
+async def delete_track_signal(signal_id: str, user=Depends(get_current_user)):
+    s = await db.track_signals.find_one({"id": signal_id, "deleted_at": None}, {"_id": 0})
+    if not s:
+        raise HTTPException(status_code=404, detail="Track signal not found")
+    if s["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await db.track_signals.update_one(
+        {"id": signal_id}, {"$set": {"deleted_at": _now_iso(), "updated_at": _now_iso()}}
+    )
+    await _audit(user, "delete", "track_signal", signal_id, prev=s)
+    return {"ok": True, "id": signal_id, "soft_deleted": True}
+
+
+# ============================================================
+# PHASE B — Clinical Patterns CRUD
+# ============================================================
+@api.get("/clinical-patterns")
+async def list_clinical_patterns(
+    doctor_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    q: dict = {"deleted_at": None}
+    if user["role"] == "TM":
+        q["tm_user_id"] = user["id"]
+    elif user["role"] == "Manager":
+        q["team_id"] = user.get("team_id")
+    if doctor_id:
+        q["doctor_id"] = doctor_id
+    return await db.clinical_patterns.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+
+
+@api.post("/clinical-patterns")
+async def create_clinical_pattern(body: ClinicalPatternCreate, user=Depends(get_current_user)):
+    """Doctor-level conversation pattern. AI-suggested patterns must arrive here
+    only AFTER the user confirms — the AI extraction endpoint returns suggestions,
+    this endpoint persists them."""
+    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
+    if not doctor or not await _can_access_doctor(user, doctor):
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    import uuid as _uuid_mod
+    row = {
+        "id": _uuid_mod.uuid4().hex,
+        "doctor_id": body.doctor_id,
+        "tm_user_id": user["id"],
+        "team_id": user.get("team_id") or doctor.get("team_id"),
+        "meeting_id": body.meeting_id,
+        "case_type": body.case_type,
+        "treatment_preference": body.treatment_preference,
+        "treatment_strategy": body.treatment_strategy,
+        "confidence_level": body.confidence_level,
+        "barrier_type": body.barrier_type,
+        "source": body.source,
+        "company_id": None,
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+        "deleted_at": None,
+    }
+    await db.clinical_patterns.insert_one(row)
+    await _audit(
+        user, "create", "clinical_pattern", row["id"],
+        new={"case_type": body.case_type, "barrier_type": body.barrier_type},
+        event_type="clinical_pattern_created",
+        track_type="Invisalign",
+    )
+    _strip_id(row)
+    return row
+
+
+@api.delete("/clinical-patterns/{pattern_id}")
+async def delete_clinical_pattern(pattern_id: str, user=Depends(get_current_user)):
+    p = await db.clinical_patterns.find_one({"id": pattern_id, "deleted_at": None}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Clinical pattern not found")
+    if p["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await db.clinical_patterns.update_one(
+        {"id": pattern_id}, {"$set": {"deleted_at": _now_iso(), "updated_at": _now_iso()}}
+    )
+    await _audit(user, "delete", "clinical_pattern", pattern_id, prev=p)
+    return {"ok": True, "id": pattern_id, "soft_deleted": True}
+
+
 @api.post("/visits")
 async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
     doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
@@ -1142,10 +1531,24 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
         "updated_at": _now_iso(),
     }
     await db.visits.insert_one(visit)
-    await _audit(user, "create", "visit", visit["id"], new={"doctor_id": body.doctor_id, "sentiment": body.sentiment})
+    # Spec §3.12 — named event
+    await _audit(
+        user, "create", "visit", visit["id"],
+        new={"doctor_id": body.doctor_id, "sentiment": body.sentiment},
+        event_type="meeting_logged",
+        track_type=_visit_track_type(body),
+    )
 
     # Auto-advance iTero pipeline stage based on the latest visit's signals.
     await _auto_advance_itero_stage(body.doctor_id, body.itero_actions, body.commercial_actions, user)
+
+    # PHASE B — Materialize confirmed Track Signals from the visit payload.
+    # The user confirmed these checkboxes in the UI, so source = "AI Confirmed"
+    # when there was an ai_extraction, else "Manual".
+    src_label = "AI Confirmed" if body.ai_extraction else "Manual"
+    await _materialize_track_signals_from_visit(
+        visit=visit, doctor=doctor, body=body, source=src_label, user=user
+    )
 
     # Auto-link meeting -> Completed when visit logged from a booked meeting
     if body.meeting_id:
@@ -1162,7 +1565,8 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
     for p in (body.promises or []):
         due = p.suggested_due_date
         if not due:
-            due = (today + timedelta(days=3)).isoformat()
+            # Spec §3.6 default — +3 business days when AI didn't propose one
+            due = _add_business_days(today, 3).isoformat()
         task = {
             "id": str(uuid.uuid4()),
             "doctor_id": body.doctor_id,
@@ -1175,11 +1579,19 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
             "priority": p.priority,
             "status": "Open",
             "created_from_ai": True,
+            # The user confirmed this AI suggestion by saving the visit → ai_confirmed=True
+            "ai_confirmed": True,
+            "category": "other",
             "created_at": _now_iso(),
             "updated_at": _now_iso(),
             "completed_at": None,
         }
         await db.tasks.insert_one(task)
+        await _audit(
+            user, "create", "task", task["id"],
+            new={"task_title": task["task_title"], "ai": True},
+            event_type="promise_created",
+        )
         _strip_id(task)
         created_tasks.append(task)
 
@@ -1590,6 +2002,8 @@ async def list_meetings(
         q["team_id"] = user.get("team_id")
     # Admin/Owner sees all
     now = _now_iso()
+    # Exclude soft-deleted meetings everywhere we list them.
+    q["deleted_at"] = None
     if when == "upcoming":
         q["scheduled_at"] = {"$gte": now}
         q["status"] = "Scheduled"
@@ -1628,14 +2042,26 @@ async def update_meeting(meeting_id: str, body: MeetingUpdate, user=Depends(get_
 
 @api.delete("/meetings/{meeting_id}")
 async def delete_meeting(meeting_id: str, user=Depends(get_current_user)):
-    m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+    m = await db.meetings.find_one({"id": meeting_id, "deleted_at": None}, {"_id": 0})
     if not m:
-        raise HTTPException(status_code=404, detail="Meeting not found")
+        # also try without the deleted_at filter for backward-compat (old rows have no field)
+        m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not m or m.get("deleted_at"):
+            raise HTTPException(status_code=404, detail="Meeting not found")
     if m["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
-    await db.meetings.delete_one({"id": meeting_id})
-    await _audit(user, "delete", "meeting", meeting_id, prev=m)
-    return {"ok": True, "id": meeting_id}
+    now = _now_iso()
+    await db.meetings.update_one(
+        {"id": meeting_id},
+        {"$set": {"deleted_at": now, "updated_at": now, "status": "Cancelled"}},
+    )
+    await _audit(
+        user, "delete", "meeting", meeting_id,
+        prev=m, new={"deleted_at": now},
+        event_type="meeting_deleted",
+        track_type=m.get("track_type") or "General",
+    )
+    return {"ok": True, "id": meeting_id, "soft_deleted": True}
 
 
 class CompleteDemoBody(BaseModel):
@@ -2031,6 +2457,19 @@ async def list_tasks(
     return tasks
 
 
+def _add_business_days(start_date: date, days: int) -> date:
+    """Add N business days (skip Sat/Sun) to a date. Spec §3.6 default for promises."""
+    if days <= 0:
+        return start_date
+    cur = start_date
+    added = 0
+    while added < days:
+        cur = cur + timedelta(days=1)
+        if cur.weekday() < 5:  # Mon=0..Fri=4
+            added += 1
+    return cur
+
+
 @api.post("/tasks")
 async def create_task(body: TaskCreate, user=Depends(get_current_user)):
     doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
@@ -2038,6 +2477,8 @@ async def create_task(body: TaskCreate, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Doctor not found")
     import uuid
     today_d = datetime.now(timezone.utc).date()
+    # Spec §3.6 + §30: If no due_date provided, default to +3 BUSINESS days.
+    due_date = body.due_date or _add_business_days(today_d, 3).isoformat()
     task = Task(
         id=str(uuid.uuid4()),
         doctor_id=body.doctor_id,
@@ -2046,12 +2487,20 @@ async def create_task(body: TaskCreate, user=Depends(get_current_user)):
         visit_id=body.visit_id,
         task_title=body.task_title,
         task_description=body.task_description or "",
-        due_date=body.due_date or (today_d + timedelta(days=3)).isoformat(),
+        due_date=due_date,
         priority=body.priority,
+        category=body.category,
         created_from_ai=body.created_from_ai,
+        # AI-suggested promises stay unconfirmed until the user confirms them.
+        # Manual creates default to True (the user is the creator).
+        ai_confirmed=body.ai_confirmed if not body.created_from_ai else bool(body.ai_confirmed),
     ).model_dump()
     await db.tasks.insert_one(task)
-    await _audit(user, "create", "task", task["id"], new={"task_title": task["task_title"]})
+    await _audit(
+        user, "create", "task", task["id"],
+        new={"task_title": task["task_title"], "category": task["category"], "ai": task["created_from_ai"]},
+        event_type="promise_created",
+    )
     _strip_id(task)
     return task
 
@@ -2080,7 +2529,10 @@ async def update_task(task_id: str, body: TaskUpdate, user=Depends(get_current_u
         update["completed_at"] = None
     update["updated_at"] = _now_iso()
     await db.tasks.update_one({"id": task_id}, {"$set": update})
-    await _audit(user, "update", "task", task_id, prev=t, new=update)
+    # Pick the right named event for analytics §3.12
+    became_completed = (update.get("status") == "Completed") and (t.get("status") != "Completed")
+    named_event = "promise_completed" if became_completed else "promise_updated"
+    await _audit(user, "update", "task", task_id, prev=t, new=update, event_type=named_event)
     new = await db.tasks.find_one({"id": task_id}, {"_id": 0})
     return new
 
@@ -2106,7 +2558,7 @@ async def delete_task(task_id: str, user=Depends(get_current_user)):
         "deleted_by": user["id"],
         "updated_at": now,
     }})
-    await _audit(user, "delete", "task", task_id, prev=t)
+    await _audit(user, "delete", "task", task_id, prev=t, event_type="promise_deleted")
     return {"ok": True, "id": task_id}
 
 
@@ -2155,11 +2607,13 @@ async def tm_dashboard(user=Depends(get_current_user)):
         **meeting_q,
         "status": "Scheduled",
         "scheduled_at": {"$gte": now_iso[:10]},  # today or later
+        "deleted_at": None,
     })
     completed_meetings_week = await db.meetings.count_documents({
         **meeting_q,
         "status": "Completed",
         "updated_at": {"$gte": week_start, "$lte": week_end_inclusive + "T23:59:59"},
+        "deleted_at": None,
     })
 
     priorities = enriched[:8]
@@ -2204,11 +2658,13 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "Admin"))):
         **team_q,
         "status": "Scheduled",
         "scheduled_at": {"$gte": now_iso[:10]},
+        "deleted_at": None,
     })
     completed_meetings_week = await db.meetings.count_documents({
         **team_q,
         "status": "Completed",
         "updated_at": {"$gte": week_start, "$lte": week_end_inclusive},
+        "deleted_at": None,
     })
 
     # by TM
@@ -4639,6 +5095,39 @@ async def on_startup():
         logger.info(f"Owner seed: {owner_report}")
     except Exception as e:
         logger.error(f"Owner seed failed: {e}")
+
+    # PHASE A — backfill nullable defaults for backward compatibility
+    try:
+        a = await db.visits.update_many(
+            {"deleted_at": {"$exists": False}},
+            {"$set": {"deleted_at": None, "is_draft": False}},
+        )
+        b = await db.meetings.update_many(
+            {"deleted_at": {"$exists": False}},
+            {"$set": {"deleted_at": None, "is_draft": False, "track_type": "General"}},
+        )
+        c = await db.tasks.update_many(
+            {"category": {"$exists": False}},
+            {"$set": {"category": "other", "ai_confirmed": True}},
+        )
+        logger.info(f"Phase A backfill: visits={a.modified_count} meetings={b.modified_count} tasks={c.modified_count}")
+    except Exception as e:
+        logger.error(f"Phase A backfill failed: {e}")
+
+    # PHASE B — indexes + backfill track_signals from historical visits
+    try:
+        await db.track_signals.create_index([("doctor_id", 1), ("track_type", 1), ("signal_date", -1)])
+        await db.track_signals.create_index("idempotency_key", unique=False, sparse=True)
+        await db.track_signals.create_index([("tm_user_id", 1)])
+        await db.clinical_patterns.create_index([("doctor_id", 1)])
+        await db.clinical_patterns.create_index([("tm_user_id", 1)])
+        # Backfill: walk every visit that hasn't been processed yet and materialize signals.
+        # We use the meeting_id (=visit_id) idempotency_key set on insert.
+        backfilled = await _backfill_track_signals_from_visits()
+        logger.info(f"Phase B backfill: {backfilled} new track_signals materialized")
+    except Exception as e:
+        logger.error(f"Phase B init failed: {e}")
+
     logger.info("Field Intelligence Platform started.")
 
 

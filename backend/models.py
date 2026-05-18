@@ -286,6 +286,10 @@ class Visit(BaseModel):
     itero_actions: IteroActions = IteroActions()
     invisalign_actions: InvisalignActions = InvisalignActions()
     commercial_actions: CommercialActions = CommercialActions()
+    # Phase A additions — backward compatible
+    is_draft: bool = False
+    deleted_at: Optional[str] = None
+    company_id: Optional[str] = None  # forward-compat for multi-tenant
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
 
@@ -293,6 +297,21 @@ class Visit(BaseModel):
 # ---------- TASKS / PROMISES ----------
 TaskStatus = Literal["Open", "Completed", "Overdue", "Cancelled"]
 TaskPriority = Literal["Low", "Medium", "High"]
+# Promise category — controlled vocabulary per spec §3.6.
+# Backward-compat: old tasks without a category land in "other".
+PromiseCategory = Literal[
+    "send material",
+    "follow-up call",
+    "arrange demo",
+    "send proposal",
+    "explain program",
+    "invite to event",
+    "arrange training",
+    "connect with expert/P2P",
+    "admin/documentation",
+    "expense/admin",
+    "other",
+]
 
 
 class TaskCreate(BaseModel):
@@ -303,6 +322,8 @@ class TaskCreate(BaseModel):
     due_date: Optional[str] = None  # ISO date
     priority: TaskPriority = "Medium"
     created_from_ai: bool = False
+    ai_confirmed: bool = True  # manual creates are implicitly confirmed
+    category: PromiseCategory = "other"
 
 
 class TaskUpdate(BaseModel):
@@ -312,6 +333,8 @@ class TaskUpdate(BaseModel):
     priority: Optional[TaskPriority] = None
     status: Optional[TaskStatus] = None
     doctor_id: Optional[str] = None
+    category: Optional[PromiseCategory] = None
+    ai_confirmed: Optional[bool] = None
 
 
 class Task(BaseModel):
@@ -327,24 +350,70 @@ class Task(BaseModel):
     priority: TaskPriority = "Medium"
     status: TaskStatus = "Open"
     created_from_ai: bool = False
+    ai_confirmed: bool = True
+    category: PromiseCategory = "other"
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
     completed_at: Optional[str] = None
+    deleted_at: Optional[str] = None  # soft delete
 
 
-# ---------- AUDIT ----------
+# ---------- AUDIT / EVENT LEDGER ----------
+# Phase A: the existing `audit_logs` collection becomes our Event Ledger.
+# Named event types are layered on top of the generic CRUD action_types so
+# analytics queries can target them precisely (per spec §3.12).
+# We keep both `action_type` (legacy) and `event_type` (new, optional)
+# to avoid breaking any existing reader code.
+EventType = Literal[
+    # generic CRUD (compatibility with action_type values)
+    "create", "update", "delete", "view_sensitive", "export", "login", "logout",
+    # named events (spec §3.12)
+    "user_created", "user_deactivated", "user_reactivated",
+    "doctor_imported", "doctor_created", "doctor_updated", "doctor_deleted",
+    "meeting_logged", "meeting_updated", "meeting_deleted",
+    "voice_note_uploaded", "ai_summary_generated", "ai_tags_confirmed",
+    "promise_created", "promise_completed", "promise_overdue",
+    "promise_updated", "promise_deleted",
+    "report_generated", "report_submitted", "report_reviewed", "report_overdue",
+    "report_revision_requested", "manager_comment_added",
+    "intervention_created", "intervention_completed",
+    "intervention_overdue", "intervention_dismissed",
+    "expense_created", "expense_submitted", "expense_approved", "expense_rejected", "expense_deleted",
+    "itero_demo_discussed", "itero_demo_booked", "itero_demo_completed",
+    "itero_proposal_sent", "itero_proposal_followed_up",
+    "itero_boost_discussed", "itero_trade_in_discussed",
+    "invisalign_growth_program_explained", "invisalign_certification_interest_logged",
+    "invisalign_tps_discussed", "invisalign_p2p_suggested",
+    "invisalign_staff_training_needed", "invisalign_maob_discussed", "invisalign_ipe_discussed",
+    "invisalign_clinical_confidence_barrier_logged",
+    "invisalign_business_confidence_barrier_logged",
+    "invisalign_patient_affordability_concern_logged",
+    "invisalign_case_selection_concern_logged",
+    "track_signal_created", "clinical_pattern_created",
+]
+
+
 class AuditLog(BaseModel):
+    """Append-only Activity Event Ledger. Stored in `audit_logs` collection (kept
+    for backward compatibility — the collection IS the event ledger)."""
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
     user_id: str
     user_email: str
-    action_type: str  # create/update/delete/view_sensitive/export/login/logout
-    entity_type: str  # user/team/doctor/visit/task
+    action_type: str  # legacy generic verb
+    event_type: Optional[str] = None  # spec §3.12 named event when applicable
+    entity_type: str  # user/team/doctor/visit/task/meeting/track_signal/...
     entity_id: Optional[str] = None
+    track_type: Optional[str] = None  # General / iTero / Invisalign / Both
     timestamp: str = Field(default_factory=_now_iso)
     previous_value: Optional[dict] = None
     new_value: Optional[dict] = None
     ip: Optional[str] = None
+    # Idempotency guard — prevents duplicate event_ledger rows for the same logical action.
+    idempotency_key: Optional[str] = None
+    # Forward-compat: filled in Phase C
+    company_id: Optional[str] = None
+    team_id: Optional[str] = None
 
 
 
@@ -486,6 +555,12 @@ class Meeting(BaseModel):
     is_demo: bool = False
     status: MeetingStatus = "Scheduled"
     visit_id: Optional[str] = None
+    # Phase A additions — backward-compatible
+    track_type: Literal["General", "iTero", "Invisalign", "Both"] = "General"
+    is_draft: bool = False
+    deleted_at: Optional[str] = None
+    # Forward-compat for multi-tenant (filled in Phase C)
+    company_id: Optional[str] = None
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
 
@@ -535,3 +610,126 @@ class Event(BaseModel):
 class IteroStageUpdate(BaseModel):
     stage: IteroStage
     note: Optional[str] = None
+
+
+
+# ============================================================
+# PHASE B — TRACK SIGNAL (first-class structured iTero/Invisalign signal)
+# ============================================================
+TrackSignalTrack = Literal["iTero", "Invisalign"]
+TrackSignalSource = Literal["Manual", "AI Suggested", "AI Confirmed"]
+
+# Controlled vocabulary — extend cautiously, analytics depend on these strings.
+# (iTero side)
+ITERO_SIGNAL_TYPES = (
+    "demo_discussed", "demo_booked", "demo_completed",
+    "proposal_sent", "proposal_followed_up",
+    "boost_discussed", "trade_in_discussed", "trade_in_interest",
+    "scanner_concern", "scanner_interest_level",
+    "itero_value_discussed", "face_scan_discussed",
+)
+# (Invisalign side)
+INVISALIGN_SIGNAL_TYPES = (
+    "growth_program_explained", "growth_program_not_understood",
+    "certification_interest",
+    "tps_discussed", "p2p_suggested",
+    "staff_training_needed",
+    "clinical_confidence_barrier", "business_confidence_barrier",
+    "patient_affordability_concern", "case_selection_concern",
+    "clincheck_understanding",
+    "smileview_smilevideo_discussed", "teen_confidence_cover_discussed",
+    "docloc_benefits_discussed",
+    "invited_to_event",
+    "marketing_support_discussed", "lead_generation_concern",
+    "time_constraint",
+    "competition_braces", "competition_other_aligners",
+    "extraction_case_concern", "retained_teeth_concern",
+    "maob_discussed", "maob_interest",
+    "ipe_discussed", "ipe_interest",
+)
+
+
+class TrackSignalCreate(BaseModel):
+    doctor_id: str
+    meeting_id: Optional[str] = None  # links to a visit_id or meeting_id where applicable
+    track_type: TrackSignalTrack
+    signal_type: str  # validated against {iTero|Invisalign}_SIGNAL_TYPES in router
+    signal_value: Optional[str] = None
+    signal_status: Optional[str] = None
+    signal_date: Optional[str] = None  # YYYY-MM-DD; defaults to today
+    source: TrackSignalSource = "Manual"
+
+
+class TrackSignal(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    doctor_id: str
+    tm_user_id: str
+    team_id: Optional[str] = None
+    meeting_id: Optional[str] = None  # may be visit_id or calendar meeting_id
+    track_type: TrackSignalTrack
+    signal_type: str
+    signal_value: Optional[str] = None
+    signal_status: Optional[str] = None
+    signal_date: str
+    source: TrackSignalSource = "Manual"
+    # Forward-compat: filled in Phase C
+    company_id: Optional[str] = None
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+    deleted_at: Optional[str] = None  # soft delete
+
+
+# ============================================================
+# PHASE B — CLINICAL PATTERN (doctor-level conversation intelligence)
+# ============================================================
+CaseType = Literal[
+    "Class I", "Class II", "Class III",
+    "Skeletal discrepancy", "Mixed complex", "Unknown",
+]
+TreatmentPreference = Literal[
+    "Prefers aligners", "Prefers braces", "Hybrid approach",
+    "Refers out", "Avoids complex cases", "Unknown",
+]
+TreatmentStrategy = Literal[
+    "Extraction-based", "Non-extraction", "Expansion",
+    "Functional-MAOB", "Surgical referral", "Unknown",
+]
+ConfidenceLevel = Literal["Low", "Medium", "High", "Unknown"]
+BarrierType = Literal[
+    "Does not trust aligners", "Lack of experience",
+    "Does not know protocols", "Case selection confusion",
+    "None", "Unknown",
+]
+ClinicalPatternSource = Literal["Manual", "AI Suggested", "AI Confirmed"]
+
+
+class ClinicalPatternCreate(BaseModel):
+    doctor_id: str
+    meeting_id: Optional[str] = None
+    case_type: CaseType = "Unknown"
+    treatment_preference: TreatmentPreference = "Unknown"
+    treatment_strategy: TreatmentStrategy = "Unknown"
+    confidence_level: ConfidenceLevel = "Unknown"
+    barrier_type: BarrierType = "Unknown"
+    source: ClinicalPatternSource = "Manual"
+
+
+class ClinicalPattern(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    doctor_id: str
+    tm_user_id: str
+    team_id: Optional[str] = None
+    meeting_id: Optional[str] = None
+    case_type: CaseType = "Unknown"
+    treatment_preference: TreatmentPreference = "Unknown"
+    treatment_strategy: TreatmentStrategy = "Unknown"
+    confidence_level: ConfidenceLevel = "Unknown"
+    barrier_type: BarrierType = "Unknown"
+    source: ClinicalPatternSource = "Manual"
+    # Forward-compat: filled in Phase C
+    company_id: Optional[str] = None
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+    deleted_at: Optional[str] = None
