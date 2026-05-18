@@ -1,0 +1,27 @@
+{
+  "summary": "Phase E AdvisoryPanel frontend smoke test — PASS for all three roles (TM / Manager / Admin) on the seeded demo dataset against the live preview URL. TM dashboard renders advisory-panel-tm only (no team/company panels leaked). Manager dashboard renders advisory-panel-team only. Admin dashboard renders BOTH advisory-panel-team AND advisory-panel-company. Resolve → card removed from default view, Show resolved/dismissed checkbox brings it back. Refresh button (POST /api/insights/generate) succeeded for tm/team/company and panel re-renders without crash. Company rollup shows Total/Critical/High/Medium counters (TOTAL=2, CRITICAL=0, HIGH=1, MEDIUM=1 on seed). Severity filter present on all variants; TM filter present on team/company variants. No 'benchmark' text appears anywhere in the rendered panels. Direct backend probes from the browser: GET /api/auth/me returns role='Admin' for admin@field.io, GET /api/insights/team and /api/insights/company both return 200 with cards.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AdvisoryPanel (team/company variants)", "issues": ["React hydration console warning: 'In HTML, <span> cannot be a child of <option>' originates from the emergent dev visual-edit instrumentation wrapping the dynamic option label in {tm.slice(0,8)+'…'} (line 240 of AdvisoryPanel.jsx) with a <span data-ve-dynamic>. The DOM written by the React code itself is correct (plain text child). This is a dev-only annotation and does not occur in production builds; flagging only because it shows as a console error during automated testing. Non-blocking."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AdvisoryPanel.jsx line 240 — option label uses a template literal that the visual-edit dev tooling wraps in a <span>, producing the spurious hydration warning above. Consider rendering the label with double-quotes only (e.g., String(tm).slice(0,8)+'…') or moving the truncation out of JSX to avoid the wrap; non-blocking.",
+    "AdvisoryPanel.jsx — the TM filter <select> shows only the raw UUID prefix (tm.slice(0,8)+'…') because the endpoint payload does not include the TM's display name. For Manager/Admin variants this is hard to read; consider augmenting GET /api/insights/team and /api/insights/company to include scope_name (full_name) alongside scope_id, then render the name in the dropdown. Non-blocking UX nit.",
+    "AdvisoryPanel.jsx onAction toast string uses `${action}d` for dismiss/resolve, which yields 'dismissd' / 'resolved' — 'resolved' is correct but 'dismissd' is a typo. Recommend a small map (seen→'marked seen', dismiss→'dismissed', resolve→'resolved') or fix the suffix. Cosmetic.",
+    "Loading-state data-testid (advisory-{variant}-loading) only renders when cards===null on first mount. On variant change or refresh it is not shown because cards stays as the previous array; this matches the contract documented in the request (briefly shown then replaced) but worth noting."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only run)", "frontend": "100% (10/10 acceptance criteria from review_request verified)"},
+  "test_credentials": "tm1@field.io/tm123, manager@field.io/manager123, admin@field.io/admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Used existing demo seed (POST /api/seed/init result). Note that the seeded TMs already produce 3 cards for tm1 and 2 cards for the team — empty-state path was therefore NOT exercised end-to-end (only verified the component branch exists in code and that the dedicated data-testid advisory-{variant}-empty is wired).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login flow: POST email/password on /login, wait ~3.5s for redirect, token lives in localStorage key 'fip_token'. Then navigate to /dashboard. Admin dashboard takes 5–8s to finish its insight fetches (it makes two separate calls — /insights/team then /insights/company); short waits (<4s) will see only 'Loading…' text. Resolve action returns the card to the list after toggling advisory-{variant}-show-done. Backend /api/insights/* endpoints respond 200 for all roles and return populated arrays on the current seed (the seed has enough activity to produce insight cards, so empty-state path needs synthetic data to trigger). Visual-edit dev instrumentation wraps dynamic option labels in <span> producing a benign React hydration console error — ignore.",
+  "rca_of_the_issue": "n/a — feature verification, no functional bugs found."
+}

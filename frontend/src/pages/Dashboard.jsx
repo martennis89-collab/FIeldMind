@@ -3,6 +3,7 @@ import { useAuth } from "../lib/auth";
 import api from "../lib/api";
 import { Link, useNavigate } from "react-router-dom";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
+import AdvisoryPanel from "../components/AdvisoryPanel";
 import {
   Activity, AlertTriangle, Calendar, CalendarClock, CheckCircle2, ClipboardList, Flame, MapPin, TrendingDown, TrendingUp, Users,
   Sparkles, ChevronRight, ChevronDown, Target,
@@ -201,6 +202,7 @@ function FunnelRow({ label, value, max, color, testId }) {
 
 function ManagerView({ data, performance, commercial, interventions, crossSell }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   if (!data) return null;
   const critCount = (interventions?.critical || []).length;
   const atRiskCount = (interventions?.at_risk || []).length;
@@ -231,6 +233,9 @@ function ManagerView({ data, performance, commercial, interventions, crossSell }
           </div>
         </div>
       )}
+
+      <AdvisoryPanel variant="team" />
+      {user?.role === "Admin" && <AdvisoryPanel variant="company" />}
 
       {/* Cross-sell — combined insights — only here on the combined dashboard */}
       <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="cross-sell-panel">
@@ -321,6 +326,8 @@ function TMView({ data }) {
       </div>
 
       <UpcomingDemosWidget />
+
+      <AdvisoryPanel variant="tm" />
 
       <div className="flex items-baseline justify-between mb-4">
         <div>
