@@ -489,11 +489,79 @@ Covers: default-company auto-seed, `benchmark_opt_in=False`, all backfilled coll
 - Owner cross-company access has no explicit "support-mode" audit guard yet — P2 hardening item.
 - `ENFORCE_COMPANY_ISOLATION=false` fallback path validated manually (toggling requires a backend restart) but not automated.
 
+## Iteration 26 (Feb 2026) — Phase D: Metric Registry + V1 metrics + Field Execution Index
+
+**Goal**: Build the **measuring engine** for FieldMind on top of real stored data — Event Ledger, Meetings/Visits, Tasks (Promises), Track Signals, Clinical Patterns, Reports, Expenses. Insight Cards, Advisory, Intervention, Benchmark Cohorts remain out of scope until later phases.
+
+### 1. Metric Registry — `/app/backend/metrics/registry.py`
+Pure-data `MetricDefinition` Pydantic class with: `slug, name, description, category {execution|pipeline|discipline|quality}, scope {tm|team|company|doctor}, unit {percentage|rate|count|score}, direction {higher_is_better|lower_is_better}, min_data_points, min_numerator (Phase D refinement), window_days, fei_weight, source`.
+
+**V1 metrics shipped (6)** — all read from real persistent data, no fake/NaN values, "Not enough data yet" returned when below thresholds:
+
+| Slug | Source | Formula | min_data_points | min_numerator | FEI weight |
+|---|---|---|---|---|---|
+| `promise_completion_rate` | `tasks` | Completed / due_date-in-window | 5 | 0 | 0.25 |
+| `overdue_promise_rate` | `tasks` | (Open + due_date<today) / Open | 5 | 0 | 0.15 (lower is better — inverted in FEI) |
+| `itero_demo_discussed_to_booked_rate` | `track_signals` (iTero) | distinct doctors booked / distinct doctors discussed-or-booked | 3 | 0 | 0.15 |
+| `itero_demo_booked_to_completed_rate` | `track_signals` (iTero) | distinct doctors completed (overlap with booked) / distinct doctors booked | 3 | 0 | 0.20 |
+| `meeting_to_visit_followthrough_rate` | `meetings` | Completed-with-linked-visit / Completed | 3 | 0 | 0.10 |
+| `weekly_report_submission_rate` | `reports` | Submitted / weeks-in-window | 2 | 1 | 0.15 |
+
+### 2. Compute engine — `/app/backend/metrics/compute.py`
+- Pure async, takes a motor `db` handle, `tm_id`, `company_id`, optional `window_days`.
+- `_build()` constructs a `MetricResult` dataclass with explicit `numerator`, `denominator`, `value (Optional[float])`, `sufficient_data: bool`, `message`.
+- **Insufficiency rules** (no fake scores): `value` is `None` and `message` is set when `denominator < min_data_points` OR `numerator < min_numerator`.
+- Public API: `compute_metric_for_tm`, `compute_all_for_tm`, `compute_fei_for_tm`.
+
+### 3. Field Execution Index (0–100)
+Weighted average of normalised component scores. `_normalize_to_0_100(result)`: clamps the rate to [0, 1], inverts for `lower_is_better`, multiplies by 100. Only components with `sufficient_data=True` contribute (`weight_sum` accumulates only their weights — no zero-padding bias).
+- FEI returned with `label: "High" (≥75)`, `"Medium" (≥50)`, `"Low"` plus per-component breakdown (slug, raw value, value_0_100, weight, sufficient_data, message).
+- When NO component has sufficient data, FEI is `None` with message **"Not enough data yet. Log a few visits, demos, and weekly reports to get your Field Execution Index."**
+
+### 4. Metrics API — `/app/backend/routers/metrics.py`
+- `GET  /api/metrics/registry` — list every metric definition.
+- `GET  /api/metrics/me` — live compute for caller (TM convenience).
+- `GET  /api/metrics/me/fei` — caller's FEI.
+- `GET  /api/metrics/tm/{tm_id}` — RBAC-guarded (TM=self, Manager=team, Admin=company, Owner=any).
+- `GET  /api/metrics/tm/{tm_id}/{slug}` — single metric by slug.
+- `GET  /api/metrics/tm/{tm_id}/fei/summary` — single TM FEI.
+- `POST /api/metrics/snapshots/run` — Manager/Admin/Owner: compute + persist a snapshot per TM. Idempotent within a minute via `idempotency_key=snap:{slug}:{scope_id}:{period_end[:16]}`.
+- `GET  /api/metrics/snapshots` — RBAC + company-scoped listing.
+
+### 5. Test coverage — `tests/test_phase_d_metrics.py` (12/12 ✅)
+Each test class creates an isolated fresh TM, seeds known data, asserts EXACT `numerator/denominator/value`. Cleans up on teardown.
+- **TestRegistry**: registry contains all 6 V1 metric slugs.
+- **TestPromiseMetrics**: `promise_completion_rate` 6/10 = 0.6 ✅, insufficient-data (2 tasks) → `value=None` + "Not enough data yet" ✅, `overdue_promise_rate` 3/8 = 0.375 ✅.
+- **TestIteroPipelineMetrics**: `discussed_to_booked` 3/6 = 0.5 ✅, `booked_to_completed` 1/4 = 0.25 ✅.
+- **TestMeetingAndReportMetrics**: `meeting_to_visit_followthrough` 3/5 = 0.6 ✅, `weekly_report_submission_rate` 3/4 = 0.75 ✅.
+- **TestFieldExecutionIndex**: empty-data → `fei=None`, `sufficient_data=False`, "Not enough data yet" message ✅. Promise-only seed (6/10 → 60.0 component, single contributor) → `fei == 60.0`, label "Medium" ✅.
+- **TestSnapshotsAndRBAC**: Admin runs snapshot for one TM, listing returns it ✅. TM cross-TM read → 403 ✅.
+
+**Full regression**: 202/202 passing in isolation. 1 pre-existing flake in `test_report_export.py::test_other_tm_forbidden` when full-suite DB state accumulates (passes in isolation) — **not a Phase D regression**.
+
+### 6. Risks / limitations
+- Snapshot scheduler not implemented — snapshots are computed via explicit `POST /metrics/snapshots/run`. Cron / weekly autorun is P2.
+- All V1 metrics are TM-scoped. Team/company aggregations and per-doctor metrics will come with Insight Cards (Phase E).
+- `meeting_to_visit_followthrough_rate` uses `meetings.visit_id` populated on visit log; older meetings without that link will read as "no follow-through" which is the correct semantic.
+
 ## Backlog (next phases)
 **P0 — pending user sign-off**
-- Phase D — Metric Registry, V1 metrics, Field Execution Index (0–100), scores per TM/doctor/team.
+- Phase E — Insight Cards + Advisory Layer ("What to fix next" UI surfaces built on top of the Phase D engine).
 
-**P1**
+**P1 — Security / Enterprise Hardening** (deferred per user)
+- Owner support-mode toggle + per-cross-company-read audit row.
+- Defensive `company_id` filters on dashboard sub-tm_q constructions.
+- Automated test for `ENFORCE_COMPANY_ISOLATION=false` fallback.
+- Clean analytics test fixture/reset strategy so Phase D/E tests don't rely on accumulated DB state.
+
+**P2 — Cleanup** (deferred per user)
+- Move shared helpers from `server.py` into `routers/_deps.py`.
+- Per-region scoping for taxonomy terms.
+- Swagger tags per router.
+- Snapshot scheduler / cron / weekly autorun.
+
+**P3 — Branding** (deferred per user)
+- Company logo + brand color for report PDFs and exports.
 - Refactor `server.py` (~3 200 lines) into FastAPI APIRouter modules (`routers/users.py`, `doctors.py`, `visits.py`, `tasks.py`, `expenses.py`, `reports.py`, `dashboards.py`, `taxonomy.py`)
 - Per-region scoping for taxonomy terms (currently global; users.region exists but not yet enforced)
 

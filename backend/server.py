@@ -1641,8 +1641,9 @@ from routers import (
     ai_extract,
     root,
     companies,
+    metrics,
 )
-_ = (auth, users, doctors, visits, track_signals, clinical_patterns, meetings, events, tasks, dashboards, itero, search, taxonomy, reports, audit_logs, expenses, ai_extract, root, companies)  # silence unused-import linters
+_ = (auth, users, doctors, visits, track_signals, clinical_patterns, meetings, events, tasks, dashboards, itero, search, taxonomy, reports, audit_logs, expenses, ai_extract, root, companies, metrics)  # silence unused-import linters
 
 app.include_router(api)
 
