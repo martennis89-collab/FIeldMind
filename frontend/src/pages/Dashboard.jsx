@@ -236,7 +236,7 @@ function ManagerView({ data, performance, commercial, interventions, crossSell }
       )}
 
       <AdvisoryPanel variant="team" />
-      {user?.role === "Admin" && <AdvisoryPanel variant="company" />}
+      {user?.role === "Admin" || user?.role === "Owner" ? <AdvisoryPanel variant="company" /> : null}
 
       {/* Cross-sell — combined insights — only here on the combined dashboard */}
       <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="cross-sell-panel">
@@ -441,7 +441,9 @@ export default function Dashboard() {
     (async () => {
       setLoading(true);
       try {
-        if (user.role === "Manager" || user.role === "Admin") {
+        // Owner gets the same cross-company support view as Admin (see Phase C).
+        const isManagerView = user.role === "Manager" || user.role === "Admin" || user.role === "Owner";
+        if (isManagerView) {
           const [mgr, perf, com, inter, cross] = await Promise.all([
             api.get("/dashboard/manager"),
             api.get("/dashboard/manager/performance"),
@@ -478,7 +480,7 @@ export default function Dashboard() {
 
       {loading && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
 
-      {(user.role === "Manager" || user.role === "Admin") && (
+      {(user.role === "Manager" || user.role === "Admin" || user.role === "Owner") && (
         <ManagerView data={mgrData} performance={perfData} commercial={commercialData} interventions={interventionsData} crossSell={crossSellData} />
       )}
       {user.role === "TM" && <TMView data={tmData} />}

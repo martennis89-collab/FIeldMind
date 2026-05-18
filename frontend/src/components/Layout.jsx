@@ -87,7 +87,8 @@ export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const isManager = user?.role === "Manager";
+  // Owner + Admin both see the Manager-style top nav (cross-team visibility).
+  const isManager = user?.role === "Manager" || user?.role === "Admin" || user?.role === "Owner";
   const isTM = user?.role === "TM";
   const TOP = isManager ? MANAGER_TOP : TM_TOP;
   const [tmAddOpen, setTmAddOpen] = useState(false);

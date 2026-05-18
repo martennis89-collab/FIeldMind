@@ -146,7 +146,7 @@ async def tm_dashboard(user=Depends(get_current_user)):
     }
 
 @api.get("/dashboard/manager")
-async def manager_dashboard(user=Depends(require_roles("Manager", "Admin"))):
+async def manager_dashboard(user=Depends(require_roles("Manager", "Admin", "Owner"))):
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(1000)
     visits = await db.visits.find(team_q, {"_id": 0}).sort("visit_date", -1).to_list(2000)
@@ -251,7 +251,7 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "Admin"))):
     }
 
 @api.get("/dashboard/manager/performance")
-async def manager_performance(user=Depends(require_roles("Manager", "Admin"))):
+async def manager_performance(user=Depends(require_roles("Manager", "Admin", "Owner"))):
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
     user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
@@ -381,7 +381,7 @@ async def manager_performance(user=Depends(require_roles("Manager", "Admin"))):
     return {"rows": rows}
 
 @api.get("/dashboard/manager/commercial")
-async def manager_commercial(user=Depends(require_roles("Manager", "Admin"))):
+async def manager_commercial(user=Depends(require_roles("Manager", "Admin", "Owner"))):
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
@@ -476,7 +476,7 @@ async def manager_commercial(user=Depends(require_roles("Manager", "Admin"))):
     }
 
 @api.get("/dashboard/manager/interventions")
-async def manager_interventions(stale_proposal_days: int = 7, user=Depends(require_roles("Manager", "Admin"))):
+async def manager_interventions(stale_proposal_days: int = 7, user=Depends(require_roles("Manager", "Admin", "Owner"))):
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
@@ -578,7 +578,7 @@ async def manager_interventions(stale_proposal_days: int = 7, user=Depends(requi
     }
 
 @api.get("/dashboard/manager/itero")
-async def manager_itero(user=Depends(require_roles("Manager", "Admin"))):
+async def manager_itero(user=Depends(require_roles("Manager", "Admin", "Owner"))):
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
@@ -643,7 +643,7 @@ async def manager_itero(user=Depends(require_roles("Manager", "Admin"))):
     }
 
 @api.get("/dashboard/manager/invisalign")
-async def manager_invisalign(user=Depends(require_roles("Manager", "Admin"))):
+async def manager_invisalign(user=Depends(require_roles("Manager", "Admin", "Owner"))):
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
@@ -720,7 +720,7 @@ async def manager_invisalign(user=Depends(require_roles("Manager", "Admin"))):
     }
 
 @api.get("/dashboard/manager/cross-sell")
-async def manager_cross_sell(user=Depends(require_roles("Manager", "Admin"))):
+async def manager_cross_sell(user=Depends(require_roles("Manager", "Admin", "Owner"))):
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
