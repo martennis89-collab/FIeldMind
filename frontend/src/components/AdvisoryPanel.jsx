@@ -2,9 +2,10 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../lib/auth";
 import api from "../lib/api";
 import { toast } from "sonner";
+import InterventionDialog from "./InterventionDialog";
 import {
-  AlertTriangle, RefreshCw, CheckCircle2, X, Eye, ChevronDown,
-  Sparkles, Filter,
+  AlertTriangle, RefreshCw, CheckCircle2, X, Eye,
+  Sparkles,
 } from "lucide-react";
 
 // ---------- helpers ----------
@@ -76,7 +77,10 @@ function InsightCard({ card, onAction, onCreateIntervention, showWho, showCreate
           </div>
           {showWho && card.scope_id && (
             <div className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>
-              TM: <span data-testid={`insight-scope-${card.id}`}>{card.scope_id}</span>
+              TM:{" "}
+              <span data-testid={`insight-scope-${card.id}`}>
+                {card.scope_name || `${card.scope_id.slice(0, 8)}…`}
+              </span>
             </div>
           )}
           <div className="font-display text-base font-semibold" style={{ color: "var(--brand-primary)" }}>
@@ -153,6 +157,7 @@ export default function AdvisoryPanel({ variant = "tm" }) {
   const [filterSeverity, setFilterSeverity] = useState("All");
   const [filterTM, setFilterTM] = useState("All");
   const [refreshing, setRefreshing] = useState(false);
+  const [dialogCard, setDialogCard] = useState(null);
 
   const endpoint = variant === "tm" ? "/insights/me" : variant === "team" ? "/insights/team" : "/insights/company";
 
@@ -197,21 +202,13 @@ export default function AdvisoryPanel({ variant = "tm" }) {
     }
   };
 
-  const onCreateIntervention = async (card) => {
-    const note = window.prompt(
-      `Create intervention for:\n"${card.title}"\n\nAdd a manager note (optional):`,
-      ""
-    );
-    if (note === null) return;
-    try {
-      await api.post(`/interventions/from-insight/${card.id}`, {
-        manager_note: note || null,
-      });
-      await load();
-      toast.success("Intervention created from insight.");
-    } catch {
-      toast.error("Could not create intervention.");
-    }
+  const onCreateIntervention = (card) => {
+    setDialogCard(card);
+  };
+
+  const onDialogCreated = async () => {
+    setDialogCard(null);
+    await load();
   };
 
   if (!cards) {
@@ -248,8 +245,18 @@ export default function AdvisoryPanel({ variant = "tm" }) {
     company: "Company-wide operational signals — no external benchmarks.",
   };
 
-  // Filtering — only applied in non-"tm" variants where TM filter makes sense
-  const distinctTMs = Array.from(new Set(cards.map((c) => c.scope_id))).sort();
+  // Filtering — only applied in non-"tm" variants where TM filter makes sense.
+  // Phase I: dropdown uses readable `scope_name` (with `scope_id` fallback for legacy rows).
+  const tmOptions = (() => {
+    const map = new Map();
+    for (const c of cards) {
+      if (!c.scope_id) continue;
+      if (!map.has(c.scope_id)) {
+        map.set(c.scope_id, c.scope_name || `${c.scope_id.slice(0, 8)}…`);
+      }
+    }
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  })();
   const filtered = sortCards(
     cards
       .filter((c) => filterSeverity === "All" || c.severity === filterSeverity)
@@ -279,7 +286,7 @@ export default function AdvisoryPanel({ variant = "tm" }) {
           <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{subtitles[variant]}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-          {variant !== "tm" && distinctTMs.length > 0 && (
+          {variant !== "tm" && tmOptions.length > 0 && (
             <select
               data-testid={`advisory-${variant}-filter-tm`}
               value={filterTM}
@@ -288,7 +295,7 @@ export default function AdvisoryPanel({ variant = "tm" }) {
               style={{ borderColor: "var(--border-default)", background: "var(--bg-default)", color: "var(--text-primary)" }}
             >
               <option value="All">All TMs</option>
-              {distinctTMs.map((tm) => <option key={tm} value={tm}>{tm.slice(0, 8)}…</option>)}
+              {tmOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
             </select>
           )}
           <select
@@ -362,6 +369,13 @@ export default function AdvisoryPanel({ variant = "tm" }) {
           ))}
         </div>
       )}
+
+      <InterventionDialog
+        open={!!dialogCard}
+        fromInsight={dialogCard}
+        onClose={() => setDialogCard(null)}
+        onCreated={onDialogCreated}
+      />
     </div>
   );
 }

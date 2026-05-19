@@ -19,7 +19,9 @@ const sevColor = (s) => ({
 
 function InterventionRow({ row, canEdit, onAction, onDelete, onEdit, userMap }) {
   const c = sevColor(row.severity);
-  const tmLabel = userMap[row.tm_user_id]?.full_name || row.tm_user_id?.slice(0, 8) || "Unassigned";
+  // Phase I: prefer backend-enriched `tm_name`, fall back to userMap for backwards compat.
+  const tmLabel =
+    row.tm_name || userMap[row.tm_user_id]?.full_name || (row.tm_user_id ? `${row.tm_user_id.slice(0, 8)}…` : "Unassigned");
   return (
     <div
       data-testid={`intervention-row-${row.id}`}
@@ -53,6 +55,14 @@ function InterventionRow({ row, canEdit, onAction, onDelete, onEdit, userMap }) 
           <div className="font-display text-base font-semibold" style={{ color: "var(--brand-primary)" }}>{row.issue_title}</div>
           <div className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
             TM: <span data-testid={`intervention-tm-${row.id}`}>{tmLabel}</span>
+            {row.doctor_id && (
+              <>
+                {" · Doctor: "}
+                <span data-testid={`intervention-doctor-${row.id}`}>
+                  {row.doctor_name || `${row.doctor_id.slice(0, 8)}…`}
+                </span>
+              </>
+            )}
             {row.due_date && <> · Due: <span data-testid={`intervention-due-${row.id}`}>{row.due_date}</span></>}
           </div>
           {row.issue_description && (
@@ -250,7 +260,19 @@ export default function InterventionList({ variant = "manager" }) {
     );
   }
 
-  const distinctTMs = Array.from(new Set(rows.map((r) => r.tm_user_id).filter(Boolean)));
+  const distinctTMs = (() => {
+    const map = new Map();
+    for (const r of rows) {
+      if (!r.tm_user_id) continue;
+      if (!map.has(r.tm_user_id)) {
+        map.set(
+          r.tm_user_id,
+          r.tm_name || usersById[r.tm_user_id]?.full_name || `${r.tm_user_id.slice(0, 8)}…`,
+        );
+      }
+    }
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  })();
   const filtered = rows
     .filter((r) => (filterSev === "All" || r.severity === filterSev))
     .filter((r) => (filterTM === "All" || r.tm_user_id === filterTM))
@@ -297,7 +319,7 @@ export default function InterventionList({ variant = "manager" }) {
         <div className="flex flex-wrap gap-2 items-center">
           <select data-testid="interventions-filter-tm" value={filterTM} onChange={(e) => setFilterTM(e.target.value)} className="text-xs px-2 py-1.5 rounded border" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}>
             <option value="All">All TMs</option>
-            {distinctTMs.map((tm) => <option key={tm} value={tm}>{(usersById[tm]?.full_name) || tm.slice(0, 8)}</option>)}
+            {distinctTMs.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
           <select data-testid="interventions-filter-severity" value={filterSev} onChange={(e) => setFilterSev(e.target.value)} className="text-xs px-2 py-1.5 rounded border" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}>
             <option value="All">All severities</option>

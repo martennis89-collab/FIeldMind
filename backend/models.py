@@ -906,6 +906,7 @@ class InterventionUpdate(BaseModel):
     due_date: Optional[str] = None
     status: Optional[InterventionStatus] = None
     tm_user_id: Optional[str] = None
+    doctor_id: Optional[str] = None  # Phase I — manager can link/unlink a doctor
 
 
 class Intervention(BaseModel):

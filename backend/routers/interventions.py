@@ -10,6 +10,9 @@
   • `POST   /api/interventions/{id}/dismiss`             — flip status → Dismissed + dismissed_at.
   • `DELETE /api/interventions/{id}`                     — soft delete (deleted_at).
 
+Phase I: every response is enriched with readable `tm_name` and `doctor_name`
+so the frontend can render names instead of UUID prefixes everywhere.
+
 RBAC:
   - Manager: read/write own-team interventions (`team_id == self.team_id`).
   - Admin: read/write all interventions in own company.
@@ -47,6 +50,43 @@ def _strip(d):
     if d and "_id" in d:
         d.pop("_id", None)
     return d
+
+
+async def _enrich_names(rows: list[dict]) -> list[dict]:
+    """Phase I: bulk-resolve tm_user_id → tm_name and doctor_id → doctor_name.
+
+    Returns the same rows mutated in-place. Safe for empty / None values.
+    """
+    if not rows:
+        return rows
+    tm_ids = sorted({r.get("tm_user_id") for r in rows if r.get("tm_user_id")})
+    doc_ids = sorted({r.get("doctor_id") for r in rows if r.get("doctor_id")})
+    tm_names: dict[str, str] = {}
+    doc_names: dict[str, str] = {}
+    if tm_ids:
+        users = await db.users.find(
+            {"id": {"$in": list(tm_ids)}},
+            {"_id": 0, "id": 1, "full_name": 1},
+        ).to_list(len(tm_ids))
+        tm_names = {u["id"]: u.get("full_name") for u in users}
+    if doc_ids:
+        doctors = await db.doctors.find(
+            {"id": {"$in": list(doc_ids)}},
+            {"_id": 0, "id": 1, "doctor_name": 1},
+        ).to_list(len(doc_ids))
+        doc_names = {d["id"]: d.get("doctor_name") for d in doctors}
+    for r in rows:
+        r["tm_name"] = tm_names.get(r.get("tm_user_id"))
+        r["doctor_name"] = doc_names.get(r.get("doctor_id"))
+    return rows
+
+
+async def _enrich_one(row: dict) -> dict:
+    """Enrich a single intervention (used by all single-row endpoints)."""
+    if row is None:
+        return row
+    await _enrich_names([row])
+    return row
 
 
 def _base_query(user) -> dict:
@@ -115,12 +155,12 @@ async def list_interventions(
             raise HTTPException(status_code=400, detail="Invalid track_type")
         q["track_type"] = track_type
     rows = await db.interventions.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
-    return rows
+    return await _enrich_names(rows)
 
 
 @api.get("/interventions/{intervention_id}")
 async def get_intervention(intervention_id: str, user=Depends(get_current_user)):
-    return await _load_or_404(intervention_id, user)
+    return await _enrich_one(await _load_or_404(intervention_id, user))
 
 
 # ---------- CREATE ----------
@@ -144,6 +184,15 @@ async def _insert_intervention(doc: dict, user) -> dict:
             raise HTTPException(status_code=403, detail="Manager can only assign to own team")
     else:
         team_id = user.get("team_id")
+
+    # Phase I: doctor_id is optional, but when set it must stay company-isolated
+    # and (for Managers) be accessible by the assigned TM's team.
+    doctor_id = doc.get("doctor_id")
+    if doctor_id:
+        d = await db.doctors.find_one({"id": doctor_id}, {"_id": 0, "company_id": 1, "assigned_tm_id": 1})
+        if not d:
+            raise HTTPException(status_code=404, detail="Doctor not found")
+        _assert_same_company(user, d, code=400, detail="Cannot link cross-company doctor")
 
     import uuid as _u
     now = _now_iso()
@@ -178,7 +227,7 @@ async def _insert_intervention(doc: dict, user) -> dict:
         "issue_title": row["issue_title"], "tm_user_id": tm_id,
         "severity": row["severity"], "from_insight": row["created_from_insight"],
     }, event_type="intervention_created")
-    return _strip(row)
+    return await _enrich_one(_strip(row))
 
 
 @api.post("/interventions")
@@ -212,7 +261,7 @@ async def create_from_insight(insight_id: str,
     override = body.model_dump(exclude_unset=True) if body else {}
     doc = {
         "tm_user_id": override.get("tm_user_id") or card.get("scope_id"),
-        "doctor_id": None,
+        "doctor_id": override.get("doctor_id"),
         "insight_card_id": card["id"],
         "related_entity_type": "insight_card",
         "related_entity_id": card["id"],
@@ -259,11 +308,19 @@ async def update_intervention(intervention_id: str, body: InterventionUpdate,
             raise HTTPException(status_code=403, detail="Manager can only assign to own team")
         updates["team_id"] = tm.get("team_id")
 
+    # Phase I: doctor_id reassign guard (cross-company isolation)
+    if "doctor_id" in updates and updates["doctor_id"]:
+        d = await db.doctors.find_one({"id": updates["doctor_id"]}, {"_id": 0, "company_id": 1})
+        if not d:
+            raise HTTPException(status_code=404, detail="Doctor not found")
+        _assert_same_company(user, d, code=400, detail="Cross-company doctor")
+
     updates["updated_at"] = _now_iso()
     await db.interventions.update_one({"id": intervention_id}, {"$set": updates})
     await _audit_intervention(user, "update", intervention_id, prev=existing,
                               new=updates, event_type="intervention_updated")
-    return await db.interventions.find_one({"id": intervention_id}, {"_id": 0})
+    fresh = await db.interventions.find_one({"id": intervention_id}, {"_id": 0})
+    return await _enrich_one(fresh)
 
 
 async def _transition(intervention_id: str, status: str, ts_field: Optional[str],
@@ -277,7 +334,8 @@ async def _transition(intervention_id: str, status: str, ts_field: Optional[str]
     await _audit_intervention(user, "update", intervention_id,
                               prev={"status": existing["status"]}, new=patch,
                               event_type=event_type)
-    return await db.interventions.find_one({"id": intervention_id}, {"_id": 0})
+    fresh = await db.interventions.find_one({"id": intervention_id}, {"_id": 0})
+    return await _enrich_one(fresh)
 
 
 @api.post("/interventions/{intervention_id}/in-progress")

@@ -1,0 +1,30 @@
+{
+  "summary": "Phase I — Insight/Intervention enrichment + InterventionDialog tested end-to-end. All 7 backend pytest cases pass (test_phase_i_enrichment.py 7/7). Frontend manager flow verified: scope_name renders readable TM names, filter dropdowns show readable names, InterventionDialog opens (no window.prompt), title/severity/due-date prefill correctly, doctor picker search works, with-doctor and without-doctor submissions succeed, dialog Cancel closes without creating, /intervention page renders tm_name + doctor_name. RBAC and cross-company guards verified.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "InterventionDialog selected-doctor pill", "issues": ["The selected doctor element's text content concatenates the doctor name and the 'Clear' button label ('Dr. KolevClear' read as plain text). Visually it is fine (Clear is a separate button), but copy-paste / aria text reads as one string. Consider wrapping doctor_name in its own span with whitespace or aria-label on Clear button."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_i_enrichment.py",
+    "/app/test_reports/pytest/phase_i_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "InterventionDialog.jsx selected-doctor pill renders 'Dr. KolevClear' as concatenated text content — wrap the Clear button in proper spacing or aria-label so screen readers / text scrapers read 'Dr. Kolev' + 'Clear' separately.",
+    "Manager dashboard TM filter dropdown only lists TMs that appear in the insight set, not the manager's full team — acceptable UX, but if a TM has zero cards they are invisible. Consider listing all reportable TMs once /users is loaded.",
+    "/intervention page InterventionList does not visibly call out 'no doctor linked' — the absence of the doctor row is the only signal. Minor; current behavior matches the spec ('optional').",
+    "TM dashboard's advisory panel uses a different variant testid than 'advisory-panel-me' (test could not locate by that exact selector, but the panel renders correctly per screenshot). Verify testid naming consistency across variants for downstream automation."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Owner: martennis89@gmail.com/1234, Manager: manager@field.io/manager123, Admin: admin@field.io/admin123, TM: tm1@field.io/tm123. Demo seed via POST /api/seed/init (idempotent).",
+  "seed_data_creation": "Used /api/seed/init for demo accounts + cards. Test interventions cleaned up via DELETE at end of run (TEST_phase_i_e2e, TEST_phase_i_no_doctor, PhaseI*).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All Phase I assertions verified. Key data-testids: insight-scope-{id}, insight-create-intervention-{id}, intervention-dialog, intervention-dialog-title/severity/due/note, intervention-dialog-add-doctor, intervention-dialog-doctor-search, intervention-dialog-doctor-{id} (result rows), intervention-dialog-selected-doctor, intervention-dialog-clear-doctor, intervention-dialog-submit, intervention-dialog-close, advisory-team-filter-tm, interventions-filter-tm, intervention-tm-{id}, intervention-doctor-{id}. Run env-aware tests with: REACT_APP_BACKEND_URL=https://territory-intel-8.preview.emergentagent.com python -m pytest backend/tests/test_phase_i_enrichment.py — env var is NOT in os.environ at pytest start (frontend/.env not loaded by backend). For TM regression panel testid, search source rather than guessing 'advisory-panel-me'.",
+  "rca of the issue": "N/A — no functional bugs found. The body-stream-read error in initial run was a test-script artifact (fetch().json() called twice via implicit re-await); rerun split fetches and worked."
+}

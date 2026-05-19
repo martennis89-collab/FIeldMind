@@ -12,6 +12,10 @@
   • `POST /api/insights/{id}/resolve` — flip status=Resolved.
   • `POST /api/insights/{id}/dismiss` — flip status=Dismissed.
 
+Phase I: `/insights/team` and `/insights/company` enrich each card with a
+readable `scope_name` (TM full_name) so the frontend doesn't have to fall back
+to UUID prefixes.
+
 History: cards are never deleted; status transitions are recorded with timestamps.
 Dedup: re-running `/generate` on the same day for the same TM updates (not duplicates) the
 existing card via `dedup_key`.
@@ -72,6 +76,28 @@ def _strip(doc):
     if doc and "_id" in doc:
         doc.pop("_id", None)
     return doc
+
+
+async def _enrich_scope_names(cards: list[dict]) -> list[dict]:
+    """Phase I: resolve `scope_id` (TM UUID) to a readable `scope_name` (TM full_name).
+
+    Bulk-loads users in one query, then mutates each card in-place. Cards whose
+    scope_id is not a TM (e.g. team-level or company-level scopes) get
+    `scope_name=None` and the frontend keeps its existing fallback rendering.
+    """
+    if not cards:
+        return cards
+    ids = sorted({c.get("scope_id") for c in cards if c.get("scope_id")})
+    if not ids:
+        return cards
+    users = await db.users.find(
+        {"id": {"$in": list(ids)}},
+        {"_id": 0, "id": 1, "full_name": 1},
+    ).to_list(len(ids))
+    name_by_id = {u["id"]: u.get("full_name") for u in users}
+    for c in cards:
+        c["scope_name"] = name_by_id.get(c.get("scope_id"))
+    return cards
 
 
 # ============================================================
@@ -139,7 +165,8 @@ async def team_insights(
     q = dict(_company_query_for(user))
     q["scope_id"] = {"$in": tm_ids}
     _active_only(q, include_resolved, include_dismissed)
-    return await db.insight_cards.find(q, {"_id": 0}).sort([("severity", -1), ("created_at", -1)]).to_list(5000)
+    cards = await db.insight_cards.find(q, {"_id": 0}).sort([("severity", -1), ("created_at", -1)]).to_list(5000)
+    return await _enrich_scope_names(cards)
 
 
 @api.get("/insights/company")
@@ -151,6 +178,7 @@ async def company_insights(
     q = dict(_company_query_for(user))
     _active_only(q, include_resolved, include_dismissed)
     cards = await db.insight_cards.find(q, {"_id": 0}).sort([("severity", -1), ("created_at", -1)]).to_list(5000)
+    await _enrich_scope_names(cards)
     # Severity histogram for quick rollup
     by_sev: dict[str, int] = {}
     by_cat: dict[str, int] = {}
