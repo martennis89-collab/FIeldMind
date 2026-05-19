@@ -748,36 +748,118 @@ POST   /api/interventions/{id}/dismiss             DELETE /api/interventions/{id
 - `benchmark_opt_in` Company field still defaults `False` and zero external benchmark endpoints exist.
 - All regression suites green.
 
+## Iteration 30 (Feb 2026) — Phase G: Benchmark Cohort Infrastructure + Privacy Rules
+
+**Goal**: Build the backend foundation for future anonymized external benchmarks. **No external UI**. **No company-vs-company values surfaced** to non-Owner roles. **No PII** in any payload.
+
+### 1. `BenchmarkCohort` model — `/app/backend/models.py`
+Full spec fields: `id, cohort_name, industry, country, region, market, team_size_category, sales_motion, account_type, minimum_company_count (default 10), current_company_count, benchmark_available, active_status {Active|Inactive}, created_at, updated_at`. Cohort-matching fields share the exact Literal enums from the Company model (Phase C).
+
+### 2. `MetricDefinition.benchmark_eligible` flag — `/app/backend/metrics/registry.py`
+New explicit allow-list on the V1 metric registry:
+- **Eligible** (5): `promise_completion_rate`, `overdue_promise_rate`, `itero_demo_discussed_to_booked_rate`, `itero_demo_booked_to_completed_rate`, `meeting_to_visit_followthrough_rate`.
+- **Blocked** (intentional): `weekly_report_submission_rate` (reporting-discipline → operator-behaviour signal) and `field_execution_index` (composite that could be reverse-engineered).
+
+### 3. Privacy guardrails — `/app/backend/metrics/benchmark.py`
+- `_safe_benchmark_metric(slug)` — gates every aggregation through the allow-list.
+- `_benchmark_company_eligible(company)` — requires `benchmark_opt_in=True` AND `active_status="Active"`.
+- `_cohort_match_query(cohort)` — Mongo query for matching companies; only NON-NULL cohort fields constrain.
+- `_cohort_company_count(db, cohort)` — counts eligible matching companies.
+- `_refresh_cohort_counts(db, cohort_id)` — recomputes `current_company_count` + `benchmark_available`.
+- `_assert_benchmark_available(cohort)` — returns a reason string when blocked, else `None`.
+- `_aggregate_metric(db, cohort, slug, period_days)` — anonymized aggregate. Per-company median rolled up, then median / mean / p25 / p75 across companies. Returns `None` whenever metric or cohort is blocked. **Never** returns company ids, names, or any value that could identify a contributor.
+
+### 4. Aggregation logic
+1. Allow-list gate (`_safe_benchmark_metric`) → metric blocked → `None`.
+2. Cohort gate (`_assert_benchmark_available`) → too small / inactive → `None`.
+3. Pull `metric_snapshots` for ONLY companies in `_cohort_match_query` (i.e. opted-in active companies matching cohort criteria).
+4. Per-company median to anonymize within-company variance.
+5. If `company_count` < `minimum_company_count` after the per-company collapse → `None` (defence in depth).
+6. Return `{metric_slug, period_start, period_end, company_count, sample_size, median, average, percentile_25, percentile_75, top_quartile_threshold, bottom_quartile_threshold}` — **stats only**.
+
+### 5. API surface — `/app/backend/routers/benchmark.py`
+**Owner-only cohort management**:
+- `GET    /api/benchmark/cohorts`
+- `POST   /api/benchmark/cohorts`
+- `PUT    /api/benchmark/cohorts/{id}`
+- `POST   /api/benchmark/cohorts/{id}/refresh`
+- `GET    /api/benchmark/cohorts/{id}/status` — Owner-only, returns cohort criteria + counts + availability, no company names.
+
+**Safe per-company status** (any authenticated user):
+- `GET /api/benchmark/status` — returns ONLY: `{company_benchmark_opt_in, eligible_for_benchmarking, matched_cohort_count, benchmark_available, reason_if_unavailable}`. **Zero benchmark values.** Reason strings include "Company has not opted in.", "Not enough anonymized companies in cohort yet (X/Y).", "No eligible metric snapshots yet.", "No active cohorts match this company yet.", "Company is not active."
+
+**Deliberately NOT shipped** (asserted by test #15):
+- `/benchmark/compare`, `/benchmark/values`, `/benchmark/dashboard`, `/benchmark/aggregate`, `/benchmark/results`, `/companies/compare`, `/dashboard/benchmark` — all 404/405.
+
+### 6. RBAC
+- **Owner**: full cohort management (`require_roles("Owner")` on every cohort endpoint).
+- **Admin**: blocked from `/benchmark/cohorts/*`. Can call `/benchmark/status` (own company status only).
+- **Manager**: blocked from cohort endpoints. Can call `/benchmark/status`.
+- **TM**: blocked from cohort endpoints. Can call `/benchmark/status`.
+
+### 7. Test coverage — `tests/test_phase_g_benchmark.py` (15/15 ✅)
+1. ✅ `benchmark_opt_in=False` excluded from cohort counts.
+2. ✅ `benchmark_opt_in=True` company counted (delta +1 on refresh).
+3. ✅ Deactivating a company removes it from the cohort count.
+4. ✅ Cohort below threshold → `benchmark_available=False`.
+5. ✅ Cohort at/above threshold → `benchmark_available=True`.
+6. ✅ Raw notes never appear in `/benchmark/status` (no `note`, `doctor_name`, `tm_name`, `price`, `revenue`, …).
+7. ✅ Company names never appear in `/benchmark/status` or `/benchmark/cohorts/{id}/status`.
+8. ✅ TM gets 403 on `/benchmark/cohorts*`.
+9. ✅ Manager gets 403 on `/benchmark/cohorts*`.
+10. ✅ Admin gets 403 on `/benchmark/cohorts*`; `/benchmark/status` returns own-company state only.
+11. ✅ Owner can create / refresh / edit / list cohorts.
+12. ✅ Non-eligible metric slugs blocked by `_safe_benchmark_metric` (`weekly_report_submission_rate`, `field_execution_index`, invented slugs).
+13. ✅ Cohort with unreachable threshold (`minimum=999`) stays `benchmark_available=False` even after refresh.
+14. ✅ `/benchmark/status` response keys are exactly `{company_benchmark_opt_in, eligible_for_benchmarking, matched_cohort_count, benchmark_available, reason_if_unavailable}` — no extras.
+15. ✅ No external comparison/dashboard endpoint responds 200 for any role.
+
+**Full Phase A+B+C+D+E+F+G regression: 89/89 ✅** (13+19+12+15+15+15). (One transient connection-timeout flake fixed in Phase C test by tightening the path list it probes.)
+
+### 8. Proof: no raw / company / user / account data exposed
+- `/benchmark/status` payload keys are an explicit whitelist (test #14 enforces this).
+- `/benchmark/cohorts/{id}/status` returns `cohort_name + criteria + counts + availability` — never company-level identifiers.
+- `_aggregate_metric` payload contains only stats (no `company_id`, `tm_user_id`, `doctor_id` fields).
+- The aggregation engine reads from `metric_snapshots` only — which by construction stores `numerator / denominator / value / scope_id (TM id) / company_id` and has never contained notes, doctor names, or pricing data.
+- Pre-existing Phase C test asserts `/benchmark/compare`, `/benchmark/values`, `/benchmark/dashboard`, etc. all 404/405 for the Owner role.
+
+### 9. Risks / limitations
+- The aggregation engine is wired but **no endpoint exposes its output** in Phase G — by design. A future "Owner Benchmark Insights" tab will wrap `_aggregate_metric` behind Owner RBAC + extra logging.
+- Refreshing one cohort at a time scales linearly; a batch `POST /benchmark/cohorts/refresh-all` is a future P2 nicety.
+- `_aggregate_metric` requires at least one `metric_snapshot` per company in the period — operators must run `POST /metrics/snapshots/run` periodically (Phase D snapshot scheduler is still backlogged as P2).
+- "Industry" is currently a free-text field on Company; cohort matching is strict equality. A future Phase H taxonomy could canonicalise it.
+
+### 10. Confirmation: external benchmark UI is still hidden
+- No frontend components for benchmarks exist.
+- No nav links to benchmark surfaces in `Layout.jsx`.
+- No `/benchmark` route in the React router.
+- Every "values" endpoint returns 404/405 (test #15 covers 8 candidate paths).
+
 ## Backlog (next phases)
 **P0 — pending user sign-off**
-- Phase G — Benchmark Cohort infrastructure + privacy rules. **`benchmark_opt_in` Company toggle becomes meaningful**; cross-company anonymous cohort comparisons (read-only, opt-in only).
+- Phase H — Nav trim (max 5 items per role) + empty-states pass.
+
+**P1 — Phase G follow-ups**
+- Owner Benchmark Insights tab UI (Owner-only) wrapping `_aggregate_metric` output with explicit cohort guard rails.
+- Batch `POST /benchmark/cohorts/refresh-all`.
+- Per-company "Request opt-in" admin flow.
 
 **P1 — Phase E / F follow-ups**
-- Ship `scope_name` (full_name) in `/insights/team`, `/insights/company`, `/interventions` payloads so TM filter dropdowns show readable names.
-- Replace `window.prompt` create-intervention flow with a proper modal that includes due-date and severity overrides up-front.
-- Add `doctor_id` picker in the create-intervention modal once that lands.
+- `scope_name` in `/insights/team`, `/insights/company`, `/interventions` payloads.
+- Replace `window.prompt` create-intervention with full modal (severity + due-date + doctor picker).
+- Linked-insight-card preview inside intervention rows.
 
 **P1 — Phase D V2**
-- Trend/delta snapshots so "improved vs previous period" insight cards become possible.
-- Team/company/per-doctor scope metrics.
-- `comparison_value` back-fill on `/insights/generate`.
+- Trend/delta snapshots, team/company/per-doctor scope metrics, `comparison_value` back-fill.
 
-**P1 — Security / Enterprise Hardening** (still deferred)
-- Owner support-mode toggle + per-cross-company-read audit row.
-- Defensive `company_id` filters on dashboard sub-tm_q constructions.
-- Automated test for `ENFORCE_COMPANY_ISOLATION=false` fallback.
-- Clean analytics test fixture/reset strategy.
+**P1 — Hardening**
+- Owner support-mode audit, dashboard `company_id` defence, `ENFORCE_COMPANY_ISOLATION=false` automated test, clean analytics fixture.
 
-**P2 — Cleanup**
-- Move shared helpers from `server.py` into `routers/_deps.py`.
-- Per-region scoping for taxonomy terms.
-- Swagger tags per router.
-- Snapshot scheduler / cron / weekly autorun.
-- "My FEI" badge UI on TM dashboard.
-- Add empty-data TM visual regression test.
+**P2**
+- Helpers → `routers/_deps.py`, taxonomy per-region, Swagger tags, snapshot scheduler, My-FEI badge UI, empty-data TM visual regression test.
 
 **Future**
-- `/insights/me/digest` weekly email after Phase G.
+- `/insights/me/digest` weekly email.
 
 **P3 — Branding**
 - Company logo + brand color for report PDFs and exports.

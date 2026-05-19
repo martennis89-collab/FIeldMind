@@ -931,6 +931,61 @@ class Intervention(BaseModel):
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
     completed_at: Optional[str] = None
+
+
+# ============================================================
+# PHASE G — BENCHMARK COHORT INFRASTRUCTURE
+# ============================================================
+# Privacy-first cohort grouping for FUTURE anonymized benchmarks.
+# Phase G is infrastructure + guardrails only — no external benchmark UI exists.
+
+BenchmarkCohortStatus = Literal["Active", "Inactive"]
+
+
+class BenchmarkCohortCreate(BaseModel):
+    cohort_name: str
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    region: Optional[str] = None
+    market: Optional[str] = None
+    team_size_category: Optional[TeamSizeCategory] = None
+    sales_motion: Optional[SalesMotion] = None
+    account_type: Optional[str] = None
+    minimum_company_count: int = 10
+    active_status: BenchmarkCohortStatus = "Active"
+
+
+class BenchmarkCohortUpdate(BaseModel):
+    cohort_name: Optional[str] = None
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    region: Optional[str] = None
+    market: Optional[str] = None
+    team_size_category: Optional[TeamSizeCategory] = None
+    sales_motion: Optional[SalesMotion] = None
+    account_type: Optional[str] = None
+    minimum_company_count: Optional[int] = None
+    active_status: Optional[BenchmarkCohortStatus] = None
+
+
+class BenchmarkCohort(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_uuid)
+    cohort_name: str
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    region: Optional[str] = None
+    market: Optional[str] = None
+    team_size_category: Optional[TeamSizeCategory] = None
+    sales_motion: Optional[SalesMotion] = None
+    account_type: Optional[str] = None
+    minimum_company_count: int = 10
+    current_company_count: int = 0
+    benchmark_available: bool = False
+    active_status: BenchmarkCohortStatus = "Active"
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+
     dismissed_at: Optional[str] = None
     deleted_at: Optional[str] = None
 

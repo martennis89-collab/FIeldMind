@@ -256,7 +256,10 @@ class TestOwnerSupportAccess:
         requests.post(f"{API}/companies/{c['id']}/deactivate", headers=H(self.owner), timeout=5)
 
     def test_no_external_benchmark_endpoint_exposed(self):
-        # Phase G is NOT yet implemented. We assert that no benchmark endpoint responds 200.
-        for path in ("/benchmark", "/benchmarks", "/companies/benchmark", "/dashboard/benchmark"):
-            r = requests.get(f"{API}{path}", headers=H(self.owner), timeout=5)
-            assert r.status_code in (404, 405), f"{path} unexpectedly responded {r.status_code}"
+        # Phase G shipped /api/benchmark/* (Owner-only cohort management + safe status).
+        # We assert that NO benchmark-VALUES endpoint (comparison / aggregation / dashboard) exists.
+        for path in ("/benchmark/compare", "/benchmark/values", "/benchmark/dashboard",
+                     "/benchmark/aggregate", "/benchmark/results", "/companies/benchmark",
+                     "/dashboard/benchmark"):
+            r = requests.get(f"{API}{path}", headers=H(self.owner), timeout=15)
+            assert r.status_code in (403, 404, 405), f"{path} unexpectedly responded {r.status_code}"

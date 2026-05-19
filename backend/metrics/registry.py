@@ -37,6 +37,7 @@ class MetricDefinition(BaseModel):
     min_numerator: int = 0
     window_days: int = 30
     fei_weight: float = 0.0
+    benchmark_eligible: bool = False  # Phase G — only safe operational metrics can be benchmarked
     source: str  # human-readable source description
 
 
@@ -57,6 +58,7 @@ V1_METRICS: list[MetricDefinition] = [
         min_data_points=5,
         window_days=30,
         fei_weight=0.25,
+        benchmark_eligible=True,
         source="tasks (status=Completed) / tasks where due_date in window",
     ),
     MetricDefinition(
@@ -73,6 +75,7 @@ V1_METRICS: list[MetricDefinition] = [
         min_data_points=5,
         window_days=30,
         fei_weight=0.15,
+        benchmark_eligible=True,
         source="tasks (status=Open AND due_date<today) / tasks (status=Open)",
     ),
     # --- iTero pipeline ---
@@ -90,6 +93,7 @@ V1_METRICS: list[MetricDefinition] = [
         min_data_points=3,
         window_days=30,
         fei_weight=0.15,
+        benchmark_eligible=True,
         source="event_ledger (itero_demo_discussed / itero_demo_booked)",
     ),
     MetricDefinition(
@@ -106,6 +110,7 @@ V1_METRICS: list[MetricDefinition] = [
         min_data_points=3,
         window_days=30,
         fei_weight=0.20,
+        benchmark_eligible=True,
         source="event_ledger (itero_demo_booked / itero_demo_completed)",
     ),
     # --- Meeting quality ---
@@ -123,6 +128,7 @@ V1_METRICS: list[MetricDefinition] = [
         min_data_points=3,
         window_days=30,
         fei_weight=0.10,
+        benchmark_eligible=True,
         source="meetings (status=Completed with linked visit_id) / meetings (status=Completed)",
     ),
     # --- Report discipline ---
