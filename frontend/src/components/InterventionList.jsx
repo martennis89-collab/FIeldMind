@@ -228,7 +228,26 @@ export default function InterventionList({ variant = "manager" }) {
   };
 
   if (rows == null) {
-    return <div className="text-sm" style={{ color: "var(--text-muted)" }} data-testid={`interventions-${variant}-loading`}>Loading…</div>;
+    if (variant === "tm") {
+      return null; // embedded — silently render nothing while loading
+    }
+    return (
+      <div
+        className="rounded-md border p-6 mb-6"
+        style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+        data-testid={`interventions-${variant}-loading`}
+      >
+        <div className="space-y-1 mb-4">
+          <div className="h-2.5 w-32 rounded animate-pulse" style={{ background: "var(--bg-muted)" }} />
+          <div className="h-5 w-40 rounded animate-pulse" style={{ background: "var(--bg-muted)" }} />
+        </div>
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-20 rounded animate-pulse" style={{ background: "var(--bg-muted)" }} />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   const distinctTMs = Array.from(new Set(rows.map((r) => r.tm_user_id).filter(Boolean)));

@@ -5,9 +5,13 @@ import { Link, useNavigate } from "react-router-dom";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import AdvisoryPanel from "../components/AdvisoryPanel";
 import InterventionList from "../components/InterventionList";
+import ErrorBoundary from "../components/ErrorBoundary";
+import FEIBadge from "../components/FEIBadge";
+import EmptyState from "../components/EmptyState";
+import { StatGridSkeleton, CardSkeleton } from "../components/Skeleton";
 import {
   Activity, AlertTriangle, Calendar, CalendarClock, CheckCircle2, ClipboardList, Flame, MapPin, TrendingDown, TrendingUp, Users,
-  Sparkles, ChevronRight, ChevronDown, Target,
+  Sparkles, ChevronRight, ChevronDown, Target, Sun,
 } from "lucide-react";
 
 function StatCard({ label, value, sub, icon: Icon, kind = "muted", testId }) {
@@ -86,6 +90,7 @@ function PriorityCard({ d, idx }) {
 function TMPerformanceTable({ performance }) {
   const [expanded, setExpanded] = React.useState(null);
   const rows = performance?.rows || [];
+  const isLoading = !performance;
   return (
     <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="tm-performance-table">
       <div className="flex items-center justify-between mb-4">
@@ -95,7 +100,29 @@ function TMPerformanceTable({ performance }) {
         </div>
         <span className="text-xs" style={{ color: "var(--text-muted)" }}>Last 30 days</span>
       </div>
-      {rows.length === 0 && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
+      {isLoading && (
+        <div className="space-y-2" data-testid="tm-perf-loading">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-md border p-3 animate-pulse" style={{ borderColor: "var(--border-default)" }}>
+              <div className="h-3 w-32 rounded mb-2" style={{ background: "var(--bg-muted)" }} />
+              <div className="h-2.5 w-20 rounded" style={{ background: "var(--bg-muted)" }} />
+            </div>
+          ))}
+        </div>
+      )}
+      {!isLoading && rows.length === 0 && (
+        <div
+          className="rounded-md border p-8 text-center"
+          style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}
+          data-testid="tm-perf-empty"
+        >
+          <Users className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
+          <div className="font-medium text-sm" style={{ color: "var(--text-primary)" }}>No TM activity to evaluate yet</div>
+          <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
+            Once your TMs log visits, demos, and promises, you'll see their performance breakdown here.
+          </p>
+        </div>
+      )}
 
       <div className="space-y-2">
         {rows.map((r) => {
@@ -204,7 +231,16 @@ function FunnelRow({ label, value, max, color, testId }) {
 function ManagerView({ data, performance, commercial, interventions, crossSell }) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  if (!data) return null;
+  if (!data) {
+    // Skeleton while initial load is in-flight.
+    return (
+      <div data-testid="manager-view-skeleton">
+        <StatGridSkeleton count={4} testId="manager-stats-skeleton-1" />
+        <StatGridSkeleton count={2} testId="manager-stats-skeleton-2" />
+        <CardSkeleton testId="manager-advisory-skeleton" rows={4} />
+      </div>
+    );
+  }
   const critCount = (interventions?.critical || []).length;
   const atRiskCount = (interventions?.at_risk || []).length;
   const oppCount = (interventions?.high_opportunity || []).length;
@@ -212,14 +248,14 @@ function ManagerView({ data, performance, commercial, interventions, crossSell }
   return (
     <>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        <StatCard label="Visits this week" value={data.stats.visits_week} icon={Activity} kind="info" testId="stat-visits-week" />
-        <StatCard label="Doctors" value={data.stats.doctors} icon={Users} kind="muted" testId="stat-doctors" />
+        <StatCard label="Visits this week" value={data.stats?.visits_week ?? 0} icon={Activity} kind="info" testId="stat-visits-week" />
+        <StatCard label="Doctors" value={data.stats?.doctors ?? 0} icon={Users} kind="muted" testId="stat-doctors" />
         <StatCard label="Critical" value={critCount} icon={AlertTriangle} kind="danger" testId="stat-critical" />
         <StatCard label="High opportunity" value={oppCount} icon={Sparkles} kind="success" testId="stat-opportunity" />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Open meetings" value={data.stats.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
-        <StatCard label="Meetings done this week" value={data.stats.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
+        <StatCard label="Open meetings" value={data.stats?.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
+        <StatCard label="Meetings done this week" value={data.stats?.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
       </div>
 
       {(commercial?.drop_offs || []).length > 0 && (
@@ -312,18 +348,36 @@ function sentimentColor(s) {
 }
 
 function TMView({ data }) {
-  if (!data) return null;
+  if (!data) {
+    return (
+      <div data-testid="tm-view-skeleton">
+        <div
+          className="rounded-md border p-4 mb-4 animate-pulse"
+          style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+        >
+          <div className="h-3 w-40 rounded mb-2" style={{ background: "var(--bg-muted)" }} />
+          <div className="h-7 w-24 rounded" style={{ background: "var(--bg-muted)" }} />
+        </div>
+        <StatGridSkeleton count={4} testId="tm-stats-skeleton-1" />
+        <StatGridSkeleton count={2} testId="tm-stats-skeleton-2" />
+        <CardSkeleton testId="tm-advisory-skeleton" rows={4} />
+      </div>
+    );
+  }
+  const topPriorities = data.top_priorities || [];
+  const overdueDoctors = data.overdue_doctors || [];
   return (
     <>
+      <FEIBadge />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        <StatCard label="Visits this week" value={data.stats.visits_this_week} icon={Activity} kind="info" testId="stat-visits-week" />
-        <StatCard label="Open promises" value={data.stats.open_promises} icon={ClipboardList} kind="muted" testId="stat-open-promises" />
-        <StatCard label="Overdue" value={data.stats.overdue_promises} icon={AlertTriangle} kind="danger" testId="stat-overdue" />
-        <StatCard label="Due today" value={data.stats.due_today} icon={CalendarClock} kind="warning" testId="stat-due-today" />
+        <StatCard label="Visits this week" value={data.stats?.visits_this_week ?? 0} icon={Activity} kind="info" testId="stat-visits-week" />
+        <StatCard label="Open promises" value={data.stats?.open_promises ?? 0} icon={ClipboardList} kind="muted" testId="stat-open-promises" />
+        <StatCard label="Overdue" value={data.stats?.overdue_promises ?? 0} icon={AlertTriangle} kind="danger" testId="stat-overdue" />
+        <StatCard label="Due today" value={data.stats?.due_today ?? 0} icon={CalendarClock} kind="warning" testId="stat-due-today" />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Open meetings" value={data.stats.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
-        <StatCard label="Meetings done this week" value={data.stats.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
+        <StatCard label="Open meetings" value={data.stats?.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
+        <StatCard label="Meetings done this week" value={data.stats?.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
       </div>
 
       <UpcomingDemosWidget />
@@ -342,17 +396,27 @@ function TMView({ data }) {
         </Link>
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8" data-testid="priority-doctors-grid">
-        {(data.top_priorities || []).map((d, idx) => <PriorityCard key={d.id} d={d} idx={idx} />)}
-      </div>
+      {topPriorities.length === 0 ? (
+        <EmptyState
+          icon={Sun}
+          tone="success"
+          title="Clear sky — nothing urgent right now"
+          description="Add a few doctors or log a visit to start surfacing priorities here."
+          testId="tm-no-priorities-empty"
+        />
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8" data-testid="priority-doctors-grid">
+          {topPriorities.map((d, idx) => <PriorityCard key={d.id} d={d} idx={idx} />)}
+        </div>
+      )}
 
-      {(data.overdue_doctors || []).length > 0 && (
+      {overdueDoctors.length > 0 && (
         <div className="rounded-md border p-6 mb-8" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
           <h3 className="font-display text-lg font-medium mb-4 flex items-center gap-2" style={{ color: "var(--brand-primary)" }}>
             <AlertTriangle className="w-5 h-5" style={{ color: "var(--status-danger)" }} /> Promises you owe
           </h3>
           <div className="grid sm:grid-cols-2 gap-3">
-            {data.overdue_doctors.map((d) => (
+            {overdueDoctors.map((d) => (
               <Link key={d.id} to={`/doctors/${d.id}`} className="flex items-center justify-between p-3 rounded hover:bg-[var(--bg-paper)] border" style={{ borderColor: "var(--border-default)" }}>
                 <div>
                   <div className="font-medium text-sm" style={{ color: "var(--text-primary)" }}>{d.doctor_name}</div>
@@ -435,11 +499,12 @@ export default function Dashboard() {
   const [commercialData, setCommercialData] = useState(null);
   const [interventionsData, setInterventionsData] = useState(null);
   const [crossSellData, setCrossSellData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      setLoading(true);
+      setLoadError(null);
       try {
         // Owner gets the same cross-company support view as Admin (see Phase C).
         const isManagerView = user.role === "Manager" || user.role === "Admin" || user.role === "Owner";
@@ -451,6 +516,7 @@ export default function Dashboard() {
             api.get("/dashboard/manager/interventions"),
             api.get("/dashboard/manager/cross-sell"),
           ]);
+          if (cancelled) return;
           setMgrData(mgr.data);
           setPerfData(perf.data);
           setCommercialData(com.data);
@@ -458,12 +524,14 @@ export default function Dashboard() {
           setCrossSellData(cross.data);
         } else {
           const tm = await api.get("/dashboard/tm");
+          if (cancelled) return;
           setTmData(tm.data);
         }
-      } finally {
-        setLoading(false);
+      } catch (e) {
+        if (!cancelled) setLoadError(e?.message || "Could not load the dashboard.");
       }
     })();
+    return () => { cancelled = true; };
   }, [user.role]);
 
   return (
@@ -478,12 +546,30 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {loading && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
-
-      {(user.role === "Manager" || user.role === "Admin" || user.role === "Owner") && (
-        <ManagerView data={mgrData} performance={perfData} commercial={commercialData} interventions={interventionsData} crossSell={crossSellData} />
+      {loadError && (
+        <div
+          data-testid="dashboard-load-error"
+          className="rounded-md border p-4 mb-4 flex items-start gap-3"
+          style={{ background: "var(--status-danger-bg)", borderColor: "var(--status-danger)" }}
+        >
+          <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: "var(--status-danger)" }} />
+          <div>
+            <div className="text-sm font-medium" style={{ color: "var(--status-danger)" }}>
+              Couldn't load the dashboard.
+            </div>
+            <div className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
+              {loadError}. Refresh the page to retry.
+            </div>
+          </div>
+        </div>
       )}
-      {user.role === "TM" && <TMView data={tmData} />}
+
+      <ErrorBoundary label="The dashboard hit an unexpected rendering error.">
+        {(user.role === "Manager" || user.role === "Admin" || user.role === "Owner") && (
+          <ManagerView data={mgrData} performance={perfData} commercial={commercialData} interventions={interventionsData} crossSell={crossSellData} />
+        )}
+        {user.role === "TM" && <TMView data={tmData} />}
+      </ErrorBoundary>
     </div>
   );
 }

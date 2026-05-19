@@ -1,0 +1,52 @@
+{
+  "summary": "Phase H frontend testing complete. FEI V1 widget, skeletons, empty states, advisory V1 pills, and 5-slot bottom nav all behave as specced. Two regressions found: Owner role is gated out of /intervention even though Owner's bottom nav exposes the link, and Intervention page has horizontal overflow (sw=474 > vw=375) at mobile breakpoint due to InterventionList TabsList.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "App.js /intervention route guard + Layout MANAGER_BOTTOM",
+        "issue": "Owner role is treated as a Manager in Layout.jsx (isManager includes Owner) and shown the Intervention slot in mobile bottom nav AND the desktop top nav, but App.js line 114 protects /intervention with roles=['Manager','Admin'] only. Clicking nav-intervention as Owner does NOT navigate (ProtectedRoute redirects back to /). This is a Phase H regression because Owner clearly expected to be able to use the Intervention surface (Phase F shipped it for Owner).",
+        "selector": "[data-testid='nav-intervention'], [data-testid='mobile-nav-intervention']",
+        "priority": "HIGH"
+      },
+      {
+        "component": "InterventionList TabsList (manager variant)",
+        "issue": "On mobile 375x800 the four tabs 'Open (1) | In Progress (0) | Completed (0) | Dismissed (0)' render 433px wide and push body scrollWidth to 474px causing horizontal scroll on the entire Intervention page. Spec required no horizontal overflow at 375.",
+        "selector": "[data-testid='intervention-tab-dismissed'] parent div.inline-flex (TabsList)",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_9.json"],
+  "action_items": [
+    "Add 'Owner' to the roles array on the /intervention route in /app/frontend/src/App.js (line 114). Same likely needed for /market-intelligence and /team-performance (lines 122 and 130) since MANAGER_TOP and MANAGER_MORE expose those links to Owner too — please audit all 'roles=[Manager, Admin]' routes against MANAGER_TOP/MANAGER_BOTTOM/MANAGER_MORE for parity.",
+    "Make the InterventionList TabsList horizontally scrollable on mobile (e.g. wrap in overflow-x-auto + min-w-0, or use a Select/Segmented control under md). Currently the 4 tab labels add up to ~433px and break the 375px viewport contract."
+  ],
+  "critical_code_review_comments": [
+    "App.js role-guard arrays are duplicated across many routes — repeated drift from Layout.jsx role checks (which use Owner=Manager). Consider a single ROLE_GROUPS constant shared by Layout + App route guards to prevent this class of bug.",
+    "FEIBadge.jsx is clean and correctly handles loading / sufficient / insufficient / error states with no fake 0. Good.",
+    "Skeleton.jsx, EmptyState.jsx, ErrorBoundary.jsx are small and well-scoped, no issues.",
+    "Layout.jsx 5-slot grid for both TM and Manager is exactly as specced; MANAGER_MORE intentionally excludes the Intervention slot (it stays in the 5 main tabs) — consistent with the spec."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "~88% (16 of 18 spec'd checks pass; 2 regressions blocking Owner intervention + mobile overflow)"},
+  "test_credentials": "Owner: martennis89@gmail.com / 1234 | TM1: tm1@field.io / tm123 | Manager: manager@field.io / manager123",
+  "seed_data_creation": "None — used existing demo seed",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase H polish. Key tested items: FEI V1 widget (TM only) — labels 'Field Execution Index' + 'V1 · beta' pill + numeric /100 + High/Medium/Low pill + 'Show breakdown' reveals fei-v1-components. Bottom nav: TM has 5 slots (Home, Doctors, +Add, Tasks, More) with TM More sheet containing 7 items (Quick capture, iTero, Invisalign, Meetings, Reports, Expenses, My account). Manager (incl Owner) has 5 slots (Dashboard, Intervention, iTero, Invisalign, More) with Manager More sheet containing 5 items (Quick capture, Team performance, Reports, Expenses, My account). Advisory pills 'advisory-{tm|team|company}-v1-pill' render correctly. Skeletons (manager-view-skeleton, manager-stats-skeleton-*, tm-view-skeleton, advisory-{variant}-loading, interventions-manager-loading) replace bare 'Loading…' text successfully. Header quick capture works for both roles. NB: 'Made with Emergent' badge intercepts pointer events on the bottom-right corner buttons (More button on TM/Manager bottom nav and nav-intervention via the bottom nav at certain widths). Use page.evaluate(()=>el.click()) or hide the badge via JS to bypass. Test was retried with desktop viewport for the click-through where badge blocked. The intervention bucket-empty-{key} testids never appeared in the demo data because buckets had items; could not exercise empty state on demo data alone.",
+  "rca_of_the_issue": {
+    "owner_intervention_blocked": {
+      "reproduce": "1) Login as martennis89@gmail.com / 1234 on mobile 375x800. 2) Tap the 'Intervention' icon in the bottom nav. 3) URL flips to /intervention briefly then ProtectedRoute redirects to /. The intervention-page testid never mounts.",
+      "root_cause": "/app/frontend/src/App.js line 114: <ProtectedRoute roles={['Manager','Admin']}> excludes Owner. But /app/frontend/src/components/Layout.jsx line 91 treats Owner as Manager for nav purposes: const isManager = user?.role === 'Manager' || user?.role === 'Admin' || user?.role === 'Owner'. So Owner sees the nav slot but the route rejects them.",
+      "fix": "Change App.js line 114 to roles={['Manager','Admin','Owner']}. Also audit lines 122 (/market-intelligence) and 130 (next Manager route) for the same drift since Layout exposes those to Owner too."
+    },
+    "intervention_mobile_overflow": {
+      "reproduce": "1) Login as Manager (manager@field.io / manager123). 2) Resize to 375x800. 3) Open /intervention. 4) document.documentElement.scrollWidth = 474 while clientWidth = 375 — body scrolls horizontally.",
+      "root_cause": "The InterventionList TabsList renders 4 inline tabs ('Open (1)', 'In Progress (0)', 'Completed (0)', 'Dismissed (0)') totalling 433px in a non-scrolling flex row. With container padding, total content width = 474px.",
+      "fix": "Wrap TabsList in overflow-x-auto with -mx-4 px-4 (or w-full + scroll-smooth), OR switch to a select/segmented dropdown under md. Could also shrink button px-3 → px-2 and shorten 'In Progress' → 'In progress' but the more robust fix is making the tab row horizontally scrollable on mobile."
+    }
+  }
+}

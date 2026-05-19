@@ -4,7 +4,8 @@ import { Link } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { StatusPill } from "../components/StatusPill";
 import InterventionList from "../components/InterventionList";
-import { AlertOctagon, AlertTriangle, Sparkles, ArrowRight, Flame } from "lucide-react";
+import ErrorBoundary from "../components/ErrorBoundary";
+import { AlertOctagon, AlertTriangle, Sparkles, ArrowRight, Flame, CheckCircle2 } from "lucide-react";
 
 const BUCKETS = [
   { key: "critical", label: "Critical", icon: AlertOctagon, color: "var(--status-danger)", desc: "Stuck or stalled — needs immediate manager attention." },
@@ -15,14 +16,21 @@ const BUCKETS = [
 export default function Intervention() {
   const [data, setData] = useState({ critical: [], at_risk: [], high_opportunity: [] });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const { data } = await api.get("/dashboard/manager/interventions");
-        setData(data);
-      } finally { setLoading(false); }
+        if (!cancelled) setData(data);
+      } catch (e) {
+        if (!cancelled) setError(e?.message || "Could not load interventions.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   return (
@@ -37,20 +45,51 @@ export default function Intervention() {
         </p>
       </div>
 
+      {error && (
+        <div
+          data-testid="intervention-load-error"
+          className="rounded-md border p-4 mb-4 flex items-start gap-3"
+          style={{ background: "var(--status-danger-bg)", borderColor: "var(--status-danger)" }}
+        >
+          <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: "var(--status-danger)" }} />
+          <div>
+            <div className="text-sm font-medium" style={{ color: "var(--status-danger)" }}>
+              Couldn't load interventions.
+            </div>
+            <div className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
+              {error}. Refresh to retry.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {BUCKETS.map((b) => (
           <div key={b.key} className="rounded-md border p-4" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid={`bucket-stat-${b.key}`}>
             <div className="flex items-center gap-2 text-xs uppercase tracking-widest" style={{ color: b.color }}>
               <b.icon className="w-4 h-4" /> {b.label}
             </div>
-            <div className="font-display text-3xl font-medium mt-2" style={{ color: "var(--brand-primary)" }}>{(data[b.key] || []).length}</div>
+            <div className="font-display text-3xl font-medium mt-2" style={{ color: "var(--brand-primary)" }}>
+              {loading ? (
+                <span className="inline-block h-7 w-10 rounded animate-pulse align-middle" style={{ background: "var(--bg-muted)" }} />
+              ) : (
+                (data[b.key] || []).length
+              )}
+            </div>
             <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{b.desc}</div>
           </div>
         ))}
       </div>
 
-      {loading && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
+      {loading && (
+        <div className="space-y-2 mb-4" data-testid="intervention-loading">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-20 rounded animate-pulse" style={{ background: "var(--bg-muted)" }} />
+          ))}
+        </div>
+      )}
 
+      {!loading && (
       <Tabs defaultValue="critical">
         <TabsList className="bg-[var(--bg-paper)]">
           {BUCKETS.map((b) => (
@@ -63,8 +102,16 @@ export default function Intervention() {
           <TabsContent key={b.key} value={b.key}>
             <div className="space-y-2 mt-4">
               {(data[b.key] || []).length === 0 && (
-                <div className="rounded-md border p-8 text-center" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
-                  <div className="text-sm" style={{ color: "var(--text-secondary)" }}>Nothing flagged in this bucket — clear sky.</div>
+                <div
+                  className="rounded-md border p-8 text-center"
+                  style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+                  data-testid={`bucket-empty-${b.key}`}
+                >
+                  <CheckCircle2 className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--status-success)" }} />
+                  <div className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                    Nothing in {b.label.toLowerCase()} right now
+                  </div>
+                  <div className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{b.desc}</div>
                 </div>
               )}
               {(data[b.key] || []).map((item, i) => (
@@ -97,10 +144,13 @@ export default function Intervention() {
           </TabsContent>
         ))}
       </Tabs>
+      )}
 
-      <div className="mt-10">
-        <InterventionList variant="manager" />
-      </div>
+      <ErrorBoundary label="Manager interventions panel failed to render.">
+        <div className="mt-10">
+          <InterventionList variant="manager" />
+        </div>
+      </ErrorBoundary>
     </div>
   );
 }

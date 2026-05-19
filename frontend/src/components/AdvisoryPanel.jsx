@@ -216,8 +216,18 @@ export default function AdvisoryPanel({ variant = "tm" }) {
 
   if (!cards) {
     return (
-      <div className="rounded-md border p-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid={`advisory-${variant}-loading`}>
-        <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading insights…</div>
+      <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid={`advisory-${variant}-loading`}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="space-y-1">
+            <div className="h-2.5 w-32 rounded animate-pulse" style={{ background: "var(--bg-muted)" }} />
+            <div className="h-5 w-48 rounded animate-pulse" style={{ background: "var(--bg-muted)" }} />
+          </div>
+        </div>
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-16 rounded animate-pulse" style={{ background: "var(--bg-muted)" }} />
+          ))}
+        </div>
       </div>
     );
   }
@@ -250,8 +260,20 @@ export default function AdvisoryPanel({ variant = "tm" }) {
     <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid={`advisory-panel-${variant}`}>
       <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
         <div>
-          <div className="text-xs uppercase tracking-widest flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+          <div className="text-xs uppercase tracking-widest flex items-center gap-2 flex-wrap" style={{ color: "var(--text-muted)" }}>
             <Sparkles className="w-3 h-3" /> FieldMind advisory
+            <span
+              data-testid={`advisory-${variant}-v1-pill`}
+              className="pill text-[10px]"
+              style={{
+                background: "var(--bg-paper)",
+                color: "var(--brand-secondary)",
+                border: "1px solid var(--border-default)",
+              }}
+              title="First-generation Advisory layer. Insights are AI-suggested — review before acting."
+            >
+              V1 · beta
+            </span>
           </div>
           <h2 className="font-display text-xl font-medium" style={{ color: "var(--brand-primary)" }}>{titles[variant]}</h2>
           <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{subtitles[variant]}</p>
