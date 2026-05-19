@@ -235,7 +235,8 @@ export default function InterventionDialog({ open, onClose, onCreated, fromInsig
                   type="button"
                   onClick={clearDoctor}
                   data-testid="intervention-dialog-clear-doctor"
-                  className="text-xs underline"
+                  aria-label="Clear linked doctor"
+                  className="text-xs underline ml-2"
                   style={{ color: "var(--text-secondary)" }}
                 >
                   Clear

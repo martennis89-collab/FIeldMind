@@ -3,6 +3,79 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Phase I — Insight / Intervention UX Polish (Feb 2026)
+
+**Goal**: Make the app feel credible for a real manager by removing UUID-leak
+in the UI, replacing the `window.prompt` create-intervention flow with a real
+modal, and surfacing readable names everywhere TMs and doctors are displayed.
+
+### 1. Backend enrichment — readable names everywhere
+- **`/api/insights/team`** and **`/api/insights/company`** now bulk-resolve
+  `scope_id` → `scope_name` (TM `full_name`) via a single users lookup per
+  request. Cards whose `scope_id` is not a TM (team/company-level) get
+  `scope_name=null` and the frontend falls back to its existing rendering.
+- **`/api/interventions`** (list, get, create, from-insight, update,
+  in-progress, complete, dismiss) all enrich every response row with
+  `tm_name` and `doctor_name`. Bulk-loads users + doctors in one query each.
+- `_enrich_scope_names` (insights router) and `_enrich_names` /
+  `_enrich_one` (interventions router) are pure helpers — zero schema
+  migration, zero new collections.
+
+### 2. Doctor linking on interventions
+- New `InterventionUpdate.doctor_id: Optional[str]` field (`models.py`) so
+  managers can link or unlink a doctor on edit or create-from-insight.
+- `POST /api/interventions` and `POST /api/interventions/from-insight/{id}`
+  now honor the `doctor_id` body field. The previous hard-coded `None` is
+  gone.
+- **Cross-company isolation**: doctor_id is validated server-side. An unknown
+  id returns 404, a cross-company id returns 400. Same isolation guard
+  applies to PUT updates.
+
+### 3. Frontend — `InterventionDialog` (replaces `window.prompt`)
+- New component `/app/frontend/src/components/InterventionDialog.jsx`.
+- Used by AdvisoryPanel's "Create intervention" button on every insight card.
+- Fields:
+  - **Title** (required, pre-filled from insight title)
+  - **Severity** (Critical/High/Medium/Low — defaults to the insight's
+    severity)
+  - **Due date** (defaults to today + 7 days)
+  - **Doctor (optional)** — searchable picker. Auto-populates from
+    `insight.related_doctor_id` when present (no-op for V1 metrics which are
+    TM-scoped). Clear button + Cancel button.
+  - **Manager note** — textarea.
+- Submits to `POST /api/interventions/from-insight/{id}` with the full
+  payload; honors the new `doctor_id` field.
+- All elements carry stable `data-testid`s for testing.
+
+### 4. Filter dropdowns — readable names
+- **AdvisoryPanel** (`advisory-{team|company}-filter-tm`) now lists TM
+  `full_name` from `scope_name` instead of `scope_id.slice(0, 8)…`.
+- **InterventionList** (`interventions-filter-tm`) now lists TM `full_name`
+  from the backend-enriched `tm_name` instead of falling back to UUID
+  prefixes.
+- **InterventionRow**: TM and (optional) Doctor labels render from
+  `tm_name` / `doctor_name`.
+
+### Test proof — Phase I
+- Backend pytest: `/app/backend/tests/test_phase_i_enrichment.py` — **7/7
+  green** covering scope_name on /insights/team, wrapped /insights/company
+  payload, tm_name + doctor_name on /interventions, doctor_id create + PUT
+  enrichment, unknown doctor 404, create-from-insight doctor_id override,
+  TM 403 unchanged.
+- Backend regression: `test_phase_e_insights.py` + `test_phase_f_interventions.py`
+  — all 30 pre-existing tests still green.
+- Frontend: `iteration_11.json` — **100% backend + 100% frontend** pass on
+  the testing agent. Single low-priority a11y note (Clear button now has
+  `aria-label="Clear linked doctor"` + spacing fix).
+
+### Out of scope (per user instruction)
+- ❌ Owner support-mode toggle + audit row → **Phase J**
+- ❌ Phase D V2 trend / delta snapshots → **Phase K**
+- ❌ Clean analytics test fixture → **Phase K**
+- ❌ Weekly `/insights/me/digest` → backlog
+- ❌ Owner Benchmark Insights → backlog
+- ❌ Company logo + brand color exports → backlog
+
 ## Phase H — Nav Trim + Empty States + Final Spec Wrap (Feb 2026)
 
 **Goal**: Final polish phase for the 37-point FieldMind spec. No backend
