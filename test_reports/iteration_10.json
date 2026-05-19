@@ -1,0 +1,33 @@
+{
+  "summary": "Phase H retest of iteration_9 regressions COMPLETE — both HIGH bugs are fixed. Owner can now navigate to /intervention, /team-performance, and /market-intelligence (App.js role guards on lines 114/122/130 now include 'Owner'). At 375x800 the /intervention page no longer overflows horizontally for Owner OR Manager (InterventionList TabsList and Intervention page bucket TabsList are both wrapped in overflow-x-auto with inline-flex whitespace-nowrap, so the tab strip scrolls inside its container instead of breaking the page). All previously-passing Phase H surfaces still pass. Zero regressions detected. Frontend ready to ship Phase H.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_10.json", "/app/test_reports/iteration_9.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Pre-existing (NOT introduced by this patch) hydration console warning: AdvisoryPanel.jsx line 291 renders <option> with a child <span> wrapper injected by the build tooling causing 'In HTML, <span> cannot be a child of <option>'. Cosmetic only — does not affect functionality. Worth a separate cleanup pass.",
+    "App.js role-guard arrays are still duplicated literally across 3 manager-only routes (lines 114/122/130). Suggest extracting `const MANAGER_ROLES = ['Manager','Admin','Owner']` and reusing — would prevent the iteration_9 class of bug from recurring next time a new manager route is added.",
+    "InterventionList and Intervention page now apply the same overflow-x-auto/inline-flex/whitespace-nowrap recipe to TabsList. If more pages adopt many tabs at mobile, consider a shared ScrollableTabsList wrapper to keep this consistent."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only retest)", "frontend": "100% (15/15 retest checks pass)"},
+  "test_credentials": "Owner: martennis89@gmail.com / 1234 | Manager: manager@field.io / manager123 | TM1: tm1@field.io / tm123",
+  "seed_data_creation": "None — used existing demo seed",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 10 confirmed both iteration_9 HIGH bugs are fixed. Verified at 375x800: document.documentElement.scrollWidth = 375 (matches innerWidth) for BOTH Owner and Manager on /intervention. Owner can reach /intervention via desktop nav-intervention AND mobile-nav-intervention (intervention-page testid mounts both times), /team-performance, /market-intelligence. FEI V1 widget + advisory-tm-v1-pill render on TM dashboard. Manager bottom-nav slot count = 4 mobile-nav-* links + 1 mobile-more-btn = 5; TM bottom-nav slot count = 3 mobile-nav-* links + mobile-add-btn + mobile-more-btn-tm = 5. No NaN or undefined leaked to body text on Manager intervention page or TM dashboard. One unrelated console warning from AdvisoryPanel <option><span/></option> hydration noise remains — cosmetic, pre-existing.",
+  "rca_of_the_issue": {
+    "iteration_9_owner_intervention_blocked": {
+      "status": "FIXED",
+      "verification": "App.js line 114/122/130 now contain roles={['Manager','Admin','Owner']}. Manual click of desktop nav-intervention and mobile-nav-intervention as Owner both navigate to /intervention and mount the intervention-page testid. /team-performance and /market-intelligence both render for Owner without redirect."
+    },
+    "iteration_9_intervention_mobile_overflow": {
+      "status": "FIXED",
+      "verification": "InterventionList.jsx wraps its TabsList in <div className='overflow-x-auto -mx-1 px-1'> with TabsList inline-flex w-auto min-w-full whitespace-nowrap. Intervention.jsx bucket TabsList wrapped the same way. At 375x800 viewport on /intervention: document.documentElement.scrollWidth = 375, clientWidth = 375, innerWidth = 375 for both Owner and Manager — no horizontal page overflow. Tab strip scrolls inside its container as intended."
+    }
+  }
+}

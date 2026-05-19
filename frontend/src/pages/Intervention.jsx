@@ -91,13 +91,15 @@ export default function Intervention() {
 
       {!loading && (
       <Tabs defaultValue="critical">
-        <TabsList className="bg-[var(--bg-paper)]">
-          {BUCKETS.map((b) => (
-            <TabsTrigger key={b.key} value={b.key} data-testid={`tab-${b.key}`}>
-              {b.label} ({(data[b.key] || []).length})
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <div className="overflow-x-auto -mx-1 px-1">
+          <TabsList className="bg-[var(--bg-paper)] inline-flex w-auto min-w-full sm:w-auto whitespace-nowrap">
+            {BUCKETS.map((b) => (
+              <TabsTrigger key={b.key} value={b.key} data-testid={`tab-${b.key}`}>
+                {b.label} ({(data[b.key] || []).length})
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
         {BUCKETS.map((b) => (
           <TabsContent key={b.key} value={b.key}>
             <div className="space-y-2 mt-4">

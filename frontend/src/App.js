@@ -111,7 +111,7 @@ export default function App() {
           <Route
             path="/intervention"
             element={
-              <ProtectedRoute roles={["Manager", "Admin"]}>
+              <ProtectedRoute roles={["Manager", "Admin", "Owner"]}>
                 <Layout><Intervention /></Layout>
               </ProtectedRoute>
             }
@@ -119,7 +119,7 @@ export default function App() {
           <Route
             path="/market-intelligence"
             element={
-              <ProtectedRoute roles={["Manager", "Admin"]}>
+              <ProtectedRoute roles={["Manager", "Admin", "Owner"]}>
                 <Layout><MarketIntelligence /></Layout>
               </ProtectedRoute>
             }
@@ -127,7 +127,7 @@ export default function App() {
           <Route
             path="/team-performance"
             element={
-              <ProtectedRoute roles={["Manager", "Admin"]}>
+              <ProtectedRoute roles={["Manager", "Admin", "Owner"]}>
                 <Layout><TeamPerformance /></Layout>
               </ProtectedRoute>
             }

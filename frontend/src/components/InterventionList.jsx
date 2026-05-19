@@ -311,13 +311,15 @@ export default function InterventionList({ variant = "manager" }) {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="bg-[var(--bg-paper)]">
-          {STATUS_TABS.map((t) => (
-            <TabsTrigger key={t} value={t} data-testid={`intervention-tab-${t.replace(" ", "-").toLowerCase()}`}>
-              {t} ({grouped[t].length})
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <div className="overflow-x-auto -mx-1 px-1">
+          <TabsList className="bg-[var(--bg-paper)] inline-flex w-auto min-w-full sm:w-auto whitespace-nowrap">
+            {STATUS_TABS.map((t) => (
+              <TabsTrigger key={t} value={t} data-testid={`intervention-tab-${t.replace(" ", "-").toLowerCase()}`}>
+                {t} ({grouped[t].length})
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
         {STATUS_TABS.map((t) => (
           <TabsContent key={t} value={t}>
             <div className="space-y-3 mt-4">
