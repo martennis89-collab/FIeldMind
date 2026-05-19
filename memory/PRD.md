@@ -1,5 +1,10 @@
 # FieldMind — Field Intelligence Platform PRD
 
+> **NB (Phase H, Feb 2026)**: This PRD has grown past 800 lines of historic
+> iteration log. Phase H onwards, new phase entries live in
+> `/app/memory/CHANGELOG.md`. PRD remains the original product requirements +
+> historical record.
+
 ## Original problem statement
 Build a secure, production-ready, multi-user Field Intelligence Platform for Territory Managers in the dental/medical (Invisalign/aligners) industry. NOT a CRM. Helps TMs log doctor interactions, remember what was discussed, track promises/follow-ups, identify market sentiment, and surface aggregated insights for managers. Highest priority: SECURITY → UX → intelligence.
 
