@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import QuickCaptureDialog from "./QuickCaptureDialog";
+import ErrorBoundary from "./ErrorBoundary";
 
 // ---------- Top-level (header) ----------
 const TM_TOP = [
@@ -186,7 +187,14 @@ export default function Layout({ children }) {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 pb-28 md:pb-10">{children}</main>
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 pb-28 md:pb-10">
+        <ErrorBoundary
+          key={location.pathname}
+          label="This page hit an unexpected rendering error."
+        >
+          {children}
+        </ErrorBoundary>
+      </main>
 
       {/* Mobile bottom nav (TM = 5 slots with central + Add; Manager = 5 slots with More sheet) */}
       {isTM && (
