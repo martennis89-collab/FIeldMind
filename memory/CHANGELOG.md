@@ -3,6 +3,39 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Phase I.1 — Past-week report generation (Feb 2026)
+
+**User request**: "I wanna be able as a TM generate reports from previous
+weeks. Up to two weeks back I should be able to regenerate weekly reports."
+
+### Changes
+- **Backend**: `POST /api/reports/generate` now accepts an optional
+  `week_start` query param (YYYY-MM-DD, any day inside the target week — the
+  server normalises to that week's Monday→Sunday). Validation:
+  - Future weeks → HTTP 400.
+  - More than 14 days behind the current Monday → HTTP 400.
+  - Invalid date format → HTTP 400.
+  - `Manager`/`Admin` still 403 (only TM role generates).
+- **Frontend**: `Reports` page replaces the single "Generate weekly report"
+  CTA with three buttons:
+  - `generate-report-btn` → **This week** (unchanged behaviour, default).
+  - `generate-report-last-week-btn` → **Last week**.
+  - `generate-report-two-weeks-btn` → **2 weeks ago**.
+  - Copy updated to: "FieldMind drafts it from your activity. You review,
+    edit, and submit. You can also regenerate up to two weeks back."
+- **Safety net**: app-wide `ErrorBoundary` now wraps every page inside the
+  `Layout` `<main>` (keyed by route so it auto-resets on navigation). If
+  any page crashes in the future, the user sees a friendly error card +
+  "Try again" button instead of a blank screen.
+
+### Test proof
+- `/app/backend/tests/test_phase_i1_past_week_reports.py` — **8/8 pass**:
+  current-week, 1w back, 2w back, 3w back rejected, future rejected,
+  invalid-date rejected, non-TM still 403, end-to-end save of a past-week
+  draft.
+- Frontend smoke: confirmed via Playwright — three buttons render, clicking
+  "Last week" opens the draft modal with `week_start = current Monday - 7d`.
+
 ## Phase I — Insight / Intervention UX Polish (Feb 2026)
 
 **Goal**: Make the app feel credible for a real manager by removing UUID-leak

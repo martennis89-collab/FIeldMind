@@ -79,14 +79,21 @@ function TMReports() {
   };
   useEffect(() => { load(); }, []);
 
-  const generate = async () => {
+  const generate = async (weeksBack = 0) => {
     try {
-      const { data } = await api.post("/reports/generate");
+      const params = {};
+      if (weeksBack > 0) {
+        const d = new Date();
+        d.setDate(d.getDate() - weeksBack * 7);
+        params.week_start = d.toISOString().slice(0, 10);
+      }
+      const { data } = await api.post("/reports/generate", null, { params });
       setDraft(data);
       setEditingId(null);
       setDraftOpen(true);
     } catch (e) {
-      toast.error("Could not generate draft");
+      const detail = e?.response?.data?.detail;
+      toast.error(detail || "Could not generate draft");
     }
   };
 
@@ -147,14 +154,24 @@ function TMReports() {
 
   return (
     <>
-      <div className="rounded-md border p-6 mb-6 flex items-center justify-between" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}>
-        <div>
-          <div className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>Generate this week's report</div>
-          <div className="text-sm" style={{ color: "var(--text-secondary)" }}>FieldMind drafts it from your activity. You review, edit, and submit.</div>
+      <div className="rounded-md border p-6 mb-6 flex flex-wrap items-start justify-between gap-4" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}>
+        <div className="min-w-0">
+          <div className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>Generate a weekly report</div>
+          <div className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+            FieldMind drafts it from your activity. You review, edit, and submit. You can also regenerate up to two weeks back.
+          </div>
         </div>
-        <Button onClick={generate} data-testid="generate-report-btn" style={{ background: "var(--brand-primary)", color: "white" }} className="font-medium">
-          <Sparkles className="w-4 h-4 mr-2" /> Generate weekly report
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => generate(0)} data-testid="generate-report-btn" style={{ background: "var(--brand-primary)", color: "white" }} className="font-medium">
+            <Sparkles className="w-4 h-4 mr-2" /> This week
+          </Button>
+          <Button onClick={() => generate(1)} variant="outline" data-testid="generate-report-last-week-btn">
+            <Sparkles className="w-4 h-4 mr-2" /> Last week
+          </Button>
+          <Button onClick={() => generate(2)} variant="outline" data-testid="generate-report-two-weeks-btn">
+            <Sparkles className="w-4 h-4 mr-2" /> 2 weeks ago
+          </Button>
+        </div>
       </div>
 
       {loading ? <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div> : (

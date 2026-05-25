@@ -77,11 +77,29 @@ from models import *  # noqa: F401,F403 — all models are exported under their 
 
 
 @api.post("/reports/generate")
-async def generate_report(user=Depends(get_current_user)):
+async def generate_report(week_start: Optional[str] = None, user=Depends(get_current_user)):
+    """Generate a draft for THIS week, or for a past week within the last 2 weeks.
+
+    `week_start` (optional) — YYYY-MM-DD of any day inside the target week. The
+    server normalises to the Monday→Sunday window. Allowed range: current week,
+    last week, or 2 weeks ago. Older weeks → HTTP 400.
+    """
     if user["role"] != "TM":
         # Admin/Manager can preview their own (no-op)
         raise HTTPException(status_code=403, detail="Only TMs generate reports")
-    monday, sunday = _week_bounds()
+    anchor = datetime.now(timezone.utc)
+    if week_start:
+        try:
+            anchor = datetime.fromisoformat(week_start).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid week_start (YYYY-MM-DD)")
+        # Reject anchors more than 14 days behind the current Monday.
+        cur_monday, _ = _week_bounds()
+        if anchor.date() > cur_monday.date() + timedelta(days=6):
+            raise HTTPException(status_code=400, detail="week_start cannot be in the future")
+        if (cur_monday.date() - anchor.date()).days > 14:
+            raise HTTPException(status_code=400, detail="Cannot generate reports older than 2 weeks back")
+    monday, sunday = _week_bounds(anchor)
     draft = await _build_report_draft(user, monday.date().isoformat(), sunday.date().isoformat())
     return draft
 
