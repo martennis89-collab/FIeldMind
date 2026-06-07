@@ -188,7 +188,7 @@ export default function LogVisit() {
       setRecElapsed(0);
       recTimerRef.current = setInterval(() => {
         setRecElapsed((s) => {
-          if (s + 1 >= 110) { try { rec.stop(); } catch {} } // auto-stop near 2 min cap
+          if (s + 1 >= 110) { try { rec.stop(); } catch { /* ignore */ } } // auto-stop near 2 min cap
           return s + 1;
         });
       }, 1000);
@@ -199,7 +199,7 @@ export default function LogVisit() {
 
   const stopRec = () => {
     if (!recording) return;
-    try { recorderRef.current?.stop(); } catch {}
+    try { recorderRef.current?.stop(); } catch { /* ignore */ }
   };
 
   const save = async () => {
@@ -322,7 +322,7 @@ export default function LogVisit() {
                       style={{ color: "var(--brand-primary)" }}
                     >
                       <UserPlus className="w-3.5 h-3.5" />
-                      <span>Can't find them? Add new doctor{docPickerQuery ? ` "${docPickerQuery}"` : ""}</span>
+                      <span>Can&apos;t find them? Add new doctor{docPickerQuery ? ` "${docPickerQuery}"` : ""}</span>
                     </button>
                   </div>
                 </Command>
@@ -420,6 +420,29 @@ export default function LogVisit() {
       {/* Step 3: review + save */}
       {step === 3 && (
         <div className="space-y-5" data-testid="review-step">
+          {ai?.ai_error && (
+            <div
+              className="rounded-md border p-4"
+              style={{
+                background: "var(--status-warning-bg)",
+                borderColor: "var(--status-warning)",
+                color: "var(--text-primary)",
+              }}
+              data-testid="ai-error-notice"
+            >
+              <div className="font-medium flex items-center gap-2" style={{ color: "var(--status-warning)" }}>
+                <AlertTriangle className="w-4 h-4" />
+                AI analysis couldn&apos;t run for this note
+              </div>
+              <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+                You can still log the visit — just confirm or pick the topics, barriers, and
+                sentiment manually below. Your note is saved untouched.
+              </p>
+              <p className="text-[11px] mt-2 font-mono" style={{ color: "var(--text-muted)" }}>
+                {ai.ai_error}
+              </p>
+            </div>
+          )}
           {ai?.privacy_warnings?.length > 0 && (
             <div className="rounded-md border p-4" style={{ background: "var(--status-danger-bg)", borderColor: "var(--status-danger)", color: "var(--status-danger)" }} data-testid="privacy-warning">
               <div className="font-medium flex items-center gap-2"><AlertTriangle className="w-4 h-4" />Privacy warnings</div>

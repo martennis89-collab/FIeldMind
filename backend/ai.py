@@ -128,6 +128,10 @@ def _safe_json(text: str) -> Optional[dict]:
 
 
 def _empty_result(reason: str = "") -> dict:
+    """Empty extraction skeleton. `reason` populates `ai_error` (NOT
+    `privacy_warnings` — the latter is reserved for real patient/PII concerns
+    detected in the note itself).
+    """
     return {
         "summary": "",
         "topics": [],
@@ -137,7 +141,8 @@ def _empty_result(reason: str = "") -> dict:
         "promises_detected": [],
         "suggested_next_action": "",
         "market_signals": [],
-        "privacy_warnings": ([reason] if reason else []),
+        "privacy_warnings": [],
+        "ai_error": (reason or None),
         "track_types": [],
         "itero_actions": {
             "demo_discussed": False, "demo_booked": False, "demo_booked_date": None,
@@ -181,6 +186,7 @@ async def analyze_note(note: str, session_id: str) -> dict:
 
         # Normalise + clamp
         result = _empty_result()
+        result["ai_error"] = None
         result["summary"] = (data.get("summary") or "")[:600]
         result["topics"] = [str(t) for t in (data.get("topics") or [])][:8]
         result["barriers"] = [str(b) for b in (data.get("barriers") or [])][:8]
@@ -248,7 +254,15 @@ async def analyze_note(note: str, session_id: str) -> dict:
         return result
     except Exception as e:
         logger.exception("AI analyze_note failed: %s", e)
-        return _empty_result(f"AI error: {type(e).__name__}")
+        # Surface the real error reason for both debugging and the user's UI.
+        # Common cases: budget exhausted, key invalid, network. We include the
+        # exception type AND a short stringified message so the user can copy it
+        # back to support if needed. Stripped to avoid leaking secrets.
+        detail = str(e).strip()
+        if len(detail) > 180:
+            detail = detail[:180] + "…"
+        reason = f"{type(e).__name__}: {detail}" if detail else type(e).__name__
+        return _empty_result(reason)
 
 
 async def extract_task_from_text(text: str, doctor_names: Optional[list] = None) -> dict:
