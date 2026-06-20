@@ -3,6 +3,44 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Phase I.2 — Full visit notes in PDF/CSV exports (Feb 2026)
+
+**User report**: "When I generate the PDF weekly report in the section for
+each Dr meeting, the longer notes are partly cut. All of the text should
+be visible."
+
+### Root cause
+`server.py` `_build_report_draft` was truncating each doctor's latest visit
+note to 220 chars (with an ellipsis) into a single `note_excerpt` field. The
+PDF and CSV exports rendered that already-truncated excerpt, so the manager
+never saw the rest of the note.
+
+### Fix
+- Backend `server.py` now emits BOTH fields in `doctor_breakdown`:
+  - `note_excerpt` — short ≤220-char preview (used by the compact UI cards on
+    the dashboard / draft modal).
+  - `note_full` — the entire untruncated note (used by the PDF + CSV exports
+    so the manager sees the whole story).
+- PDF (`routers/reports.py`): `note_text = d.get("note_full") or d.get("note_excerpt")`.
+  Text is XML-escaped and `\n` → `<br/>` so multi-paragraph notes wrap and
+  render correctly. ReportLab `Paragraph` already handles line-wrap to the
+  full page width, so no more cut-off.
+- CSV: same fallback — full note in the `Latest note` column, with excerpt
+  fallback for legacy reports.
+- Backwards compatible: reports saved before this fix have only
+  `note_excerpt`, and the PDF/CSV still render correctly from that.
+
+### Tests
+- `/app/backend/tests/test_phase_i2_full_note_in_pdf.py` — **2/2 pass**
+  - End-to-end: log a 700+ char visit note → generate draft → save → export
+    PDF via `pdfminer.six` extraction → assert distinctive late-in-note
+    phrases ("TBI Bank representative meeting", "financing options") appear
+    in the rendered text. Same assertion against the CSV export.
+  - Legacy-shape report (no `note_full`, only `note_excerpt`) still exports
+    cleanly — backwards compatibility verified.
+- Regression: `test_report_doctor_breakdown.py` + `test_report_demos.py` —
+  **6/6 still pass**.
+
 ## Phase I.1 — Past-week report generation (Feb 2026)
 
 **User request**: "I wanna be able as a TM generate reports from previous

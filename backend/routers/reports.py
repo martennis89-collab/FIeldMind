@@ -357,7 +357,7 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
                 d.get("demos_booked_count", 0),
                 d.get("demos_completed_count", 0),
                 "; ".join(d.get("demo_dates", []) or []),
-                d.get("note_excerpt", "") or "",
+                d.get("note_full") or d.get("note_excerpt", "") or "",
             ])
         w.writerow([])
         # iTero demos this week (booked + completed)
@@ -559,8 +559,14 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
                 head_bits.append(Paragraph("<b>Barriers:</b> " + ", ".join(d["barriers"]), styles["Body"]))
             if d.get("promises"):
                 head_bits.append(Paragraph("<b>Promises:</b> " + "; ".join(d["promises"]), styles["Body"]))
-            if d.get("note_excerpt"):
-                head_bits.append(Paragraph(f"<i>{d['note_excerpt']}</i>", styles["Muted"]))
+            note_text = d.get("note_full") or d.get("note_excerpt")
+            if note_text:
+                # ReportLab Paragraph treats &<> as markup; escape them, preserve
+                # line breaks so multi-paragraph notes render readably and the
+                # text wraps to full width across as many lines as needed.
+                from xml.sax.saxutils import escape as _xml_escape
+                safe = _xml_escape(note_text).replace("\n", "<br/>")
+                head_bits.append(Paragraph(f"<i>{safe}</i>", styles["Muted"]))
             for elem in head_bits:
                 flow.append(elem)
             flow.append(Spacer(1, 6))

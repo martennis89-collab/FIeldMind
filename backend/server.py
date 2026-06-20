@@ -1476,10 +1476,13 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         # Promises this week tied to this doctor
         d_tasks = tasks_by_doctor.get(did, [])
         promise_titles = [t.get("task_title") for t in d_tasks if t.get("task_title")]
-        # Pull a short note excerpt from the last visit (truncated)
-        note = (last_visit.get("free_text_note") or "").strip() if last_visit else ""
-        if len(note) > 220:
-            note = note[:217] + "…"
+        # Pull the visit note. We keep BOTH a short excerpt (for compact UI
+        # previews on dashboard/draft cards) AND the full untruncated text
+        # (used by the PDF/CSV exports so the manager sees the whole story).
+        note_full = (last_visit.get("free_text_note") or "").strip() if last_visit else ""
+        note_excerpt = note_full
+        if len(note_excerpt) > 220:
+            note_excerpt = note_excerpt[:217] + "…"
         d_booked = demos_booked_by_doctor.get(did, [])
         d_completed = demos_completed_by_doctor.get(did, [])
         breakdown.append({
@@ -1495,7 +1498,8 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
             "sentiment": latest_sentiment,
             "promises_count": len(promise_titles),
             "promises": promise_titles[:5],
-            "note_excerpt": note,
+            "note_excerpt": note_excerpt,
+            "note_full": note_full,
             "demos_booked_count": len(d_booked),
             "demos_completed_count": len(d_completed),
             "demo_dates": sorted([m.get("scheduled_at", "")[:10] for m in d_booked if m.get("scheduled_at")]),
