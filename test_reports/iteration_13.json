@@ -1,0 +1,24 @@
+{
+  "summary": "Phase L Reports.jsx retest: HIGH bug from iteration_12 is FIXED. SeniorTM /reports now correctly renders BOTH the personal TMReports panel (3 generate buttons + own report history) AND a labeled 'YOUR DIRECT REPORTS' SUBMISSIONS' ManagerReports panel below. Heading reads 'Your weekly intelligence + team reports.' All 3 generate buttons (generate-report-btn, generate-report-last-week-btn, generate-report-two-weeks-btn) are present, enabled, and clickable. Clicking 'Last week' opens the report-draft dialog with auto-summary editor; Escape closes it without saving. TMReports load() correctly filters to user's own rows so personal history shows only the SeniorTM's reports — verified empty for fresh demo user. Below the personal card the 'YOUR DIRECT REPORTS' SUBMISSIONS' label renders followed by Submitted (0) / Pending (1) / Overdue (1) tabs from ManagerReports. Regression — TM (tm1) /reports: heading 'Your weekly intelligence.' (no '+team reports'), 3 generate buttons present, NO direct-reports section, NO manager bucket tabs. Regression — Manager /reports: heading 'Team reports.', personal generate buttons NOT present, only manager bucket tabs. Phase L re-verify: SeniorTM dashboard loads, /intervention renders all 3 buckets (critical/at_risk/high_opportunity — note testid uses underscores not hyphens), Admin role dropdown includes SeniorTM, mobile-bottom-nav-seniortm has exactly 5 slots at 390x844.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Reports.jsx role routing now correctly handles the SeniorTM hybrid persona — clean implementation: TM gets TMReports; SeniorTM gets TMReports + labeled ManagerReports; others get ManagerReports. The TMReports.load() inline role filter `r.tm_user_id === user.id` for SeniorTM is correct and minimal.",
+    "Minor a11y warning in console: 'Missing Description or aria-describedby for DialogContent' on the report-draft Dialog. Add a DialogDescription (or aria-describedby attr) inside ReportEditor's DialogHeader for screen-reader compliance.",
+    "Iteration_12 incorrectly documented intervention bucket testids as bucket-stat-at-risk / bucket-stat-high-opportunity (hyphens). Actual testids in the running app use underscores: bucket-stat-at_risk / bucket-stat-high_opportunity. Recommend renaming to hyphenated form for consistency (other buckets, tabs, and routes in this app use kebab-case) OR update test docs."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% on retest scope"},
+  "test_credentials": "SeniorTM: snr.demo.1782126329@field.io / senior123; TM1: tm1@field.io / tm123; Manager: manager@field.io / manager123; Admin: admin@field.io / admin123. All from /app/memory/test_credentials.md and iteration_12.",
+  "seed_data_creation": "None. Reused existing demo accounts; no data mutated (Last-week generate modal was closed with Escape, not saved).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase L Reports.jsx fix is verified end-to-end and complete. Bucket testid naming convention note: intervention page uses bucket-stat-at_risk and bucket-stat-high_opportunity (underscores). The Dialog a11y warning (Missing Description/aria-describedby) is cosmetic only — appears whenever any Dialog opens. Deferred issues from iter12 (console 403 noise on /team-performance, /invisalign, /expenses for SeniorTM) were not retested in this iteration since the request only required the Reports.jsx fix.",
+  "rca of the issue": "Iteration_12 RCA — Reports.jsx:57 binary `user.role === 'TM' ? <TMReports/> : <ManagerReports/>` did not handle SeniorTM. Fix applied in lines 64-76 now renders TM=TMReports, SeniorTM=TMReports+ManagerReports (with 'Your direct reports' submissions' label), else=ManagerReports. TMReports.load() (lines 99-102) additionally filters rows by `r.tm_user_id === user.id` when role is SeniorTM, so the personal history list only shows the SeniorTM's own reports while the sub-team list is owned by the separate ManagerReports panel. Verified live with all three roles."
+}

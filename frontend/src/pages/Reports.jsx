@@ -51,16 +51,36 @@ export default function Reports() {
       <div className="mb-6">
         <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Weekly reports</div>
         <h1 className="font-display text-3xl sm:text-4xl font-light tracking-tight" style={{ color: "var(--brand-primary)" }}>
-          {user.role === "TM" ? <>Your <span className="font-medium">weekly intelligence.</span></> : <>Team <span className="font-medium">reports.</span></>}
+          {user.role === "TM"
+            ? <>Your <span className="font-medium">weekly intelligence.</span></>
+            : user.role === "SeniorTM"
+            ? <>Your <span className="font-medium">weekly intelligence</span> + team reports.</>
+            : <>Team <span className="font-medium">reports.</span></>}
         </h1>
       </div>
-      {user.role === "TM" ? <TMReports /> : <ManagerReports />}
+      {/* Phase L: SeniorTM is a TM+Manager hybrid. They draft their own weekly
+          report (TM functionality) AND review their direct reports' submissions
+          (manager functionality). Both panels render stacked. */}
+      {user.role === "TM" && <TMReports />}
+      {user.role === "SeniorTM" && (
+        <>
+          <TMReports />
+          <div className="mt-10">
+            <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>
+              Your direct reports&apos; submissions
+            </div>
+            <ManagerReports />
+          </div>
+        </>
+      )}
+      {!["TM", "SeniorTM"].includes(user.role) && <ManagerReports />}
     </div>
   );
 }
 
 // ============== TM VIEW ==============
 function TMReports() {
+  const { user } = useAuth();
   const [reports, setReports] = useState([]);
   const [draftOpen, setDraftOpen] = useState(false);
   const [draft, setDraft] = useState(null);
@@ -72,7 +92,14 @@ function TMReports() {
     setLoading(true);
     try {
       const { data } = await api.get("/reports");
-      setReports(data.reports || []);
+      // Phase L: for a SeniorTM, /reports returns their own + sub-team
+      // submissions. The personal history list should ONLY show their own
+      // weekly reports — the sub-team listing renders separately below in
+      // ManagerReports.
+      const rows = (data.reports || []).filter(
+        (r) => user.role !== "SeniorTM" || r.tm_user_id === user.id,
+      );
+      setReports(rows);
     } finally {
       setLoading(false);
     }
