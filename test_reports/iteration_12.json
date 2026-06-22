@@ -1,0 +1,34 @@
+{
+  "summary": "Phase L — SeniorTM role tested end-to-end (backend + frontend). Backend test_phase_l_senior_tm.py: 9/9 PASS. Backend smoke endpoints for SeniorTM token: /api/dashboard/manager 200, /api/interventions 200, /api/reports 200, /api/insights/team 200, /api/users 200 (correctly scoped to self+direct-reports). Frontend: Admin create AND edit dialogs both include 'SeniorTM' in role dropdown. Reports-to picker visible only for TM/SeniorTM, hidden for Manager/Admin. Picker logic correctly returns Managers+SeniorTMs for TM and Managers-only for SeniorTM (verified in Admin.jsx reportsToOptionsForRole). SeniorTM login lands on dashboard with 'SENIORTM DASHBOARD' + 'Hello, Demo.' header. Desktop top nav has all 7 expected links (Dashboard, Intervention, iTero, Invisalign, Team, Expenses, Reports) — every route renders without 403/redirect. /intervention shows intervention-page testid with 3 bucket cards (bucket-stat-critical/at-risk/high-opportunity), 3 tabs, and Action Items panel. Mobile bottom nav at 375x800 renders [data-testid='mobile-bottom-nav-seniortm'] with EXACTLY 5 slots (Dashboard, Intervention, + Add, Tasks, More). + Add opens seniortm-add-sheet with all 8 items. More opens seniortm-more-sheet with all 9 items including Quick capture. SeniorTM /log-visit form loads. SeniorTM correctly redirected from /admin. Manager and TM regression: dashboards load, FEI widget + advisory-tm-v1-pill + generate-report-btn all present. One bug found in /reports for SeniorTM.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Reports.jsx", "issue": "Senior TM's /reports page renders ONLY ManagerReports (team-aggregate view) and does NOT expose the personal 'This week / Last week / 2 weeks ago' weekly-report-draft generate buttons. The routing at Reports.jsx:57 uses `user.role === 'TM' ? <TMReports /> : <ManagerReports />` — Senior TM falls into the manager branch. Backend supports SeniorTM generating own weekly report (test_senior_tm_generates_own_weekly_report passes) and the explicit test requirement says: 'Clicking This week / Last week / 2 weeks ago generates their own weekly report draft', so the FE needs to render the personal generate buttons for SeniorTM in addition to the manager team-reports list (TM+Manager hybrid).", "selector": "[data-testid='generate-report-btn'] for SeniorTM", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Senior TM on /team-performance, /invisalign, /expenses", "issue": "Console shows 403 from a sub-resource fetch (likely a benchmark or company-scope endpoint a SeniorTM doesn't have). Pages still render correctly with empty/scoped data, but the console errors are noisy and should be filtered server-side or guarded client-side for SeniorTM role.", "affected_selectors": []}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_l_senior_tm.py",
+    "/app/test_reports/pytest/phase_l_results.xml"
+  ],
+  "action_items": [
+    "Update /app/frontend/src/pages/Reports.jsx line 57 so that SeniorTM gets BOTH the personal 'Generate a weekly report' card (TMReports' generate buttons) AND the team-reports listing. Simplest fix: render a combined SeniorTMReports component, or change the conditional to render TMReports' generate section for ['TM','SeniorTM'] and ManagerReports' team list for ['Manager','Admin','Owner','SeniorTM'].",
+    "Audit which sub-endpoints return 403 to SeniorTM on /team-performance, /invisalign, /expenses (benchmark? company-insights?). Either grant SeniorTM scoped access or guard the client fetch on role to avoid console noise."
+  ],
+  "critical_code_review_comments": [
+    "Reports.jsx routing-by-role binary check (TM vs everything-else) breaks for the new SeniorTM hybrid persona. Extract a small helper `isManagerLikeRole(role)` and `isFieldRole(role)` to keep the role-based routing consistent across pages.",
+    "SENIORTM_MORE in Layout.jsx hard-codes Quick capture above the .map() — fine, but consider moving Quick capture into the array (or both arrays) so the 9-item contract is captured in one place and is easier to keep in sync with TM_MORE.",
+    "Reports-to picker option text is `{u.full_name} ({u.role === 'SeniorTM' ? 'Sr TM' : u.role})` — readable, but the dropdown groups two roles together with no visual separation. Consider an optgroup / section header (Managers / Senior TMs) for clarity once a Manager has multiple Senior TMs."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "~92% (1 functional gap on SeniorTM /reports)"},
+  "test_credentials": "Owner: martennis89@gmail.com/1234, Admin: admin@field.io/admin123, Manager: manager@field.io/manager123, TM1: tm1@field.io/tm123, SeniorTM (preview demo): snr.demo.1782126329@field.io/senior123. All seeded via /api/seed/init (preview-only, ENABLE_DEMO_SEED=true).",
+  "seed_data_creation": "No new seed data created. Used existing preview demo accounts. Phase L pytest creates+cleans its own TEST_ prefixed users/interventions inside test_phase_l_senior_tm.py.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase L Senior TM is essentially shipped. Only blocker: Reports.jsx role routing (line 57). All testids in this report verified live: mobile-bottom-nav-seniortm, mobile-add-btn, mobile-more-btn-seniortm, seniortm-add-sheet, seniortm-more-sheet, more-quick-capture, more-itero/invisalign/team/doctors/meetings/reports/expenses/account, add-log-visit/book-meeting/book-demo/event/new-task/expense/doctor/doctor-import, intervention-page, bucket-stat-critical/at-risk/high-opportunity (NOT intervention-bucket-* — that name in the problem-statement is incorrect; actual is bucket-stat-{key}). Run pytest as: REACT_APP_BACKEND_URL=https://territory-intel-8.preview.emergentagent.com python -m pytest backend/tests/test_phase_l_senior_tm.py -v.",
+  "rca of the issue": "Reports.jsx:57 uses a binary `user.role === 'TM'` check to switch between personal TM reports view and aggregated Manager reports view. When SeniorTM was added as a third hybrid role, this conditional was not updated, so SeniorTM falls into the `else` branch (ManagerReports) and the personal generate buttons (testids generate-report-btn / generate-report-last-week-btn / generate-report-two-weeks-btn) are not rendered. Backend endpoint that powers those buttons accepts SeniorTM (test_senior_tm_generates_own_weekly_report passes), so this is purely a frontend gap. Mitigation: render TMReports' Generate-card on top of ManagerReports when role === 'SeniorTM', so the hybrid persona can both generate their own draft and oversee their sub-team's reports."
+}

@@ -66,6 +66,8 @@ from server import (
     _classify_flags,
     _classify_insights,
     _coaching_for,
+    _managed_tm_ids_for,
+    _is_manager_role,
     # ai
     ai_analyze_note,
     ai_extract_task,
@@ -76,9 +78,37 @@ from server import (
 from models import *  # noqa: F401,F403 — all models are exported under their original names
 
 
+# Phase L — single helper that applies role-appropriate scope to a Mongo
+# query for collections that carry `team_id` + `tm_user_id` (visits, tasks,
+# meetings, etc.). `sr_ids` is the precomputed Senior-TM-managed user-id
+# list and must be passed by the caller (resolved once per handler).
+def _apply_role_scope(q: dict, user, sr_ids: Optional[list[str]] = None) -> dict:
+    role = user["role"]
+    if role == "TM":
+        q["tm_user_id"] = user["id"]
+    elif role == "Manager":
+        q["team_id"] = user.get("team_id")
+    elif role == "SeniorTM":
+        q["tm_user_id"] = {"$in": sr_ids or []}
+    return q
+
+
+def _users_scope_query(user, sr_ids: Optional[list[str]] = None) -> dict:
+    """Filter for db.users.find that scopes to the caller's manager view.
+
+    Returns ONLY the role filter — the caller must merge with company scope.
+    """
+    role = user["role"]
+    if role == "Manager":
+        return {"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}}
+    if role == "SeniorTM":
+        return {"id": {"$in": sr_ids or []}, "role": "TM"}
+    return {"role": {"$in": ["TM", "SeniorTM"]}}
+
+
 @api.get("/dashboard/tm")
 async def tm_dashboard(user=Depends(get_current_user)):
-    if user["role"] not in ("TM", "Admin", "Manager"):
+    if user["role"] not in ("TM", "Admin", "Manager", "SeniorTM"):
         raise HTTPException(status_code=403, detail="Forbidden")
     doc_q = await _doctor_query_for(user)
     docs = await db.doctors.find(doc_q, {"_id": 0}).to_list(500)
@@ -92,7 +122,7 @@ async def tm_dashboard(user=Depends(get_current_user)):
     week_end_inclusive = sunday.isoformat()
 
     task_q = dict(_company_query_for(user))
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         task_q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         task_q["team_id"] = user.get("team_id")
@@ -102,7 +132,7 @@ async def tm_dashboard(user=Depends(get_current_user)):
 
     visit_q = dict(_company_query_for(user))
     meeting_q = dict(_company_query_for(user))
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         visit_q["tm_user_id"] = user["id"]
         meeting_q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
@@ -146,8 +176,9 @@ async def tm_dashboard(user=Depends(get_current_user)):
     }
 
 @api.get("/dashboard/manager")
-async def manager_dashboard(user=Depends(require_roles("Manager", "Admin", "Owner"))):
-    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
+async def manager_dashboard(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
+    _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
+    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(1000)
     visits = await db.visits.find(team_q, {"_id": 0}).sort("visit_date", -1).to_list(2000)
     tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(2000)
@@ -251,9 +282,10 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "Admin", "Owne
     }
 
 @api.get("/dashboard/manager/performance")
-async def manager_performance(user=Depends(require_roles("Manager", "Admin", "Owner"))):
-    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
-    user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
+async def manager_performance(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
+    _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
+    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
+    user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     visits = await db.visits.find(team_q, {"_id": 0}).to_list(5000)
@@ -381,8 +413,9 @@ async def manager_performance(user=Depends(require_roles("Manager", "Admin", "Ow
     return {"rows": rows}
 
 @api.get("/dashboard/manager/commercial")
-async def manager_commercial(user=Depends(require_roles("Manager", "Admin", "Owner"))):
-    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
+async def manager_commercial(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
+    _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
+    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
     total = len(enriched) or 1
@@ -476,11 +509,12 @@ async def manager_commercial(user=Depends(require_roles("Manager", "Admin", "Own
     }
 
 @api.get("/dashboard/manager/interventions")
-async def manager_interventions(stale_proposal_days: int = 7, user=Depends(require_roles("Manager", "Admin", "Owner"))):
-    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
+async def manager_interventions(stale_proposal_days: int = 7, user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
+    _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
+    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
-    user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
+    user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
     tm_name = {t["id"]: t["full_name"] for t in tms}
 
@@ -578,8 +612,9 @@ async def manager_interventions(stale_proposal_days: int = 7, user=Depends(requi
     }
 
 @api.get("/dashboard/manager/itero")
-async def manager_itero(user=Depends(require_roles("Manager", "Admin", "Owner"))):
-    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
+async def manager_itero(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
+    _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
+    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
 
@@ -626,7 +661,7 @@ async def manager_itero(user=Depends(require_roles("Manager", "Admin", "Owner"))
             b["demos_booked"] += 1
         if ia.get("demo_completed") or legacy.get("demo_completed"):
             b["demos_completed"] += 1
-    user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
+    user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
     name_map = {t["id"]: t["full_name"] for t in tms}
     tm_perf = [{**v, "tm_name": name_map.get(v["tm_id"], "—")} for v in by_tm.values()]
@@ -643,8 +678,9 @@ async def manager_itero(user=Depends(require_roles("Manager", "Admin", "Owner"))
     }
 
 @api.get("/dashboard/manager/invisalign")
-async def manager_invisalign(user=Depends(require_roles("Manager", "Admin", "Owner"))):
-    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
+async def manager_invisalign(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
+    _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
+    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
     total = len(enriched) or 1
@@ -720,8 +756,9 @@ async def manager_invisalign(user=Depends(require_roles("Manager", "Admin", "Own
     }
 
 @api.get("/dashboard/manager/cross-sell")
-async def manager_cross_sell(user=Depends(require_roles("Manager", "Admin", "Owner"))):
-    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
+async def manager_cross_sell(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
+    _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
+    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
     enriched = [await _enrich_doctor(d) for d in docs]
 

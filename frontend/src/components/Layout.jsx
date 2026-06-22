@@ -84,14 +84,41 @@ const MANAGER_MORE = [
   { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
 ];
 
+// Phase L — Senior TM is a TM + Manager hybrid. They log their own visits
+// (TM functionality) AND oversee a sub-team (Manager functionality). Their
+// bottom nav prioritises oversight + adding, with iTero/Invisalign/Team perf
+// available via the More sheet.
+//
+// Slots: Dashboard / Intervention / + Add / Tasks / More
+const SENIORTM_BOTTOM = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
+  { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
+  // central "+ Add" injected here
+  { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
+  // slot 5 = "More" sheet
+];
+
+const SENIORTM_MORE = [
+  { to: "/itero", label: "iTero", icon: ScanLine, testId: "more-itero" },
+  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "more-invisalign" },
+  { to: "/team-performance", label: "Team performance", icon: TrendingUp, testId: "more-team" },
+  { to: "/doctors", label: "Doctors", icon: Users, testId: "more-doctors" },
+  { to: "/meetings", label: "Meetings", icon: Calendar, testId: "more-meetings" },
+  { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
+  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
+  { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
+];
+
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  // Owner + Admin both see the Manager-style top nav (cross-team visibility).
+  // Owner + Admin + SeniorTM all see the Manager-style top nav (oversight visibility).
   const isManager = user?.role === "Manager" || user?.role === "Admin" || user?.role === "Owner";
+  const isSeniorTM = user?.role === "SeniorTM";
   const isTM = user?.role === "TM";
-  const TOP = isManager ? MANAGER_TOP : TM_TOP;
+  // Top nav: SeniorTMs get Manager top nav (full oversight) — same as Manager.
+  const TOP = (isManager || isSeniorTM) ? MANAGER_TOP : TM_TOP;
   const [tmAddOpen, setTmAddOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
@@ -262,6 +289,71 @@ export default function Layout({ children }) {
         </>
       )}
 
+      {isSeniorTM && (
+        <>
+          <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="mobile-bottom-nav-seniortm">
+            <div className="grid grid-cols-5 h-16">
+              {/* slot 1, 2 */}
+              {SENIORTM_BOTTOM.slice(0, 2).map((t) => <BottomTab key={t.to} t={t} />)}
+              {/* slot 3 — central + Add (TM-hybrid: Senior TM logs their own visits) */}
+              <button
+                onClick={() => setTmAddOpen(true)}
+                data-testid="mobile-add-btn"
+                className="flex flex-col items-center justify-center -mt-5"
+                aria-label="Add"
+              >
+                <span className="w-12 h-12 rounded-full flex items-center justify-center text-white shadow-lg"
+                      style={{ background: "var(--brand-secondary)" }}>
+                  <Plus className="w-6 h-6" />
+                </span>
+                <span className="text-[10px] mt-1" style={{ color: "var(--brand-secondary)", fontWeight: 600 }}>Add</span>
+              </button>
+              {/* slot 4 */}
+              {SENIORTM_BOTTOM.slice(2, 3).map((t) => <BottomTab key={t.to} t={t} />)}
+              {/* slot 5 — More sheet */}
+              <button
+                onClick={() => setMoreOpen(true)}
+                data-testid="mobile-more-btn-seniortm"
+                className="flex flex-col items-center justify-center gap-1 text-[10px]"
+                style={{ color: moreOpen ? "var(--brand-primary)" : "var(--text-muted)" }}
+              >
+                <MoreHorizontal className="w-5 h-5" />
+                More
+              </button>
+            </div>
+          </nav>
+          {/* + Add bottom sheet (Senior TM — same options as TM) */}
+          {tmAddOpen && (
+            <BottomSheet onClose={() => setTmAddOpen(false)} testId="seniortm-add-sheet">
+              <SheetTitle>Add</SheetTitle>
+              <SheetItem icon={ClipboardList} label="Log a visit" onClick={() => { setTmAddOpen(false); navigate("/log-visit"); }} testId="add-log-visit" />
+              <SheetItem icon={CalendarPlus} label="Book a meeting" onClick={() => { setTmAddOpen(false); navigate("/meetings/book"); }} testId="add-book-meeting" />
+              <SheetItem icon={ScanLine} label="Book an iTero demo" onClick={() => { setTmAddOpen(false); navigate("/meetings/book?demo=1"); }} testId="add-book-demo" subtitle="Auto-marks pipeline as Demo Booked" />
+              <SheetItem icon={Calendar} label="Add an event" onClick={() => { setTmAddOpen(false); navigate("/meetings?new_event=1"); }} testId="add-event" subtitle="Generic agenda item, no doctor" />
+              <SheetItem icon={CheckSquare} label="New task" onClick={() => { setTmAddOpen(false); navigate("/tasks?new=1"); }} testId="add-new-task" />
+              <SheetItem icon={Receipt} label="Add an expense" onClick={() => { setTmAddOpen(false); navigate("/expenses/log"); }} testId="add-expense" />
+              <SheetItem icon={Users} label="Add a doctor" onClick={() => { setTmAddOpen(false); navigate("/doctors/add"); }} testId="add-doctor" />
+              <SheetItem icon={Layers} label="Import doctors" onClick={() => { setTmAddOpen(false); navigate("/doctors/import"); }} testId="add-doctor-import" subtitle="From a spreadsheet" />
+            </BottomSheet>
+          )}
+          {/* More sheet (Senior TM) */}
+          {moreOpen && (
+            <BottomSheet onClose={() => setMoreOpen(false)} testId="seniortm-more-sheet">
+              <SheetTitle>More</SheetTitle>
+              <SheetItem
+                icon={Wand2}
+                label="Quick capture"
+                testId="more-quick-capture"
+                onClick={() => { setMoreOpen(false); setQuickCaptureOpen(true); }}
+              />
+              {SENIORTM_MORE.map((m) => (
+                <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
+              ))}
+            </BottomSheet>
+          )}
+        </>
+      )}
+
       {isManager && (
         <>
           <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="mobile-bottom-nav-manager">
@@ -296,7 +388,7 @@ export default function Layout({ children }) {
       )}
 
       {/* Admin: full top nav, no bottom nav (desktop-first) */}
-      {!isTM && !isManager && (
+      {!isTM && !isManager && !isSeniorTM && (
         <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
           <div className="grid grid-cols-3 h-16">
             <BottomTab t={{ to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" }} />
@@ -306,8 +398,8 @@ export default function Layout({ children }) {
         </nav>
       )}
 
-      {/* Desktop FAB (TM only) */}
-      {isTM && !location.pathname.startsWith("/log-visit") && (
+      {/* Desktop FAB (TM + Senior TM) */}
+      {(isTM || isSeniorTM) && !location.pathname.startsWith("/log-visit") && (
         <button
           onClick={() => navigate("/log-visit")}
           data-testid="log-visit-fab"

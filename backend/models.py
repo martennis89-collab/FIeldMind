@@ -95,7 +95,12 @@ DEFAULT_COMPANY = {
 
 
 # ---------- USERS / TEAMS ----------
-Role = Literal["TM", "Manager", "Admin", "Owner"]
+# Phase L: SeniorTM is a TM + Manager hybrid. They:
+#   - Log their own visits/meetings/promises (like TM)
+#   - Oversee a sub-team of TMs (TMs whose manager_user_id == seniorTM.id)
+#   - Submit their own weekly reports up to their Manager
+# Visibility is scoped to their direct reports + themselves, NOT the whole team.
+Role = Literal["TM", "SeniorTM", "Manager", "Admin", "Owner"]
 
 
 class UserCreate(BaseModel):

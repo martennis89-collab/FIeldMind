@@ -219,6 +219,45 @@ def _apply_company_scope(q: dict, user) -> dict:
     return out
 
 
+# Phase L — Senior TM scoping helpers.
+# A Senior TM is a TM-hybrid who oversees a sub-team. We resolve their
+# "managed view" as themselves + every TM whose manager_user_id == seniorTM.id.
+# Manager continues to use team_id (whole team). Admin/Owner = no restriction.
+async def _managed_tm_ids_for(user) -> Optional[list[str]]:
+    """Return the list of TM user-ids the caller can view as a manager-style scope.
+
+    - Admin / Owner: returns None (meaning "no user-id restriction" — only the
+      company scope still applies elsewhere).
+    - Manager: every TM/SeniorTM in their team_id.
+    - SeniorTM: themselves + every TM whose manager_user_id == self.id.
+    - TM: themselves only.
+    """
+    role = user.get("role")
+    if role in ("Admin", "Owner"):
+        return None
+    q = dict(_company_query_for(user))
+    if role == "Manager":
+        q["team_id"] = user.get("team_id")
+        q["role"] = {"$in": ["TM", "SeniorTM"]}
+        rows = await db.users.find(q, {"_id": 0, "id": 1}).to_list(2000)
+        return [r["id"] for r in rows]
+    if role == "SeniorTM":
+        q["manager_user_id"] = user["id"]
+        q["role"] = "TM"
+        rows = await db.users.find(q, {"_id": 0, "id": 1}).to_list(2000)
+        ids = [r["id"] for r in rows]
+        # Senior TM also sees their own activity (they log visits like a TM).
+        ids.append(user["id"])
+        return ids
+    # TM
+    return [user["id"]]
+
+
+def _is_manager_role(user) -> bool:
+    """Roles that get the manager-style dashboard / oversight pages."""
+    return user.get("role") in ("Manager", "SeniorTM", "Admin", "Owner")
+
+
 def _same_company(user, entity) -> bool:
     """Cross-company guard for individual records."""
     if not ENFORCE_COMPANY_ISOLATION:

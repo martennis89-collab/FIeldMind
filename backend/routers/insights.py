@@ -44,15 +44,31 @@ from metrics.insights import evaluate_metric, evaluate_fei
 # Helpers
 # ============================================================
 async def _target_tms(user) -> list[dict]:
-    """Return the list of TM user documents the caller is allowed to generate insights for."""
+    """Return the list of TM user documents the caller is allowed to generate insights for.
+
+    Phase L: SeniorTM gets every TM whose manager_user_id == self.id, plus
+    themselves (so their own metrics still get analysed).
+    """
     role = user.get("role")
     q = dict(_company_query_for(user))
-    q["role"] = "TM"
     if role == "TM":
+        q["role"] = "TM"
         q["id"] = user["id"]
+    elif role == "SeniorTM":
+        # Senior TMs are TM-hybrids: their own activity is included alongside
+        # their direct reports.
+        q["$or"] = [
+            {"id": user["id"]},
+            {"manager_user_id": user["id"], "role": "TM"},
+        ]
     elif role == "Manager":
+        # Manager sees every TM AND every SeniorTM in their team — they get
+        # insights generated for both layers.
         q["team_id"] = user.get("team_id")
-    # Admin / Owner → all TMs in company (Owner skips company filter because _company_query_for is empty)
+        q["role"] = {"$in": ["TM", "SeniorTM"]}
+    else:
+        # Admin / Owner → all TMs + SeniorTMs in company.
+        q["role"] = {"$in": ["TM", "SeniorTM"]}
     return await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(2000)
 
 
@@ -158,7 +174,7 @@ async def my_insights(
 async def team_insights(
     include_resolved: bool = False,
     include_dismissed: bool = False,
-    user=Depends(require_roles("Manager", "Admin", "Owner")),
+    user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner")),
 ):
     targets = await _target_tms(user)
     tm_ids = [t["id"] for t in targets]

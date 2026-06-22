@@ -84,7 +84,7 @@ async def generate_report(week_start: Optional[str] = None, user=Depends(get_cur
     server normalises to the Monday→Sunday window. Allowed range: current week,
     last week, or 2 weeks ago. Older weeks → HTTP 400.
     """
-    if user["role"] != "TM":
+    if user["role"] not in ("TM", "SeniorTM"):
         # Admin/Manager can preview their own (no-op)
         raise HTTPException(status_code=403, detail="Only TMs generate reports")
     anchor = datetime.now(timezone.utc)
@@ -177,12 +177,21 @@ async def submit_report(report_id: str, user=Depends(get_current_user)):
     return await db.reports.find_one({"id": report_id}, {"_id": 0})
 
 @api.post("/reports/{report_id}/comment")
-async def comment_report(report_id: str, body: dict, user=Depends(require_roles("Manager", "Admin"))):
+async def comment_report(report_id: str, body: dict, user=Depends(require_roles("Manager", "SeniorTM", "Admin"))):
     r = await db.reports.find_one({"id": report_id}, {"_id": 0})
     if not r:
         raise HTTPException(status_code=404, detail="Report not found")
     if user["role"] == "Manager" and r.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")
+    # Phase L — Senior TM can comment ONLY on reports submitted by their direct
+    # reports (a TM whose manager_user_id == self.id).
+    if user["role"] == "SeniorTM":
+        tm = await db.users.find_one(
+            {"id": r.get("tm_user_id")},
+            {"_id": 0, "manager_user_id": 1},
+        )
+        if not tm or tm.get("manager_user_id") != user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Empty comment")
@@ -220,9 +229,21 @@ async def list_reports(
         reports = await db.reports.find(q, {"_id": 0}).sort("week_start", -1).to_list(200)
         return {"reports": reports}
 
-    team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
-    user_q = {**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}
-    tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
+    # Phase L — SeniorTMs see THEIR direct reports' submissions + their OWN
+    # report. They submit their own report up to their manager.
+    if user["role"] == "SeniorTM":
+        sub = await db.users.find(
+            {"manager_user_id": user["id"], "role": "TM"},
+            {"_id": 0, "id": 1},
+        ).to_list(2000)
+        sr_ids = [r["id"] for r in sub] + [user["id"]]
+        team_q = {**_company_query_for(user), "tm_user_id": {"$in": sr_ids}}
+        user_q = {"id": {"$in": sr_ids}}
+        tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
+    else:
+        team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else {**_company_query_for(user), "team_id": user.get("team_id")}
+        user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"role": {"$in": ["TM", "SeniorTM"]}})}
+        tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
 
     monday, sunday = _week_bounds()
     cur_week_start = monday.date().isoformat()
@@ -286,6 +307,12 @@ async def get_report(report_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and r.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "SeniorTM":
+        # SeniorTM can read their own report OR a direct-report's report.
+        if r.get("tm_user_id") != user["id"]:
+            tm = await db.users.find_one({"id": r.get("tm_user_id")}, {"_id": 0, "manager_user_id": 1})
+            if not tm or tm.get("manager_user_id") != user["id"]:
+                raise HTTPException(status_code=403, detail="Forbidden")
     return r
 
 @api.get("/reports/{report_id}/export")
@@ -298,6 +325,11 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and r.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "SeniorTM":
+        if r.get("tm_user_id") != user["id"]:
+            tm = await db.users.find_one({"id": r.get("tm_user_id")}, {"_id": 0, "manager_user_id": 1})
+            if not tm or tm.get("manager_user_id") != user["id"]:
+                raise HTTPException(status_code=403, detail="Forbidden")
     fmt = (format or "pdf").lower()
     if fmt not in ("csv", "pdf"):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'pdf'")

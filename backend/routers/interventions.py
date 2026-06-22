@@ -90,16 +90,39 @@ async def _enrich_one(row: dict) -> dict:
 
 
 def _base_query(user) -> dict:
-    """Read-side base query enforcing soft-delete + RBAC + company scope."""
+    """Read-side base query enforcing soft-delete + RBAC + company scope.
+
+    Phase L: SeniorTM sees interventions targeting any of their direct
+    reports OR themselves (a manager may have created an intervention for
+    the SeniorTM personally).
+    """
     q: dict = {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}
     q.update(_company_query_for(user))
     role = user.get("role")
     if role == "TM":
         q["tm_user_id"] = user["id"]
+    elif role == "SeniorTM":
+        q["_seniortm_scope"] = True  # placeholder; resolved by list_interventions before query
     elif role == "Manager":
         q["team_id"] = user.get("team_id")
     # Admin / Owner → all in own company (Owner already bypasses via _company_query_for)
     return q
+
+
+async def _resolve_seniortm_scope(q: dict, user) -> dict:
+    """If the placeholder _seniortm_scope marker is in `q`, replace it with the
+    real tm_user_id $in filter. Returns a new dict.
+    """
+    if "_seniortm_scope" not in q:
+        return q
+    out = {k: v for k, v in q.items() if k != "_seniortm_scope"}
+    sub = await db.users.find(
+        {"manager_user_id": user["id"], "role": "TM"},
+        {"_id": 0, "id": 1},
+    ).to_list(2000)
+    ids = [r["id"] for r in sub] + [user["id"]]
+    out["tm_user_id"] = {"$in": ids}
+    return out
 
 
 async def _load_or_404(intervention_id: str, user) -> dict:
@@ -110,6 +133,15 @@ async def _load_or_404(intervention_id: str, user) -> dict:
     role = user.get("role")
     if role == "TM" and i.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "SeniorTM":
+        # Senior TM can see interventions for themselves or their direct reports.
+        if i.get("tm_user_id") == user["id"]:
+            return i
+        target = await db.users.find_one(
+            {"id": i.get("tm_user_id")}, {"_id": 0, "manager_user_id": 1},
+        )
+        if not target or target.get("manager_user_id") != user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
     if role == "Manager" and i.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")
     return i
@@ -134,6 +166,7 @@ async def list_interventions(
     user=Depends(get_current_user),
 ):
     q = _base_query(user)
+    q = await _resolve_seniortm_scope(q, user)
     statuses: list[str] = ["Open", "In Progress"]
     if include_completed:
         statuses.append("Completed")
@@ -175,13 +208,18 @@ async def _insert_intervention(doc: dict, user) -> dict:
     tm_id = doc.get("tm_user_id")
     team_id = None
     if tm_id:
-        tm = await db.users.find_one({"id": tm_id}, {"_id": 0, "team_id": 1, "company_id": 1})
+        tm = await db.users.find_one({"id": tm_id}, {"_id": 0, "team_id": 1, "company_id": 1, "manager_user_id": 1})
         if not tm:
             raise HTTPException(status_code=404, detail="Assigned TM not found")
         _assert_same_company(user, tm, code=400, detail="Cannot assign cross-company TM")
         team_id = tm.get("team_id")
         if user.get("role") == "Manager" and team_id != user.get("team_id"):
             raise HTTPException(status_code=403, detail="Manager can only assign to own team")
+        # Phase L: a Senior TM can only target a TM whose manager_user_id == self.id
+        # (or themselves — a self-intervention).
+        if user.get("role") == "SeniorTM":
+            if tm_id != user["id"] and tm.get("manager_user_id") != user["id"]:
+                raise HTTPException(status_code=403, detail="Senior TM can only assign to own direct reports")
     else:
         team_id = user.get("team_id")
 
@@ -232,14 +270,14 @@ async def _insert_intervention(doc: dict, user) -> dict:
 
 @api.post("/interventions")
 async def create_intervention(body: InterventionCreate,
-                              user=Depends(require_roles("Manager", "Admin", "Owner"))):
+                              user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     return await _insert_intervention(body.model_dump(), user)
 
 
 @api.post("/interventions/from-insight/{insight_id}")
 async def create_from_insight(insight_id: str,
                               body: Optional[InterventionUpdate] = None,
-                              user=Depends(require_roles("Manager", "Admin", "Owner"))):
+                              user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     """Pre-fill from an existing insight card. Manager can override note/due_date/severity via body."""
     card = await db.insight_cards.find_one({"id": insight_id}, {"_id": 0})
     if not card:
@@ -287,7 +325,7 @@ async def create_from_insight(insight_id: str,
 # ---------- UPDATE ----------
 @api.put("/interventions/{intervention_id}")
 async def update_intervention(intervention_id: str, body: InterventionUpdate,
-                              user=Depends(require_roles("Manager", "Admin", "Owner"))):
+                              user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     existing = await _load_or_404(intervention_id, user)
     updates = body.model_dump(exclude_unset=True)
     # Validate enums
@@ -300,12 +338,15 @@ async def update_intervention(intervention_id: str, body: InterventionUpdate,
 
     # Cross-company / cross-team TM reassignment guard
     if "tm_user_id" in updates and updates["tm_user_id"]:
-        tm = await db.users.find_one({"id": updates["tm_user_id"]}, {"_id": 0, "team_id": 1, "company_id": 1})
+        tm = await db.users.find_one({"id": updates["tm_user_id"]}, {"_id": 0, "team_id": 1, "company_id": 1, "manager_user_id": 1})
         if not tm:
             raise HTTPException(status_code=404, detail="TM not found")
         _assert_same_company(user, tm, code=400, detail="Cross-company TM")
         if user.get("role") == "Manager" and tm.get("team_id") != user.get("team_id"):
             raise HTTPException(status_code=403, detail="Manager can only assign to own team")
+        if user.get("role") == "SeniorTM":
+            if updates["tm_user_id"] != user["id"] and tm.get("manager_user_id") != user["id"]:
+                raise HTTPException(status_code=403, detail="Senior TM can only assign to own direct reports")
         updates["team_id"] = tm.get("team_id")
 
     # Phase I: doctor_id reassign guard (cross-company isolation)
@@ -340,28 +381,28 @@ async def _transition(intervention_id: str, status: str, ts_field: Optional[str]
 
 @api.post("/interventions/{intervention_id}/in-progress")
 async def mark_in_progress(intervention_id: str,
-                           user=Depends(require_roles("Manager", "Admin", "Owner"))):
+                           user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     return await _transition(intervention_id, "In Progress", None,
                              "intervention_in_progress", user)
 
 
 @api.post("/interventions/{intervention_id}/complete")
 async def mark_complete(intervention_id: str,
-                        user=Depends(require_roles("Manager", "Admin", "Owner"))):
+                        user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     return await _transition(intervention_id, "Completed", "completed_at",
                              "intervention_completed", user)
 
 
 @api.post("/interventions/{intervention_id}/dismiss")
 async def mark_dismissed(intervention_id: str,
-                         user=Depends(require_roles("Manager", "Admin", "Owner"))):
+                         user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     return await _transition(intervention_id, "Dismissed", "dismissed_at",
                              "intervention_dismissed", user)
 
 
 @api.delete("/interventions/{intervention_id}")
 async def delete_intervention(intervention_id: str,
-                              user=Depends(require_roles("Manager", "Admin", "Owner"))):
+                              user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     existing = await _load_or_404(intervention_id, user)
     await db.interventions.update_one(
         {"id": intervention_id},

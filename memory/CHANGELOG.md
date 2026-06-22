@@ -3,6 +3,95 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Phase L — Senior TM role (Feb 2026)
+
+**User request**: "We should introduce a new role which is Senior TM. We
+should be able to create TMs under Senior TM team and TMs should be able to
+submit reports directly to the Senior TM instead of the manager. Manager
+will have the TMs under him and TMs under Senior TMs. Senior TMs should
+have exact same visibility as the manager on the platform."
+
+### Design (confirmed before code)
+- **Hierarchy**: Owner → Admin → Manager → SeniorTM → TM (4 layers in the
+  team).
+- **Senior TM = TM + Manager hybrid** — they log their own visits/promises
+  like a TM AND oversee a sub-team of TMs.
+- **Reports-to pointer**: existing `users.manager_user_id` field is the
+  "reports to" column. A TM may report to either a Manager OR a Senior TM.
+  A Senior TM may only report to a Manager.
+- **Visibility**: Senior TM sees ONLY their direct reports + themselves.
+  Manager continues to see the whole team (including the Senior TMs and
+  their sub-teams) via `team_id`.
+- **Permissions**: Senior TM can create interventions, comment on weekly
+  reports, see `/intervention`, `/reports?tab=team`, `/team-performance` —
+  but only scoped to their sub-team. Cannot delete users or touch
+  Admin/Owner accounts. Manager can reassign a TM between themselves and
+  any Senior TM in the team.
+
+### Backend changes
+- **`models.py`**: added `SeniorTM` to the `Role` literal.
+- **`server.py`**: added `_managed_tm_ids_for(user)` + `_is_manager_role(user)`
+  helpers — resolve the list of user-ids the caller can manage based on role.
+- **`routers/users.py`**:
+  - `GET /api/users` now scoped per-role: Manager sees the whole team,
+    Senior TM sees self + direct reports.
+  - `POST /api/users` opens to Manager (not just Admin) but Managers can only
+    create `TM` or `SeniorTM` users in their own team.
+  - New `_validate_reports_to_chain` guard: TM must report to Manager or
+    SeniorTM; SeniorTM must report to Manager; cross-company always rejected.
+  - `PUT /api/users/{id}` opens to Manager — Manager can change
+    `full_name`, `manager_user_id`, `active_status`, `region`, and toggle a
+    user's role between TM ↔ SeniorTM. Cannot touch Admin/Owner/Manager
+    accounts or grant Admin role.
+- **`routers/insights.py`**: `_target_tms` resolves SeniorTM's sub-team +
+  self; `/insights/team` and `/insights/company` accept `SeniorTM` in
+  `require_roles`.
+- **`routers/interventions.py`**: `_base_query` + `_load_or_404` aware of
+  SeniorTM scope. Create/update guards reject Senior-TM attempts to target
+  TMs outside their sub-team (returns 403).
+- **`routers/dashboards.py`**: all 7 Manager dashboards (`/dashboard/manager`,
+  `/performance`, `/commercial`, `/interventions`, `/cross-sell`, etc.)
+  accept SeniorTM. Inline `team_id` scoping replaced with
+  `_apply_role_scope` + `_users_scope_query` helpers — Senior TM gets
+  `tm_user_id $in [...]` filter instead.
+- **`routers/reports.py`**: SeniorTM can generate their own weekly report
+  (`POST /reports/generate`), comment on a direct-report's report
+  (`/comment` — guarded to their sub-team), and read/export those reports.
+  The `/reports` listing returns their own + sub-team's reports.
+
+### Frontend changes
+- **`App.js`**: every `ProtectedRoute roles={["Manager", "Admin", "Owner"]}`
+  now also includes `"SeniorTM"`. Every TM-only route also accepts
+  `"SeniorTM"` (since they log their own visits).
+- **`Layout.jsx`**: new `SENIORTM_BOTTOM` + `SENIORTM_MORE` arrays, new
+  `isSeniorTM` branch with its own mobile bottom nav (5 slots:
+  Dashboard / Intervention / **+ Add** / Tasks / More). Senior TM uses the
+  Manager top nav on desktop. The "Log Visit" FAB shows for them too.
+- **`pages/Admin.jsx`**: role dropdown now includes "SeniorTM"; the
+  "Reports to" picker shows when role is TM **or** SeniorTM, and the
+  picker is filtered by `reportsToOptionsForRole(role)` — TMs see both
+  Managers and Senior TMs as options; Senior TMs see only Managers.
+
+### Test proof
+- `/app/backend/tests/test_phase_l_senior_tm.py` — **9/9 pass**:
+  - Senior TM chain creation
+  - Invalid reports-to (TM supervising a TM) rejected
+  - `GET /users` scope returns only sub-team + self
+  - Senior TM hits manager dashboard endpoints → 200
+  - Senior TM generates their own weekly report
+  - Senior TM can comment on a direct-report's report; cannot comment on
+    another TM's report under the Manager (403)
+  - Senior TM creates interventions only on direct reports (403 otherwise)
+  - Manager can reassign a TM between self ↔ Senior TM
+  - Manager cannot grant Admin role to a TM (403)
+- Regression: `test_phase_c_company_isolation.py` + `test_phase_e_insights.py` +
+  `test_phase_i_enrichment.py` — **41/41 still pass**.
+- Frontend smoke verified: Senior TM logs in, top nav shows Manager-style
+  links (Dashboard / Intervention / iTero / Invisalign / Team / Expenses /
+  Reports), `/intervention` renders the full Manager interface, mobile
+  bottom nav (`data-testid="mobile-bottom-nav-seniortm"`) has exactly 5
+  slots with the central `+ Add` button.
+
 ## Phase I.2 — Full visit notes in PDF/CSV exports (Feb 2026)
 
 **User report**: "When I generate the PDF weekly report in the section for

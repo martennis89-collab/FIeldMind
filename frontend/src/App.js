@@ -87,7 +87,7 @@ export default function App() {
           <Route
             path="/meetings/book"
             element={
-              <ProtectedRoute roles={["TM"]}>
+              <ProtectedRoute roles={["TM", "SeniorTM"]}>
                 <Layout><BookMeeting /></Layout>
               </ProtectedRoute>
             }
@@ -111,7 +111,7 @@ export default function App() {
           <Route
             path="/intervention"
             element={
-              <ProtectedRoute roles={["Manager", "Admin", "Owner"]}>
+              <ProtectedRoute roles={["Manager", "SeniorTM", "Admin", "Owner"]}>
                 <Layout><Intervention /></Layout>
               </ProtectedRoute>
             }
@@ -119,7 +119,7 @@ export default function App() {
           <Route
             path="/market-intelligence"
             element={
-              <ProtectedRoute roles={["Manager", "Admin", "Owner"]}>
+              <ProtectedRoute roles={["Manager", "SeniorTM", "Admin", "Owner"]}>
                 <Layout><MarketIntelligence /></Layout>
               </ProtectedRoute>
             }
@@ -127,7 +127,7 @@ export default function App() {
           <Route
             path="/team-performance"
             element={
-              <ProtectedRoute roles={["Manager", "Admin", "Owner"]}>
+              <ProtectedRoute roles={["Manager", "SeniorTM", "Admin", "Owner"]}>
                 <Layout><TeamPerformance /></Layout>
               </ProtectedRoute>
             }
@@ -183,7 +183,7 @@ export default function App() {
           <Route
             path="/expenses/log"
             element={
-              <ProtectedRoute roles={["TM"]}>
+              <ProtectedRoute roles={["TM", "SeniorTM"]}>
                 <Layout><LogExpense /></Layout>
               </ProtectedRoute>
             }
@@ -191,7 +191,7 @@ export default function App() {
           <Route
             path="/doctors/import"
             element={
-              <ProtectedRoute roles={["TM", "Admin"]}>
+              <ProtectedRoute roles={["TM", "SeniorTM", "Admin"]}>
                 <Layout><ImportDoctors /></Layout>
               </ProtectedRoute>
             }
@@ -199,7 +199,7 @@ export default function App() {
           <Route
             path="/doctors/add"
             element={
-              <ProtectedRoute roles={["TM", "Admin"]}>
+              <ProtectedRoute roles={["TM", "SeniorTM", "Admin"]}>
                 <Layout><AddDoctor /></Layout>
               </ProtectedRoute>
             }

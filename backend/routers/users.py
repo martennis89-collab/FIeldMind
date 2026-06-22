@@ -72,6 +72,30 @@ from server import (
 from models import *  # noqa: F401,F403 — all models are exported under their original names
 
 
+# Phase L — validate that a manager_user_id (the "reports to" pointer) is a
+# legitimate manager-style supervisor for the given subordinate role.
+# Rules:
+#   - For a TM: manager_user_id must point to a Manager OR a SeniorTM in the
+#     same company.
+#   - For a SeniorTM: manager_user_id must point to a Manager in the same company.
+#   - For Manager / Admin / Owner: no enforcement (they don't report up here).
+# Raises HTTPException(400) on invalid chain.
+async def _validate_reports_to_chain(reports_to_id: str, subordinate_role: str, caller):
+    if not reports_to_id:
+        return
+    sup = await db.users.find_one({"id": reports_to_id}, {"_id": 0, "id": 1, "role": 1, "company_id": 1})
+    if not sup:
+        raise HTTPException(status_code=400, detail="reports_to user not found")
+    _assert_same_company(caller, sup, code=400, detail="reports_to user is in another company")
+    sup_role = sup.get("role")
+    if subordinate_role == "TM" and sup_role not in ("Manager", "SeniorTM"):
+        raise HTTPException(status_code=400, detail="TMs must report to a Manager or SeniorTM")
+    if subordinate_role == "SeniorTM" and sup_role != "Manager":
+        raise HTTPException(status_code=400, detail="SeniorTMs must report to a Manager")
+    if subordinate_role in ("Manager", "Admin", "Owner") and reports_to_id:
+        raise HTTPException(status_code=400, detail=f"{subordinate_role} cannot have a manager_user_id")
+
+
 @api.post("/admin/wipe-test-data")
 async def wipe_test_data(user=Depends(require_roles("Admin", "Owner"))):
     """Admin/Owner-only: hard-delete all demo + test users and their related data.
@@ -122,21 +146,43 @@ async def wipe_test_data(user=Depends(require_roles("Admin", "Owner"))):
     return {"ok": True, "deleted": deleted, "demo_emails_removed": demo_emails}
 
 @api.get("/users")
-async def list_users(user=Depends(require_roles("Admin", "Manager"))):
+async def list_users(user=Depends(require_roles("Admin", "Manager", "SeniorTM"))):
+    """List users in scope.
+
+    - Admin / Owner: whole company.
+    - Manager: whole team_id (includes TMs, SeniorTMs, and the manager themselves).
+    - SeniorTM: themselves + every TM whose manager_user_id == self.id.
+    """
+    role = user["role"]
     q = dict(_company_query_for(user))
-    if user["role"] == "Manager":
-        q = {"team_id": user.get("team_id")}
+    if role == "Manager":
+        q["team_id"] = user.get("team_id")
+    elif role == "SeniorTM":
+        q["$or"] = [
+            {"id": user["id"]},
+            {"manager_user_id": user["id"], "role": "TM"},
+        ]
     users = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     return users
 
 @api.post("/users", response_model=UserPublic)
-async def create_user(body: UserCreate, request: Request, user=Depends(require_roles("Admin"))):
+async def create_user(body: UserCreate, request: Request, user=Depends(require_roles("Admin", "Manager"))):
     existing = await db.users.find_one({"email": body.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
     # Only an Owner can create another Owner
     if body.role == "Owner" and user.get("role") != "Owner":
         raise HTTPException(status_code=403, detail="Only an Owner can create another Owner")
+    # Phase L: Managers can only create TMs / SeniorTMs in their own team.
+    if user.get("role") == "Manager":
+        if body.role not in ("TM", "SeniorTM"):
+            raise HTTPException(status_code=403, detail="Managers can only create TM or SeniorTM accounts")
+        if body.team_id and body.team_id != user.get("team_id"):
+            raise HTTPException(status_code=403, detail="Managers can only assign users to their own team")
+        body.team_id = user.get("team_id")
+    # Phase L: validate manager_user_id chain — must be in same company and a valid manager-style role.
+    if body.manager_user_id:
+        await _validate_reports_to_chain(body.manager_user_id, body.role, user)
     import uuid
     doc = {
         "id": str(uuid.uuid4()),
@@ -158,10 +204,29 @@ async def create_user(body: UserCreate, request: Request, user=Depends(require_r
     return doc
 
 @api.put("/users/{user_id}", response_model=UserPublic)
-async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles("Admin"))):
+async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles("Admin", "Manager"))):
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Phase L: Manager can only edit users in their own team, and only update
+    # a narrow set of fields (notably manager_user_id to reassign a TM between
+    # themselves and a SeniorTM). They cannot promote/demote, change company,
+    # or modify Admin/Owner accounts.
+    if user.get("role") == "Manager":
+        if existing.get("team_id") != user.get("team_id"):
+            raise HTTPException(status_code=403, detail="Managers can only edit users in their own team")
+        if existing.get("role") in ("Admin", "Owner", "Manager"):
+            raise HTTPException(status_code=403, detail="Managers cannot modify Admin / Owner / Manager accounts")
+        allowed = {"full_name", "manager_user_id", "active_status", "region"}
+        # Allow Manager to flip role between TM <-> SeniorTM within the team (promotion path).
+        if body.role and body.role in ("TM", "SeniorTM"):
+            allowed.add("role")
+        elif body.role:
+            raise HTTPException(status_code=403, detail="Managers can only change role between TM and SeniorTM")
+        bad = set(body.model_dump(exclude_unset=True).keys()) - allowed - {"password"}
+        if bad:
+            raise HTTPException(status_code=403, detail=f"Managers cannot modify: {sorted(bad)}")
 
     # Owner protection: only an Owner can edit / disable / change role of an Owner.
     if existing.get("role") == "Owner" and user.get("role") != "Owner":
@@ -201,6 +266,11 @@ async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles
             raise HTTPException(status_code=409, detail="Email already in use")
     if body.password:
         update["password_hash"] = hash_password(body.password)
+    # Phase L: re-validate manager_user_id whenever it is set (including to None).
+    if "manager_user_id" in update:
+        if update["manager_user_id"]:
+            effective_role = update.get("role") or existing.get("role")
+            await _validate_reports_to_chain(update["manager_user_id"], effective_role, user)
     update["updated_at"] = _now_iso()
     await db.users.update_one({"id": user_id}, {"$set": update})
     new = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})

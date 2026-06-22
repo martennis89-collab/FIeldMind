@@ -135,7 +135,16 @@ function Users() {
   };
 
   const managerOptions = users.filter((u) => u.role === "Manager" && u.active_status);
-  const availableRoles = isOwner ? ["TM", "Manager", "Admin", "Owner"] : ["TM", "Manager", "Admin"];
+  const seniorTmOptions = users.filter((u) => u.role === "SeniorTM" && u.active_status);
+  // Phase L: TMs may report to a Manager OR a Senior TM. Senior TMs may only report to a Manager.
+  const reportsToOptionsForRole = (role) => {
+    if (role === "TM") return [...managerOptions, ...seniorTmOptions];
+    if (role === "SeniorTM") return managerOptions;
+    return [];
+  };
+  const availableRoles = isOwner
+    ? ["TM", "SeniorTM", "Manager", "Admin", "Owner"]
+    : ["TM", "SeniorTM", "Manager", "Admin"];
 
   return (
     <div className="mt-4">
@@ -165,13 +174,17 @@ function Users() {
                   </SelectContent>
                 </Select>
               </div>
-              {form.role === "TM" && (
-                <div><Label>Manager</Label>
+              {(form.role === "TM" || form.role === "SeniorTM") && (
+                <div><Label>Reports to</Label>
                   <Select value={form.manager_user_id || ALL} onValueChange={(v) => setForm({ ...form, manager_user_id: v === ALL ? "" : v })}>
                     <SelectTrigger data-testid="new-user-manager"><SelectValue placeholder="None" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value={ALL}>None</SelectItem>
-                      {managerOptions.map((u) => <SelectItem key={u.id} value={u.id}>{u.full_name}</SelectItem>)}
+                      {reportsToOptionsForRole(form.role).map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.full_name} ({u.role === "SeniorTM" ? "Sr TM" : u.role})
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -208,7 +221,7 @@ function Users() {
                     <span className={`pill ${u.role === "Owner" ? "pill-warning" : "pill-info"}`}>{u.role}</span>
                   </td>
                   <td className="px-4 py-2">{team?.team_name || "—"}</td>
-                  <td className="px-4 py-2">{u.role === "TM" ? (mgr?.full_name || "—") : "—"}</td>
+                  <td className="px-4 py-2">{(u.role === "TM" || u.role === "SeniorTM") ? (mgr?.full_name || "—") : "—"}</td>
                   <td className="px-4 py-2">{u.active_status ? <span className="pill pill-success">Active</span> : <span className="pill pill-danger">Disabled</span>}</td>
                   <td className="px-4 py-2 text-right">
                     <div className="flex gap-1 justify-end">
@@ -270,7 +283,7 @@ function Users() {
                 </div>
                 <div>
                   <div className="uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Manager</div>
-                  <div className="truncate" style={{ color: "var(--text-secondary)" }}>{u.role === "TM" ? (mgr?.full_name || "—") : "—"}</div>
+                  <div className="truncate" style={{ color: "var(--text-secondary)" }}>{(u.role === "TM" || u.role === "SeniorTM") ? (mgr?.full_name || "—") : "—"}</div>
                 </div>
               </div>
 
@@ -319,13 +332,19 @@ function Users() {
                   </SelectContent>
                 </Select>
               </div>
-              {editing.role === "TM" && (
-                <div><Label>Manager</Label>
+              {(editing.role === "TM" || editing.role === "SeniorTM") && (
+                <div><Label>Reports to</Label>
                   <Select value={editing.manager_user_id || ALL} onValueChange={(v) => setEditing({ ...editing, manager_user_id: v === ALL ? null : v })}>
                     <SelectTrigger data-testid="edit-user-manager"><SelectValue placeholder="None" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value={ALL}>None</SelectItem>
-                      {managerOptions.map((u) => <SelectItem key={u.id} value={u.id}>{u.full_name}</SelectItem>)}
+                      {reportsToOptionsForRole(editing.role)
+                        .filter((u) => u.id !== editing.id)
+                        .map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.full_name} ({u.role === "SeniorTM" ? "Sr TM" : u.role})
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>
