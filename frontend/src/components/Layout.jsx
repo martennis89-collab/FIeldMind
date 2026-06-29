@@ -49,6 +49,24 @@ const MANAGER_TOP = [
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
 ];
 
+// Phase L — Senior TM is a TM + Manager hybrid. Desktop top nav is the
+// FULL union: every TM item (Doctors / Meetings / Tasks) PLUS every Manager
+// item (Intervention / Team). This is wider than either base nav by design
+// — Senior TMs need to act AS a TM (logging) and AS a Manager (oversight)
+// without switching accounts.
+const SENIORTM_TOP = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
+  { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
+  { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
+  { to: "/meetings", label: "Meetings", icon: Calendar, testId: "nav-meetings" },
+  { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
+  { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
+  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
+  { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
+  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
+  { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
+];
+
 // ---------- Mobile bottom (max 5) ----------
 // TM: Home / Doctors / + / Tasks / More (sheet with iTero, Invisalign, Reports, Expenses)
 const TM_BOTTOM = [
@@ -117,8 +135,11 @@ export default function Layout({ children }) {
   const isManager = user?.role === "Manager" || user?.role === "Admin" || user?.role === "Owner";
   const isSeniorTM = user?.role === "SeniorTM";
   const isTM = user?.role === "TM";
-  // Top nav: SeniorTMs get Manager top nav (full oversight) — same as Manager.
-  const TOP = (isManager || isSeniorTM) ? MANAGER_TOP : TM_TOP;
+  // Top nav routing:
+  //   - Plain TM: TM_TOP
+  //   - SeniorTM: SENIORTM_TOP (full union of TM + Manager items)
+  //   - Manager / Admin / Owner: MANAGER_TOP
+  const TOP = isSeniorTM ? SENIORTM_TOP : (isManager ? MANAGER_TOP : TM_TOP);
   const [tmAddOpen, setTmAddOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);

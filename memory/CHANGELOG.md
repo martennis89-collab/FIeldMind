@@ -3,6 +3,75 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Phase L.2 — Senior TM = full TM + Manager superset (Feb 2026)
+
+**User report**: "I want the senior TM role to have the exact same view
+access and capabilities as the normal TM. Right now senior TM cannot log
+visits and some of the navigation in the header are only the ones for the
+manager and the ones for TM only are missing. Senior TM should have all
+those options available within a single login."
+
+### What was missing
+Phase L gave Senior TM the **Manager** top nav (MANAGER_TOP), which dropped
+the TM-specific items: Doctors, Meetings, Tasks. Senior TMs effectively
+lost TM-side capabilities even though backend RBAC allowed them.
+
+### What shipped
+- **`Layout.jsx`** — new `SENIORTM_TOP` array = full UNION of TM and Manager
+  items (10 slots): Dashboard, **Intervention**, **Doctors**, **Meetings**,
+  **Tasks**, iTero, Invisalign, **Team**, Expenses, Reports.
+- Top-nav routing now picks: SENIORTM_TOP for Senior TM, MANAGER_TOP for
+  Manager/Admin/Owner, TM_TOP for plain TM.
+- Desktop "Log Visit" FAB (previously TM-only) already extended in Phase L
+  to Senior TM — re-verified working: the red Log Visit button appears on
+  every Senior TM page that isn't already `/log-visit`.
+
+### Verified
+- Senior TM logs in → top nav shows all 10 items (Dashboard / Intervention /
+  Doctors / Meetings / Tasks / iTero / Invisalign / Team / Expenses /
+  Reports). Each click loads the corresponding page without redirect or
+  403. Doctors page renders ("Roster · Doctors (0)" with filters).
+- Desktop "Log Visit" FAB visible on the Senior TM dashboard.
+- Mobile bottom nav (5 slots: Dashboard / Intervention / + Add / Tasks /
+  More) unchanged — already TM-hybrid.
+
+## Phase L.1 — Senior TM dual dashboards + blank-page bug fix (Feb 2026)
+
+**User report**: "The senior TM should have two dashboards. One for himself
+as a TM like it is now for every TM and one as a manager. Right now in
+production when I click on the dashboard nothing happens, nothing loads,
+just a blank page."
+
+### Root cause of the blank page
+`Dashboard.jsx` rendered conditionally on role: `Manager`/`Admin`/`Owner` →
+ManagerView, `TM` → TMView. SeniorTM matched **neither** branch, so the
+`<ErrorBoundary>` resolved with no children and the page rendered blank
+(no error to catch — just empty React output).
+
+### What shipped
+- **Dashboard.jsx** now fetches BOTH dashboards in parallel for SeniorTMs
+  (`/dashboard/tm` + the 5 manager endpoints).
+- New **toggle pill** at the top of the SeniorTM dashboard (`data-testid="seniortm-view-toggle"`)
+  switches between:
+  - **Team view** (default, `data-testid="seniortm-view-team"`) — full
+    manager-style view scoped to their sub-team: visits/doctors/critical/
+    high-opportunity stat cards, FieldMind Advisory panel, Action items,
+    Team reports.
+  - **Personal view** (`data-testid="seniortm-view-personal"`) — full TM
+    dashboard: FEI V1 widget (their own score), Open promises / Overdue /
+    Due today personal stats, Upcoming demos, personal advisory.
+- Headline subtitle changes per view ("Your sub-team's funnels…" vs "Your
+  personal activity, FEI V1, and priority doctors.").
+- No data loss on toggle — both datasets stay in memory, switching is
+  instant.
+
+### Tests
+- Frontend smoke verified end-to-end: SeniorTM logs in, dashboard renders
+  Team view by default with all stat cards. Clicking "Personal view"
+  switches the entire page to the TMView layout, FEI V1 widget visible
+  with the "Not enough data yet" empty state.
+- No backend changes — backend tests unchanged.
+
 ## Phase L — Senior TM role (Feb 2026)
 
 **User request**: "We should introduce a new role which is Senior TM. We
