@@ -127,6 +127,22 @@ const SENIORTM_MORE = [
   { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
 ];
 
+// Phase L.3 — Desktop top-nav split into primary slots (always visible) and
+// overflow (collapsed under a "More ▾" dropdown). Keeps the header focused
+// on high-traffic links and prevents wrap on 1024-1280px laptop screens.
+//   - TM:        7 primary
+//   - Manager:   5 primary
+//   - SeniorTM:  6 primary (Dashboard / Intervention / Doctors / Tasks / Team / Reports)
+//   - Owner+Admin: all visible (no overflow)
+const TOP_PRIMARY_COUNT = {
+  TM: 7,
+  Manager: 5,
+  SeniorTM: 6,
+  Admin: 99,
+  Owner: 99,
+};
+
+
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -158,39 +174,22 @@ export default function Layout({ children }) {
               <div className="text-[10px] uppercase tracking-[0.2em]" style={{ color: "var(--text-muted)" }}>Field Intelligence</div>
             </div>
           </Link>
-          {/* Desktop nav */}
-          <nav className="hidden md:flex items-center gap-1">
-            {TOP.map((t) => (
-              <NavLink
-                key={t.to}
-                to={t.to}
-                end={t.to === "/"}
-                data-testid={t.testId}
-                className={({ isActive }) =>
-                  `px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-all duration-200 ${
-                    isActive ? "bg-[var(--bg-muted)] text-[var(--brand-primary)]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-paper)]"
-                  }`
-                }
-              >
-                <t.icon className="w-4 h-4" />
-                {t.label}
-              </NavLink>
-            ))}
-            {(user?.role === "Admin" || user?.role === "Owner") && (
-              <NavLink
-                to="/admin"
-                data-testid="nav-admin"
-                className={({ isActive }) =>
-                  `px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 ${
-                    isActive ? "bg-[var(--bg-muted)] text-[var(--brand-primary)]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-paper)]"
-                  }`
-                }
-              >
-                <Settings className="w-4 h-4" />
-                Admin
-              </NavLink>
-            )}
-          </nav>
+          {/* Desktop nav — primary slots inline, overflow under "More ▾". */}
+          <DesktopTopNav top={TOP} role={user?.role} />
+          {(user?.role === "Admin" || user?.role === "Owner") && (
+            <NavLink
+              to="/admin"
+              data-testid="nav-admin"
+              className={({ isActive }) =>
+                `hidden md:inline-flex px-3 py-2 rounded-md text-sm font-medium items-center gap-2 ${
+                  isActive ? "bg-[var(--bg-muted)] text-[var(--brand-primary)]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-paper)]"
+                }`
+              }
+            >
+              <Settings className="w-4 h-4" />
+              Admin
+            </NavLink>
+          )}
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -457,6 +456,97 @@ function BottomTab({ t }) {
       <t.icon className="w-5 h-5" />
       {t.label}
     </NavLink>
+  );
+}
+
+// Phase L.3 — Desktop top nav with overflow "More ▾" dropdown. Splits the
+// `top` array into primary slots (always visible) + overflow (collapsed).
+function DesktopTopNav({ top, role }) {
+  const [open, setOpen] = useState(false);
+  const ref = React.useRef(null);
+  const primaryCount = TOP_PRIMARY_COUNT[role] || 99;
+  const primary = top.slice(0, primaryCount);
+  const overflow = top.slice(primaryCount);
+
+  // Click-outside to close. Listen on both mousedown (real user clicks) and
+  // click (programmatic clicks from tests) so the menu reliably dismisses.
+  React.useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("click", onDoc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("click", onDoc);
+    };
+  }, [open]);
+
+  return (
+    <nav className="hidden md:flex items-center gap-1" data-testid="desktop-top-nav">
+      {primary.map((t) => (
+        <NavLink
+          key={t.to}
+          to={t.to}
+          end={t.to === "/"}
+          data-testid={t.testId}
+          className={({ isActive }) =>
+            `px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-all duration-200 ${
+              isActive
+                ? "bg-[var(--bg-muted)] text-[var(--brand-primary)]"
+                : "text-[var(--text-secondary)] hover:bg-[var(--bg-paper)]"
+            }`
+          }
+        >
+          <t.icon className="w-4 h-4" />
+          {t.label}
+        </NavLink>
+      ))}
+      {overflow.length > 0 && (
+        <div className="relative" ref={ref}>
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            data-testid="desktop-nav-more-btn"
+            aria-expanded={open}
+            aria-haspopup="menu"
+            className="px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 text-[var(--text-secondary)] hover:bg-[var(--bg-paper)] transition-all duration-200"
+          >
+            <MoreHorizontal className="w-4 h-4" />
+            More
+          </button>
+          {open && (
+            <div
+              role="menu"
+              data-testid="desktop-nav-more-menu"
+              className="absolute right-0 mt-2 w-56 rounded-md border shadow-lg py-1 z-50"
+              style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+            >
+              {overflow.map((t) => (
+                <NavLink
+                  key={t.to}
+                  to={t.to}
+                  end={t.to === "/"}
+                  data-testid={`${t.testId}-overflow`}
+                  onClick={() => setOpen(false)}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-4 py-2 text-sm ${
+                      isActive
+                        ? "bg-[var(--bg-muted)] text-[var(--brand-primary)] font-medium"
+                        : "text-[var(--text-secondary)] hover:bg-[var(--bg-paper)]"
+                    }`
+                  }
+                >
+                  <t.icon className="w-4 h-4" />
+                  {t.label}
+                </NavLink>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </nav>
   );
 }
 

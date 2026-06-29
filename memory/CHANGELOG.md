@@ -3,6 +3,43 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Phase L.3 — Desktop top-nav "More ▾" dropdown (Feb 2026)
+
+**Why**: After making Senior TM's top nav a full TM + Manager superset (10
+items), the header started to feel crowded on 1024-1280px laptop screens.
+
+### What shipped
+- New `DesktopTopNav` component in `Layout.jsx` splits each role's top nav
+  into **primary slots** (always visible) + an **overflow dropdown** under
+  a "More ▾" button.
+- Primary-slot counts: TM=7, Manager=5, SeniorTM=6, Admin/Owner=99 (no
+  collapse — they keep the full bar since they're desktop-first).
+- Overflow items render with `data-testid="{original}-overflow"` and the
+  trigger has `data-testid="desktop-nav-more-btn"`. Active state
+  highlighting is preserved inside the dropdown.
+- Click-outside closes the menu. Clicking an item closes the menu and
+  navigates.
+
+### Senior TM nav now
+- Primary inline: Dashboard / Intervention / Doctors / Meetings / Tasks /
+  iTero.
+- "More ▾" overflow: Invisalign · Team · Expenses · Reports.
+
+### Plain TM nav now
+- Primary inline: Dashboard / iTero / Invisalign / Doctors / Meetings /
+  Tasks / Expenses.
+- "More ▾" overflow: Reports.
+
+### Manager nav now
+- Primary inline: Dashboard / Intervention / iTero / Invisalign / Team.
+- "More ▾" overflow: Expenses · Reports.
+
+### Verified
+Smoke-tested on preview as Senior TM (`snr.demo.1782126329@field.io`) and
+TM1. All primary slots render, More button opens the dropdown with the
+correct overflow items, and the menu closes when clicking outside or
+selecting an item.
+
 ## Phase L.2 — Senior TM = full TM + Manager superset (Feb 2026)
 
 **User report**: "I want the senior TM role to have the exact same view
