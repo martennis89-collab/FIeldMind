@@ -87,7 +87,7 @@ async def list_doctors(
         base["segment"] = segment
     if city:
         base["city"] = city
-    if assigned_tm_id and user["role"] in ("Admin", "Manager"):
+    if assigned_tm_id and user["role"] in ("Admin", "Manager", "SeniorTM"):
         base["assigned_tm_id"] = assigned_tm_id
     if q:
         base["$or"] = [
@@ -105,10 +105,10 @@ async def list_doctors(
     return enriched
 
 @api.post("/doctors")
-async def create_doctor(body: DoctorCreate, user=Depends(require_roles("Admin", "Manager", "TM"))):
+async def create_doctor(body: DoctorCreate, user=Depends(require_roles("Admin", "Manager", "SeniorTM", "TM"))):
     doc = Doctor(**body.model_dump()).model_dump()
-    if user["role"] == "TM":
-        # TM creates a doctor for themselves
+    if user["role"] in ("TM", "SeniorTM"):
+        # TM (and SeniorTM in their TM-hybrid capacity) creates a doctor for themselves
         doc["assigned_tm_id"] = user["id"]
         doc["team_id"] = user.get("team_id")
     elif user["role"] == "Manager" and not doc.get("team_id"):
@@ -143,7 +143,7 @@ async def download_doctor_template(format: str = "xlsx", user=Depends(get_curren
     raise HTTPException(status_code=400, detail="format must be 'csv' or 'xlsx'")
 
 @api.post("/doctors/import/preview")
-async def preview_doctor_import(file: UploadFile = File(...), user=Depends(require_roles("Admin", "TM"))):
+async def preview_doctor_import(file: UploadFile = File(...), user=Depends(require_roles("Admin", "SeniorTM", "TM"))):
     """Parse an uploaded sheet, return detected columns + suggested mapping + sample rows.
 
     The frontend then sends these rows back through `/doctors/import/commit` after the user
@@ -175,7 +175,7 @@ async def preview_doctor_import(file: UploadFile = File(...), user=Depends(requi
     }
 
 @api.post("/doctors/import/commit")
-async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "TM"))):
+async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "SeniorTM", "TM"))):
     """Commit a previewed import.
 
     Body:
@@ -197,13 +197,13 @@ async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "
 
     # Determine assigned TM
     assigned_tm_id = (body or {}).get("assigned_tm_id")
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         assigned_tm_id = user["id"]
     elif user["role"] == "Admin":
         if not assigned_tm_id:
             raise HTTPException(status_code=400, detail="assigned_tm_id is required for Admin imports")
 
-    target_user = await db.users.find_one({"id": assigned_tm_id, "role": "TM"}, {"_id": 0})
+    target_user = await db.users.find_one({"id": assigned_tm_id, "role": {"$in": ["TM", "SeniorTM"]}}, {"_id": 0})
     if not target_user:
         raise HTTPException(status_code=400, detail="Target TM not found")
     target_team_id = target_user.get("team_id")
@@ -328,12 +328,12 @@ async def get_doctor(doctor_id: str, user=Depends(get_current_user)):
     return await _enrich_doctor(doc)
 
 @api.put("/doctors/{doctor_id}")
-async def update_doctor(doctor_id: str, body: DoctorUpdate, user=Depends(require_roles("Admin", "Manager", "TM"))):
+async def update_doctor(doctor_id: str, body: DoctorUpdate, user=Depends(require_roles("Admin", "Manager", "SeniorTM", "TM"))):
     existing = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     if not existing or not await _can_access_doctor(user, existing):
         raise HTTPException(status_code=404, detail="Doctor not found")
-    if user["role"] == "TM":
-        # TM may only update general_notes / status
+    if user["role"] in ("TM", "SeniorTM"):
+        # TM/SeniorTM may only update general_notes / status
         allowed = {k: v for k, v in body.model_dump(exclude_none=True).items() if k in ("general_notes", "status")}
         update = allowed
     else:
@@ -345,12 +345,12 @@ async def update_doctor(doctor_id: str, body: DoctorUpdate, user=Depends(require
     return await _enrich_doctor(new)
 
 @api.delete("/doctors/{doctor_id}")
-async def delete_doctor(doctor_id: str, user=Depends(require_roles("Admin", "TM"))):
+async def delete_doctor(doctor_id: str, user=Depends(require_roles("Admin", "SeniorTM", "TM"))):
     existing = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Doctor not found")
-    # TM can only delete doctors assigned to them
-    if user["role"] == "TM" and existing.get("assigned_tm_id") != user["id"]:
+    # TM/SeniorTM can only delete doctors assigned to them
+    if user["role"] in ("TM", "SeniorTM") and existing.get("assigned_tm_id") != user["id"]:
         raise HTTPException(status_code=403, detail="You can only delete your own doctors")
     await db.doctors.delete_one({"id": doctor_id})
     # Cascade-clean owned visits & tasks so they don't orphan
@@ -363,7 +363,7 @@ async def delete_doctor(doctor_id: str, user=Depends(require_roles("Admin", "TM"
     return {"ok": True, "id": doctor_id}
 
 @api.post("/doctors/bulk-delete")
-async def bulk_delete_doctors(body: dict, user=Depends(require_roles("Admin", "TM"))):
+async def bulk_delete_doctors(body: dict, user=Depends(require_roles("Admin", "SeniorTM", "TM"))):
     """Delete multiple doctors in one go. TM can only delete doctors assigned to them."""
     ids = (body or {}).get("ids") or []
     if not isinstance(ids, list) or not ids:
@@ -371,7 +371,7 @@ async def bulk_delete_doctors(body: dict, user=Depends(require_roles("Admin", "T
     if len(ids) > 1000:
         raise HTTPException(status_code=400, detail="Too many ids (max 1000)")
     q = {"id": {"$in": ids}}
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         q["assigned_tm_id"] = user["id"]
     existing = await db.doctors.find(q, {"_id": 0}).to_list(1000)
     deletable_ids = [d["id"] for d in existing]
@@ -488,7 +488,7 @@ async def quick_complete_demo_for_doctor(doctor_id: str, user=Depends(get_curren
     doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Doctor not found")
-    if user["role"] == "TM" and doc.get("assigned_tm_id") != user["id"]:
+    if user["role"] in ("TM", "SeniorTM") and doc.get("assigned_tm_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and doc.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")

@@ -186,7 +186,7 @@ async def list_expenses(
     - Admin: all expenses.
     """
     q: dict = dict(_company_query_for(user))
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
@@ -213,7 +213,7 @@ async def expense_summary(
     if not month:
         month = datetime.now(timezone.utc).strftime("%Y-%m")
     q: dict = {"expense_date": {"$gte": f"{month}-01", "$lte": f"{month}-31"}}
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
@@ -254,7 +254,7 @@ async def update_expense(exp_id: str, body: ExpenseUpdate, user=Depends(get_curr
         raise HTTPException(status_code=404, detail="Expense not found")
     if not await _expense_visible_to(user, exp):
         raise HTTPException(status_code=403, detail="Forbidden")
-    if user["role"] == "TM" and exp.get("tm_user_id") != user["id"]:
+    if user["role"] in ("TM", "SeniorTM") and exp.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     if exp.get("status") != "Draft":
         raise HTTPException(status_code=409, detail="Only Draft expenses can be edited")

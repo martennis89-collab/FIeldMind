@@ -154,10 +154,19 @@ async def _audit(
 async def _doctor_query_for(user) -> dict:
     """Return base mongo query enforcing access scope (RBAC + company isolation)."""
     q: dict = {}
-    if user["role"] == "Admin":
+    if user["role"] in ("Admin", "Owner"):
         pass
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
+    elif user["role"] == "SeniorTM":
+        # Senior TM sees their own doctors + every doctor assigned to a TM
+        # they manage (manager_user_id == self.id).
+        sub_rows = await db.users.find(
+            {"manager_user_id": user["id"], "role": "TM"},
+            {"_id": 0, "id": 1},
+        ).to_list(2000)
+        tm_ids = [r["id"] for r in sub_rows] + [user["id"]]
+        q["assigned_tm_id"] = {"$in": tm_ids}
     else:  # TM
         q["assigned_tm_id"] = user["id"]
     return _apply_company_scope(q, user)
@@ -175,6 +184,15 @@ async def _can_access_doctor(user, doctor) -> bool:
         return True
     if user["role"] == "Manager":
         return doctor.get("team_id") == user.get("team_id")
+    if user["role"] == "SeniorTM":
+        # Senior TM owns their personal doctors AND their sub-team's doctors.
+        if doctor.get("assigned_tm_id") == user["id"]:
+            return True
+        sub = await db.users.find_one(
+            {"id": doctor.get("assigned_tm_id"), "manager_user_id": user["id"]},
+            {"_id": 0, "id": 1},
+        )
+        return sub is not None
     return doctor.get("assigned_tm_id") == user["id"]
 
 

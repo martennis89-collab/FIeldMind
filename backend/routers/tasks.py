@@ -78,7 +78,7 @@ async def list_tasks(
     user=Depends(get_current_user),
 ):
     q = dict(_company_query_for(user))
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
@@ -154,7 +154,7 @@ async def update_task(task_id: str, body: TaskUpdate, user=Depends(get_current_u
     if t.get("deleted_at"):
         raise HTTPException(status_code=410, detail="Task has been deleted")
     # access
-    if user["role"] == "TM" and t.get("tm_user_id") != user["id"]:
+    if user["role"] in ("TM", "SeniorTM") and t.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and t.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -188,7 +188,7 @@ async def delete_task(task_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Task not found")
     if t.get("deleted_at"):
         return {"ok": True, "id": task_id, "already_deleted": True}
-    if user["role"] == "TM" and t.get("tm_user_id") != user["id"]:
+    if user["role"] in ("TM", "SeniorTM") and t.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and t.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")

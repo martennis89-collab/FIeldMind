@@ -130,7 +130,7 @@ async def list_meetings(
     user=Depends(get_current_user),
 ):
     q: dict = dict(_company_query_for(user))
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
@@ -151,7 +151,7 @@ async def get_meeting(meeting_id: str, user=Depends(get_current_user)):
     m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
     if not m or m.get("deleted_at"):
         raise HTTPException(status_code=404, detail="Meeting not found")
-    if user["role"] == "TM" and m["tm_user_id"] != user["id"]:
+    if user["role"] in ("TM", "SeniorTM") and m["tm_user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and m.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")

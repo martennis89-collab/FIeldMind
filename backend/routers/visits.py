@@ -218,13 +218,13 @@ async def list_visits(
     user=Depends(get_current_user),
 ):
     q = dict(_company_query_for(user))
-    if user["role"] == "TM":
+    if user["role"] in ("TM", "SeniorTM"):
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
     if doctor_id:
         q["doctor_id"] = doctor_id
-    if tm_user_id and user["role"] in ("Admin", "Manager"):
+    if tm_user_id and user["role"] in ("Admin", "Manager", "SeniorTM"):
         q["tm_user_id"] = tm_user_id
     visits = await db.visits.find(q, {"_id": 0}).sort("visit_date", -1).to_list(500)
     return visits

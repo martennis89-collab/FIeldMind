@@ -3,6 +3,50 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Phase L.4 — Senior TM TM-side endpoint parity (Feb 2026)
+
+**User report**: "When I go to log a visit and create a new dr this error
+appears" — screenshot showed 403 on `POST /api/doctors`.
+
+### Root cause
+Phase L wired Senior TM into Manager-style endpoints (dashboards, insights,
+interventions, reports), but the TM-side endpoints (doctors, visits,
+meetings, expenses, tasks) still hard-coded `require_roles("Admin", "TM")`
+or `if user["role"] == "TM"` branches. Senior TM matched neither, so every
+TM workflow returned 403 — including the doctor-create flow from /log-visit.
+
+### What shipped (backend)
+- **`routers/doctors.py`** — every `require_roles` decorator and every
+  `user["role"] == "TM"` branch now also accepts `SeniorTM`:
+  `create_doctor`, `preview_doctor_import`, `commit_doctor_import`,
+  `update_doctor`, `delete_doctor`, `bulk_delete_doctors`, the doctor-import
+  scope guard, the update-restrictions branch, the delete-only-own-doctors
+  branch, the access-control branches, the `assigned_tm_id` query-filter
+  whitelist.
+- **`routers/visits.py`** — `list_visits` scope includes SeniorTM
+  (own-data) and accepts `tm_user_id` query param for Senior TM (so they
+  can scope to a specific direct report).
+- **`routers/meetings.py`** — `list_meetings` scope + per-row access check
+  treat SeniorTM as TM (own data).
+- **`routers/expenses.py`** — `list_expenses`, `expense_summary`, and the
+  per-row access check treat SeniorTM as TM.
+- **`routers/tasks.py`** — `list_tasks` scope + the 3 per-row access checks
+  treat SeniorTM as TM.
+- **`server.py`** `_doctor_query_for` — Senior TM gets `assigned_tm_id IN
+  [self.id, sub-team-ids]` so they see their personal doctors AND their
+  direct reports' doctors. `_can_access_doctor` honours the same union.
+
+### Verified
+- `POST /api/doctors` as Senior TM → 200 with `assigned_tm_id = self.id`,
+  `company_id` correctly stamped, doctor appears in the SeniorTM `/doctors`
+  listing.
+- `DELETE /api/doctors/{id}` as Senior TM → 200.
+- Phase L + Phase I regression: **16/16 tests still green**.
+
+### Action needed from you
+Redeploy to push the fix to production. Once redeployed, the "create new
+doctor" flow inside /log-visit will work for Senior TMs.
+
 ## Phase L.3 — Desktop top-nav "More ▾" dropdown (Feb 2026)
 
 **Why**: After making Senior TM's top nav a full TM + Manager superset (10
