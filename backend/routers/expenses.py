@@ -69,7 +69,7 @@ from server import (
     seed_demo,
     seed_owner,
 )
-from models import *  # noqa: F401,F403 — all models are exported under their original names
+from models import ExpenseUpdate
 
 
 @api.post("/expenses")
@@ -122,7 +122,6 @@ async def create_expense(
             )
             image_id = str(grid_in_id)
 
-    import uuid
     exp = {
         "id": str(uuid.uuid4()),
         "tm_user_id": user["id"],

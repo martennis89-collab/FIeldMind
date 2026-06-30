@@ -433,7 +433,7 @@ function ReportEditor({ open, onClose, draft, setDraft, readonly, saving, onSave
                   )}
                   {d.note_excerpt && (
                     <div className="mt-1.5 text-xs italic" style={{ color: "var(--text-muted)" }}>
-                      "{d.note_excerpt}"
+                      &quot;{d.note_excerpt}&quot;
                     </div>
                   )}
                 </div>
@@ -563,7 +563,7 @@ function ManagerReports() {
     }));
     setCounts(Object.fromEntries(entries));
   };
-  useEffect(() => { load(bucket); /* eslint-disable-next-line */ }, [bucket]);
+  useEffect(() => { load(bucket); }, [bucket]);
   useEffect(() => { loadCounts(); }, []);
 
   return (
@@ -638,7 +638,7 @@ function ReportDrawer({ reportId, onClose }) {
     try { const { data } = await api.get(`/reports/${reportId}`); setReport(data); }
     catch { toast.error("Could not load report"); onClose(); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [reportId]);
+  useEffect(() => { load(); }, [reportId]);
 
   const post = async () => {
     if (!comment.trim()) return;
@@ -769,7 +769,7 @@ function ReportDrawer({ reportId, onClose }) {
                   )}
                   {d.note_excerpt && (
                     <div className="mt-1.5 text-xs italic" style={{ color: "var(--text-muted)" }}>
-                      "{d.note_excerpt}"
+                      &quot;{d.note_excerpt}&quot;
                     </div>
                   )}
                 </div>

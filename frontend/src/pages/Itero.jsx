@@ -499,7 +499,7 @@ function BreakdownDialog({ title, scope, rows, bucket, onClose }) {
         </div>
 
         <div className="p-4 border-t text-xs" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
-          Click any row to open that doctor's profile.
+          Click any row to open that doctor&apos;s profile.
         </div>
       </div>
     </div>

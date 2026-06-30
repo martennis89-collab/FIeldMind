@@ -50,13 +50,11 @@ export default function Doctors() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line
   }, [segment, cadence, city]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), 300);
     return () => clearTimeout(t);
-    // eslint-disable-next-line
   }, [q]);
 
   const setViewMode = (m) => {

@@ -53,10 +53,14 @@ class TestPhaseA:
 
     def teardown_method(self):
         for mid in self.created_meeting_ids:
-            try: requests.delete(f"{API}/meetings/{mid}", headers=H(self.tm), timeout=5)
-            except Exception: pass
-        try: requests.delete(f"{API}/doctors/{self.doctor['id']}", headers=H(self.tm), timeout=5)
-        except Exception: pass
+            try:
+                requests.delete(f"{API}/meetings/{mid}", headers=H(self.tm), timeout=5)
+            except Exception:
+                pass
+        try:
+            requests.delete(f"{API}/doctors/{self.doctor['id']}", headers=H(self.tm), timeout=5)
+        except Exception:
+            pass
 
     # -------- A.1 promise default +3 business days --------
     def test_create_task_without_due_date_defaults_to_3_business_days(self):
@@ -151,10 +155,14 @@ class TestPhaseBTrackSignals:
 
     def teardown_method(self):
         for sid in self.signal_ids:
-            try: requests.delete(f"{API}/track-signals/{sid}", headers=H(self.tm), timeout=5)
-            except Exception: pass
-        try: requests.delete(f"{API}/doctors/{self.doctor['id']}", headers=H(self.tm), timeout=5)
-        except Exception: pass
+            try:
+                requests.delete(f"{API}/track-signals/{sid}", headers=H(self.tm), timeout=5)
+            except Exception:
+                pass
+        try:
+            requests.delete(f"{API}/doctors/{self.doctor['id']}", headers=H(self.tm), timeout=5)
+        except Exception:
+            pass
 
     def test_manual_create_itero_signal(self):
         r = requests.post(f"{API}/track-signals", headers=H(self.tm), json={
@@ -243,10 +251,14 @@ class TestPhaseBClinicalPatterns:
 
     def teardown_method(self):
         for pid in self.pattern_ids:
-            try: requests.delete(f"{API}/clinical-patterns/{pid}", headers=H(self.tm), timeout=5)
-            except Exception: pass
-        try: requests.delete(f"{API}/doctors/{self.doctor['id']}", headers=H(self.tm), timeout=5)
-        except Exception: pass
+            try:
+                requests.delete(f"{API}/clinical-patterns/{pid}", headers=H(self.tm), timeout=5)
+            except Exception:
+                pass
+        try:
+            requests.delete(f"{API}/doctors/{self.doctor['id']}", headers=H(self.tm), timeout=5)
+        except Exception:
+            pass
 
     def test_create_and_list_clinical_pattern(self):
         r = requests.post(f"{API}/clinical-patterns", headers=H(self.tm), json={

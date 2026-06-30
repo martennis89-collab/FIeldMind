@@ -133,12 +133,12 @@ export default function Login() {
               Not a CRM
             </p>
             <p className="font-display text-base leading-snug text-white">
-              "Salesforce records that an activity happened.{" "}
+              &quot;Salesforce records that an activity happened.{" "}
               <span className="font-medium">
                 FieldMind remembers what was discussed, what was promised, and
                 what the market is saying.
               </span>
-              "
+              &quot;
             </p>
           </div>
         </div>
@@ -167,12 +167,12 @@ export default function Login() {
               Not a CRM
             </p>
             <p className="font-display text-2xl xl:text-3xl font-light leading-snug">
-              "Salesforce records that an activity happened.{" "}
+              &quot;Salesforce records that an activity happened.{" "}
               <span className="font-medium">
                 FieldMind remembers what was discussed, what was promised, and
                 what the market is saying.
               </span>
-              "
+              &quot;
             </p>
           </div>
         </div>

@@ -54,7 +54,7 @@ export default function Intervention() {
           <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: "var(--status-danger)" }} />
           <div>
             <div className="text-sm font-medium" style={{ color: "var(--status-danger)" }}>
-              Couldn't load interventions.
+              Couldn&apos;t load interventions.
             </div>
             <div className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
               {error}. Refresh to retry.

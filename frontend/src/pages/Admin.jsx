@@ -366,7 +366,7 @@ function Users() {
           {resetting && (
             <div className="space-y-3">
               <div className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                Setting a new password for <strong>{resetting.full_name}</strong> ({resetting.email}). They'll need to use this on their next login.
+                Setting a new password for <strong>{resetting.full_name}</strong> ({resetting.email}). They&apos;ll need to use this on their next login.
               </div>
               <div>
                 <Label>New password</Label>
@@ -662,7 +662,7 @@ function DoctorImports() {
       ) : imports.length === 0 ? (
         <div className="rounded-md border p-10 text-center" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}>
           <FileSpreadsheet className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
-          <div className="text-sm" style={{ color: "var(--text-secondary)" }}>No imports yet. Run one from the Doctors page or click "New import" above.</div>
+          <div className="text-sm" style={{ color: "var(--text-secondary)" }}>No imports yet. Run one from the Doctors page or click &quot;New import&quot; above.</div>
         </div>
       ) : (
         <div className="rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>

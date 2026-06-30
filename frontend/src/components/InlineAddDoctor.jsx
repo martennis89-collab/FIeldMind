@@ -67,7 +67,7 @@ export default function InlineAddDoctor({ open, onClose, onCreated, prefillName 
             Add doctor
           </DialogTitle>
           <DialogDescription>
-            Quick-add — you can fine-tune the rest later from the doctor's profile.
+            Quick-add — you can fine-tune the rest later from the doctor&apos;s profile.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

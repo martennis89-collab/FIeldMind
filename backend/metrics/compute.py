@@ -152,30 +152,11 @@ async def _overdue_promise_rate(db, tm_id: str, company_id: Optional[str], windo
 async def _itero_discussed_to_booked(db, tm_id: str, company_id: Optional[str], window_days: int) -> MetricResult:
     """Distinct doctors with an `itero_demo_booked` event in window / distinct doctors with an
     `itero_demo_discussed` OR `itero_demo_booked` event in window.
+
+    Implementation note: we use `track_signals` directly (one row per
+    (doctor, track, signal_type, visit)) since the audit row carries the same info but lacks
+    the doctor_id.
     """
-    since = _iso_minus_days(window_days)
-    base = {"user_id": tm_id, "company_id": company_id, "timestamp": {"$gte": since}}
-    discussed = await db.audit_logs.distinct("entity_id", {
-        **base,
-        "event_type": {"$in": ["itero_demo_discussed", "itero_demo_booked"]},
-    })
-    booked = await db.audit_logs.distinct("entity_id", {
-        **base,
-        "event_type": "itero_demo_booked",
-    })
-    # entity_id for these events is the track_signal id; we want distinct DOCTORS — use related docs.
-    # Cheaper: pull `new_value.doctor_id` from the matching audit rows.
-    discussed_docs = set()
-    async for row in db.audit_logs.find({
-        **base,
-        "event_type": {"$in": ["itero_demo_discussed", "itero_demo_booked"]},
-    }, {"_id": 0, "entity_id": 1, "new_value": 1}):
-        nv = row.get("new_value") or {}
-        # track_signal audit emits {"track_type":..., "signal_type":...}; doctor not in payload.
-        # Fall back: look up the signal row.
-        pass
-    # Pragmatic fallback: use `track_signals` directly (one row per (doctor, track, signal_type, visit))
-    # since the audit row carries the same info but lacks the doctor_id.
     end = datetime.now(timezone.utc).date().isoformat()
     start_date = (datetime.now(timezone.utc) - timedelta(days=window_days)).date().isoformat()
     ts_base = {

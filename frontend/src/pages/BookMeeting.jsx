@@ -109,7 +109,7 @@ export default function BookMeeting() {
           <div>
             <div className="text-sm font-medium" style={{ color: "var(--brand-primary)" }}>This is an iTero demo</div>
             <div className="text-xs" style={{ color: "var(--text-secondary)" }}>
-              Auto-advances the doctor's pipeline to <strong>Demo Booked</strong> and shows on the Demos overview.
+              Auto-advances the doctor&apos;s pipeline to <strong>Demo Booked</strong> and shows on the Demos overview.
             </div>
           </div>
         </label>
@@ -170,7 +170,7 @@ export default function BookMeeting() {
                 style={{ color: "var(--brand-primary)" }}
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                Can't find them? Add new doctor{docQuery ? ` "${docQuery}"` : ""}
+                Can&apos;t find them? Add new doctor{docQuery ? ` "${docQuery}"` : ""}
               </button>
             </>
           )}

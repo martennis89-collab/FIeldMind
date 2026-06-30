@@ -69,7 +69,7 @@ from server import (
     seed_demo,
     seed_owner,
 )
-from models import *  # noqa: F401,F403 — all models are exported under their original names
+from models import *  # noqa: F401,F403,F405 — all models are exported under their original names
 
 
 @api.get("/taxonomy")
@@ -93,7 +93,6 @@ async def admin_list_taxonomy(user=Depends(require_roles("Admin"))):
 
 @api.post("/admin/taxonomy")
 async def admin_create_taxonomy(body: dict, user=Depends(require_roles("Admin"))):
-    import uuid
     kind = (body.get("kind") or "").lower().strip()
     category = (body.get("category") or "").strip()
     term = (body.get("term") or "").strip()

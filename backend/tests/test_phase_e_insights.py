@@ -210,9 +210,9 @@ class TestInsightGeneration:
     def test_idempotent_generation(self):
         """Re-running /generate the same day must NOT create duplicate cards."""
         _seed_promises(self.user, completed=3, open_due_today=7)
-        r1 = requests.post(f"{API}/insights/generate", headers=H(self.token), timeout=15).json()
+        requests.post(f"{API}/insights/generate", headers=H(self.token), timeout=15).json()
         cards_after_1 = len(requests.get(f"{API}/insights/me", headers=H(self.token), timeout=10).json())
-        r2 = requests.post(f"{API}/insights/generate", headers=H(self.token), timeout=15).json()
+        requests.post(f"{API}/insights/generate", headers=H(self.token), timeout=15).json()
         cards_after_2 = len(requests.get(f"{API}/insights/me", headers=H(self.token), timeout=10).json())
         assert cards_after_1 == cards_after_2, "insights duplicated on second generate"
 

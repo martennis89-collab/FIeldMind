@@ -69,7 +69,7 @@ from server import (
     seed_demo,
     seed_owner,
 )
-from models import *  # noqa: F401,F403 — all models are exported under their original names
+from models import AnalyzeNoteRequest, CommercialActions, InvisalignActions, IteroActions, VisitCreate
 
 
 @api.post("/visits/analyze")
@@ -84,7 +84,6 @@ async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get
     Accepts a multipart upload with field name 'audio'. Supported formats: webm, mp3, m4a, wav, mp4, mpga, mpeg.
     Max 25 MB (Whisper limit). Returns {text: str}.
     """
-    import io
     from emergentintegrations.llm.openai import OpenAISpeechToText
 
     if not os.environ.get("EMERGENT_LLM_KEY"):
@@ -118,7 +117,6 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
     doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
     if not doctor or not await _can_access_doctor(user, doctor):
         raise HTTPException(status_code=404, detail="Doctor not found")
-    import uuid
     vdate = body.visit_date or _now_iso()
     visit = {
         "id": str(uuid.uuid4()),

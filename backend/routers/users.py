@@ -69,7 +69,7 @@ from server import (
     seed_demo,
     seed_owner,
 )
-from models import *  # noqa: F401,F403 — all models are exported under their original names
+from models import Team, TeamCreate, UserCreate, UserPublic, UserUpdate
 
 
 # Phase L — validate that a manager_user_id (the "reports to" pointer) is a
@@ -117,27 +117,41 @@ async def wipe_test_data(user=Depends(require_roles("Admin", "Owner"))):
         owned_docs = await db.doctors.find({"assigned_tm_id": {"$in": demo_user_ids}}, {"_id": 0, "id": 1}).to_list(5000)
         owned_doc_ids = [d["id"] for d in owned_docs]
         if owned_doc_ids:
-            r = await db.visits.delete_many({"doctor_id": {"$in": owned_doc_ids}}); deleted["visits"] += r.deleted_count
-            r = await db.tasks.delete_many({"doctor_id": {"$in": owned_doc_ids}}); deleted["tasks"] += r.deleted_count
-            r = await db.meetings.delete_many({"doctor_id": {"$in": owned_doc_ids}}); deleted["meetings"] += r.deleted_count
-            r = await db.itero_stage_history.delete_many({"doctor_id": {"$in": owned_doc_ids}}); deleted["itero_stage_history"] += r.deleted_count
-            r = await db.doctors.delete_many({"id": {"$in": owned_doc_ids}}); deleted["doctors"] += r.deleted_count
+            r = await db.visits.delete_many({"doctor_id": {"$in": owned_doc_ids}})
+            deleted["visits"] += r.deleted_count
+            r = await db.tasks.delete_many({"doctor_id": {"$in": owned_doc_ids}})
+            deleted["tasks"] += r.deleted_count
+            r = await db.meetings.delete_many({"doctor_id": {"$in": owned_doc_ids}})
+            deleted["meetings"] += r.deleted_count
+            r = await db.itero_stage_history.delete_many({"doctor_id": {"$in": owned_doc_ids}})
+            deleted["itero_stage_history"] += r.deleted_count
+            r = await db.doctors.delete_many({"id": {"$in": owned_doc_ids}})
+            deleted["doctors"] += r.deleted_count
         # Anything else tied to demo users directly
-        r = await db.visits.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["visits"] += r.deleted_count
-        r = await db.tasks.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["tasks"] += r.deleted_count
-        r = await db.meetings.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["meetings"] += r.deleted_count
-        r = await db.events.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["events"] += r.deleted_count
-        r = await db.expenses.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["expenses"] += r.deleted_count
-        r = await db.reports.delete_many({"tm_user_id": {"$in": demo_user_ids}}); deleted["reports"] += r.deleted_count
-        r = await db.doctor_imports.delete_many({"uploaded_by_user_id": {"$in": demo_user_ids}}); deleted["imports"] += r.deleted_count
-        r = await db.users.delete_many({"id": {"$in": demo_user_ids}}); deleted["users"] = r.deleted_count
+        r = await db.visits.delete_many({"tm_user_id": {"$in": demo_user_ids}})
+        deleted["visits"] += r.deleted_count
+        r = await db.tasks.delete_many({"tm_user_id": {"$in": demo_user_ids}})
+        deleted["tasks"] += r.deleted_count
+        r = await db.meetings.delete_many({"tm_user_id": {"$in": demo_user_ids}})
+        deleted["meetings"] += r.deleted_count
+        r = await db.events.delete_many({"tm_user_id": {"$in": demo_user_ids}})
+        deleted["events"] += r.deleted_count
+        r = await db.expenses.delete_many({"tm_user_id": {"$in": demo_user_ids}})
+        deleted["expenses"] += r.deleted_count
+        r = await db.reports.delete_many({"tm_user_id": {"$in": demo_user_ids}})
+        deleted["reports"] += r.deleted_count
+        r = await db.doctor_imports.delete_many({"uploaded_by_user_id": {"$in": demo_user_ids}})
+        deleted["imports"] += r.deleted_count
+        r = await db.users.delete_many({"id": {"$in": demo_user_ids}})
+        deleted["users"] = r.deleted_count
     # Drop the demo team(s) (e.g. "Northern Region") that no real user depends on
     if demo_team_ids:
         still_in_use = await db.users.find({"team_id": {"$in": demo_team_ids}}, {"_id": 0, "team_id": 1}).to_list(100)
         in_use_ids = {u["team_id"] for u in still_in_use}
         free_teams = [tid for tid in demo_team_ids if tid not in in_use_ids]
         if free_teams:
-            r = await db.teams.delete_many({"id": {"$in": free_teams}}); deleted["teams"] = r.deleted_count
+            r = await db.teams.delete_many({"id": {"$in": free_teams}})
+            deleted["teams"] = r.deleted_count
     # Test rows from pytest runs (any token-prefixed names)
     test_tokens = ["iter9", "iter11", "iter12", "test_iter", "test_iter9"]
     for tok in test_tokens:
@@ -183,7 +197,6 @@ async def create_user(body: UserCreate, request: Request, user=Depends(require_r
     # Phase L: validate manager_user_id chain — must be in same company and a valid manager-style role.
     if body.manager_user_id:
         await _validate_reports_to_chain(body.manager_user_id, body.role, user)
-    import uuid
     doc = {
         "id": str(uuid.uuid4()),
         "full_name": body.full_name,

@@ -105,7 +105,7 @@ class TestCompanyEligibility:
             # The seeded default company also has opt_in=False, so count should equal 0 (or
             # whatever opted-in companies already exist).
             db = _mongo()
-            counted = await_count = db.companies.count_documents({
+            counted = db.companies.count_documents({
                 "benchmark_opt_in": True, "active_status": "Active",
                 "country": "Bulgaria", "team_size_category": "1-5",
                 "sales_motion": "dental/orthodontic field team",

@@ -137,6 +137,7 @@ class TestPromiseMetrics:
             })
         r = requests.get(f"{API}/metrics/tm/{self.user['id']}/promise_completion_rate",
                          headers=H(self.token), timeout=10)
+        assert r.status_code in (200, 404)
         # Fall back to listing all metrics and finding the promise one
         all_m = requests.get(f"{API}/metrics/me", headers=H(self.token), timeout=10).json()
         m = next(x for x in all_m if x["slug"] == "promise_completion_rate")

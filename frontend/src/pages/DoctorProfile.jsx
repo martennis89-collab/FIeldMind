@@ -46,7 +46,7 @@ export default function DoctorProfile() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+  useEffect(() => { load(); }, [id]);
 
   const completeTask = async (task) => {
     await api.put(`/tasks/${task.id}`, { status: "Completed" });

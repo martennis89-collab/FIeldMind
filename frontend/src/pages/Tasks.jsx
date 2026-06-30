@@ -50,7 +50,6 @@ export default function Tasks() {
       sp.delete("new");
       setSearchParams(sp, { replace: true });
     }
-    // eslint-disable-next-line
   }, []);
 
   // OPTIMISTIC HELPERS
@@ -103,7 +102,7 @@ export default function Tasks() {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); }, []);
   useEffect(() => {
     api.get("/doctors").then((r) => setAllDoctors(Array.isArray(r.data) ? r.data : (r.data.doctors || []))).catch(() => {});
   }, []);
@@ -548,7 +547,7 @@ function NewTaskDialog({ open, doctors, onClose, onCreated, onDoctorAdded }) {
                   style={{ color: "var(--brand-primary)" }}
                 >
                   <UserPlus className="w-3.5 h-3.5" />
-                  Can't find them? Add new doctor{docQuery ? ` "${docQuery}"` : ""}
+                  Can&apos;t find them? Add new doctor{docQuery ? ` "${docQuery}"` : ""}
                 </button>
               </>
             )}

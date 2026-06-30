@@ -69,7 +69,7 @@ from server import (
     seed_demo,
     seed_owner,
 )
-from models import *  # noqa: F401,F403 — all models are exported under their original names
+from models import LoginRequest, LoginResponse, UserPublic
 
 
 @api.post("/auth/login", response_model=LoginResponse)

@@ -333,7 +333,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
                 style={{ color: "var(--brand-primary)" }}
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                Can't find them? Add new doctor{doctorSearch ? ` "${doctorSearch}"` : ""}
+                Can&apos;t find them? Add new doctor{doctorSearch ? ` "${doctorSearch}"` : ""}
               </button>
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "var(--text-secondary)" }}>

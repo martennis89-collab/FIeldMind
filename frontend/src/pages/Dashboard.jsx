@@ -119,7 +119,7 @@ function TMPerformanceTable({ performance }) {
           <Users className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
           <div className="font-medium text-sm" style={{ color: "var(--text-primary)" }}>No TM activity to evaluate yet</div>
           <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
-            Once your TMs log visits, demos, and promises, you'll see their performance breakdown here.
+            Once your TMs log visits, demos, and promises, you&apos;ll see their performance breakdown here.
           </p>
         </div>
       )}
@@ -388,7 +388,7 @@ function TMView({ data }) {
 
       <div className="flex items-baseline justify-between mb-4">
         <div>
-          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Today's intelligence</div>
+          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Today&apos;s intelligence</div>
           <h2 className="font-display text-2xl font-medium" style={{ color: "var(--brand-primary)" }}>Doctors who need you next</h2>
         </div>
         <Link to="/doctors" className="text-sm underline" style={{ color: "var(--text-secondary)" }} data-testid="see-all-doctors-link">

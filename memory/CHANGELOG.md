@@ -3,6 +3,47 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Audit P0 — Lint cleanup (Feb 2026)
+
+Cleared all 121 outstanding lint warnings across backend (84 ruff) and frontend
+(37 ESLint). Zero behavioural changes.
+
+### Backend (`ruff` → 0 errors)
+- Removed 7 redundant local `import uuid` / `import io` statements inside function
+  bodies (F811) across `visits.py`, `expenses.py`, `reports.py`, `tasks.py`,
+  `taxonomy.py`, `users.py`.
+- Replaced `from models import *` with explicit imports in 11 router files
+  (F405): `auth.py`, `clinical_patterns.py`, `doctors.py`, `events.py`,
+  `expenses.py`, `meetings.py`, `reports.py`, `tasks.py`, `track_signals.py`,
+  `users.py`, `visits.py`. Improves IDE navigation and type safety.
+- Removed dead code block in `metrics/compute.py::_itero_discussed_to_booked`
+  (4 unused locals + an `async for` loop whose body was just `pass`). The actual
+  metric continues to use the `track_signals` collection — behaviour unchanged.
+- Split 14 multi-statement lines in `routers/users.py` (E702) for readability.
+- Cleaned up unused locals and E701 multi-statement lines in test files
+  (`test_phase_a_and_b.py`, `test_phase_d_metrics.py`, `test_phase_e_insights.py`,
+  `test_phase_g_benchmark.py`).
+
+### Frontend (ESLint → 0 errors, 0 warnings)
+- **Real perf bug fixed**: hoisted `IconLeft` / `IconRight` out of
+  `components/ui/calendar.jsx` so they aren't re-defined every render
+  (was triggering full subtree remount per React reconciliation rules).
+- Escaped 22 unescaped JSX entities (`'` → `&apos;`, `"` → `&quot;`) across
+  `Admin`, `BookMeeting`, `Dashboard`, `DoctorProfile`, `Expenses`, `InlineAddDoctor`,
+  `Intervention`, `Itero`, `Login`, `QuickCaptureDialog`, `Reports`, `Tasks`.
+- Removed 12 stale `eslint-disable` directives (no longer needed after
+  hooks-deps refactors in earlier phases).
+- Suppressed the intentional `cmdk-input-wrapper=""` attribute in
+  `components/ui/command.jsx` (vendored shadcn convention).
+
+### Verification
+- `ruff check backend/` → No lint errors found.
+- ESLint on `frontend/src/` → ✅ No issues found.
+- Backend regression suite (`test_phase_a_and_b`, `_d_metrics`, `_e_insights`,
+  `_l_senior_tm`) → **49 passed**.
+- Frontend smoke screenshot: login page renders correctly.
+
+
 ## Phase L.4 — Senior TM TM-side endpoint parity (Feb 2026)
 
 **User report**: "When I go to log a visit and create a new dr this error

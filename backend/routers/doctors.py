@@ -69,7 +69,7 @@ from server import (
     seed_demo,
     seed_owner,
 )
-from models import *  # noqa: F401,F403 — all models are exported under their original names
+from models import Doctor, DoctorCreate, DoctorUpdate, IteroStageUpdate
 
 
 @api.get("/doctors")

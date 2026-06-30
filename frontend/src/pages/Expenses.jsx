@@ -74,7 +74,7 @@ function TMExpenses() {
       setLoading(false);
     }
   };
-  useEffect(() => { load(month); /* eslint-disable-next-line */ }, [month]);
+  useEffect(() => { load(month); }, [month]);
 
   const submitMonth = async () => {
     if (!summary?.submittable_drafts) {
@@ -140,7 +140,7 @@ function TMExpenses() {
       ) : list.length === 0 ? (
         <div className="rounded-md border p-10 text-center" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }}>
           <Receipt className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
-          <div className="text-sm" style={{ color: "var(--text-secondary)" }}>No expenses for {fmtMonth(month)}. Tap "Add expense" to log your first receipt.</div>
+          <div className="text-sm" style={{ color: "var(--text-secondary)" }}>No expenses for {fmtMonth(month)}. Tap &quot;Add expense&quot; to log your first receipt.</div>
         </div>
       ) : (
         <div className="rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }} data-testid="expenses-list">

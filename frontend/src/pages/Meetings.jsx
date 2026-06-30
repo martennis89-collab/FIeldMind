@@ -62,7 +62,6 @@ export default function Meetings() {
       sp.delete("new_event");
       setSearchParams(sp, { replace: true });
     }
-    // eslint-disable-next-line
   }, []);
 
   const load = async () => {
@@ -75,7 +74,7 @@ export default function Meetings() {
       setMeetings(m.data); setEvents(e.data);
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [tab]);
+  useEffect(() => { load(); }, [tab]);
 
   // Combine + sort
   const combined = useMemo(() => {
