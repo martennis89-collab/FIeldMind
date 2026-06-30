@@ -8,6 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import asyncio
 from pathlib import Path
 from datetime import datetime, timezone, timedelta, date
 import uuid
@@ -1237,7 +1238,7 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
 
     # doctors needing attention next week
     my_docs = await db.doctors.find({"assigned_tm_id": tm_id}, {"_id": 0}).to_list(500)
-    enriched = [await _enrich_doctor(d) for d in my_docs]
+    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in my_docs])) if my_docs else []
     enriched.sort(key=lambda d: d["visit_priority_score"], reverse=True)
     needing = [
         {"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],

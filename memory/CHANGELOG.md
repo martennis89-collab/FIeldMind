@@ -3,6 +3,45 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Backend perf sweep — every dashboard endpoint (Feb 2026)
+
+Applied the same `asyncio.gather` + segment-pre-filter pattern from the
+`/dashboard/manager` win across every remaining `_enrich_doctor` call site.
+
+### Sites updated
+- `routers/dashboards.py::tm_dashboard` (line 116)
+- `routers/dashboards.py::manager_performance` (inner per-TM enrich, line 346)
+- `routers/dashboards.py::manager_commercial` (line 428)
+- `routers/dashboards.py::manager_interventions` (line 524)
+- `routers/dashboards.py::manager_itero` (line 627)
+- `routers/dashboards.py::manager_invisalign` (line 693)
+- Plus 3 additional secondary endpoints picked up by `replace_all` (lines 771,
+  816, 856)
+- `server.py::report_generate` enrich loop (line 1240)
+
+### Measured (Owner @ preview, warm)
+| Endpoint | Before | After |
+|----------|--------|-------|
+| /dashboard/manager | ~10s | 0.38s |
+| /dashboard/manager/performance | ~5-8s | 0.99s |
+| /dashboard/manager/commercial | ~5-8s | 0.80s |
+| /dashboard/manager/interventions | ~5-8s | 0.87s |
+| /dashboard/manager/itero | ~5-8s | 0.81s |
+| /dashboard/manager/invisalign | ~5-8s | 0.89s |
+
+### Why this works
+`_enrich_doctor` makes ~5 sequential DB roundtrips per doctor. Doing N
+sequential awaits across a list of 1000 docs gives 5000 round-trips on a
+single fibre. `asyncio.gather` lets the event loop interleave them — Motor /
+the Mongo driver pipeline naturally batch the wire traffic so we end up
+limited by the connection pool concurrency, not the latency × count product.
+
+### Verification
+- 72/72 backend pytest pass.
+- `ruff check backend/` → clean.
+- Curl timing of every Owner-visible dashboard endpoint is now sub-1s warm.
+
+
 ## P1 follow-ups + a backend perf bonus (Feb 2026)
 
 Both items from the P2 retrospective shipped, plus a much bigger backend win
