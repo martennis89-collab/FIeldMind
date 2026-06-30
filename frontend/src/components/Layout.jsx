@@ -2,146 +2,34 @@ import React, { useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import {
-  CalendarPlus,
-  Calendar,
-  LayoutDashboard,
-  Users,
-  ClipboardList,
-  CheckSquare,
   LogOut,
   Plus,
   Brain,
   FileText,
-  AlertOctagon,
-  TrendingUp,
-  ScanLine,
-  Smile,
-  Receipt,
+  LayoutDashboard,
   Settings,
   MoreHorizontal,
   X,
-  Layers,
   UserRound,
   Wand2,
+  ClipboardList,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import QuickCaptureDialog from "./QuickCaptureDialog";
 import ErrorBoundary from "./ErrorBoundary";
-
-// ---------- Top-level (header) ----------
-const TM_TOP = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
-  { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
-  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
-  { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
-  { to: "/meetings", label: "Meetings", icon: Calendar, testId: "nav-meetings" },
-  { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
-  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
-  { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
-];
-const MANAGER_TOP = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
-  { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
-  { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
-  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
-  { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
-  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
-  { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
-];
-
-// Phase L — Senior TM is a TM + Manager hybrid. Desktop top nav is the
-// FULL union: every TM item (Doctors / Meetings / Tasks) PLUS every Manager
-// item (Intervention / Team). This is wider than either base nav by design
-// — Senior TMs need to act AS a TM (logging) and AS a Manager (oversight)
-// without switching accounts.
-const SENIORTM_TOP = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
-  { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
-  { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
-  { to: "/meetings", label: "Meetings", icon: Calendar, testId: "nav-meetings" },
-  { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
-  { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
-  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
-  { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
-  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
-  { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
-];
-
-// ---------- Mobile bottom (max 5) ----------
-// TM: Home / Doctors / + / Tasks / More (sheet with iTero, Invisalign, Reports, Expenses)
-const TM_BOTTOM = [
-  { to: "/", label: "Home", icon: LayoutDashboard, testId: "nav-dashboard" },
-  { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
-  // central "+ Add" injected at this slot
-  { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
-  // slot 5 = "More" sheet (injected below)
-];
-
-const TM_MORE = [
-  { to: "/itero", label: "iTero", icon: ScanLine, testId: "more-itero" },
-  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "more-invisalign" },
-  { to: "/meetings", label: "Meetings", icon: Calendar, testId: "more-meetings" },
-  { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
-  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
-  { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
-];
-
-// Manager: Dashboard / Intervention / iTero / Invisalign / More
-const MANAGER_BOTTOM = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
-  { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
-  { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
-  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
-  // central "More" sheet injected at this slot
-];
-
-const MANAGER_MORE = [
-  { to: "/team-performance", label: "Team performance", icon: TrendingUp, testId: "more-team" },
-  { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
-  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
-  { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
-];
-
-// Phase L — Senior TM is a TM + Manager hybrid. They log their own visits
-// (TM functionality) AND oversee a sub-team (Manager functionality). Their
-// bottom nav prioritises oversight + adding, with iTero/Invisalign/Team perf
-// available via the More sheet.
-//
-// Slots: Dashboard / Intervention / + Add / Tasks / More
-const SENIORTM_BOTTOM = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
-  { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
-  // central "+ Add" injected here
-  { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
-  // slot 5 = "More" sheet
-];
-
-const SENIORTM_MORE = [
-  { to: "/itero", label: "iTero", icon: ScanLine, testId: "more-itero" },
-  { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "more-invisalign" },
-  { to: "/team-performance", label: "Team performance", icon: TrendingUp, testId: "more-team" },
-  { to: "/doctors", label: "Doctors", icon: Users, testId: "more-doctors" },
-  { to: "/meetings", label: "Meetings", icon: Calendar, testId: "more-meetings" },
-  { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
-  { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
-  { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
-];
-
-// Phase L.3 — Desktop top-nav split into primary slots (always visible) and
-// overflow (collapsed under a "More ▾" dropdown). Keeps the header focused
-// on high-traffic links and prevents wrap on 1024-1280px laptop screens.
-//   - TM:        7 primary
-//   - Manager:   5 primary
-//   - SeniorTM:  6 primary (Dashboard / Intervention / Doctors / Tasks / Team / Reports)
-//   - Owner+Admin: all visible (no overflow)
-const TOP_PRIMARY_COUNT = {
-  TM: 7,
-  Manager: 5,
-  SeniorTM: 6,
-  Admin: 99,
-  Owner: 99,
-};
-
+import {
+  TM_TOP,
+  MANAGER_TOP,
+  SENIORTM_TOP,
+  TOP_PRIMARY_COUNT,
+  TM_BOTTOM,
+  TM_MORE,
+  MANAGER_BOTTOM,
+  MANAGER_MORE,
+  SENIORTM_BOTTOM,
+  SENIORTM_MORE,
+  ADD_SHEET_ITEMS,
+} from "./navConfig";
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
@@ -156,7 +44,7 @@ export default function Layout({ children }) {
   //   - SeniorTM: SENIORTM_TOP (full union of TM + Manager items)
   //   - Manager / Admin / Owner: MANAGER_TOP
   const TOP = isSeniorTM ? SENIORTM_TOP : (isManager ? MANAGER_TOP : TM_TOP);
-  const [tmAddOpen, setTmAddOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
 
@@ -243,171 +131,44 @@ export default function Layout({ children }) {
         </ErrorBoundary>
       </main>
 
-      {/* Mobile bottom nav (TM = 5 slots with central + Add; Manager = 5 slots with More sheet) */}
+      {/* Mobile bottom nav — TM + SeniorTM share the "central + Add" pattern,
+          Manager has 4 slots + More (no Add). Admin/Owner get a tiny 3-slot nav. */}
       {isTM && (
-        <>
-          <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="mobile-bottom-nav-tm">
-            <div className="grid grid-cols-5 h-16">
-              {/* slot 1, 2 */}
-              {TM_BOTTOM.slice(0, 2).map((t) => <BottomTab key={t.to} t={t} />)}
-              {/* slot 3 — central + Add */}
-              <button
-                onClick={() => setTmAddOpen(true)}
-                data-testid="mobile-add-btn"
-                className="flex flex-col items-center justify-center -mt-5"
-                aria-label="Add"
-              >
-                <span className="w-12 h-12 rounded-full flex items-center justify-center text-white shadow-lg"
-                      style={{ background: "var(--brand-secondary)" }}>
-                  <Plus className="w-6 h-6" />
-                </span>
-                <span className="text-[10px] mt-1" style={{ color: "var(--brand-secondary)", fontWeight: 600 }}>Add</span>
-              </button>
-              {/* slot 4 */}
-              {TM_BOTTOM.slice(2, 3).map((t) => <BottomTab key={t.to} t={t} />)}
-              {/* slot 5 — More sheet */}
-              <button
-                onClick={() => setMoreOpen(true)}
-                data-testid="mobile-more-btn-tm"
-                className="flex flex-col items-center justify-center gap-1 text-[10px]"
-                style={{ color: moreOpen ? "var(--brand-primary)" : "var(--text-muted)" }}
-              >
-                <MoreHorizontal className="w-5 h-5" />
-                More
-              </button>
-            </div>
-          </nav>
-          {/* + Add bottom sheet (TM) */}
-          {tmAddOpen && (
-            <BottomSheet onClose={() => setTmAddOpen(false)} testId="tm-add-sheet">
-              <SheetTitle>Add</SheetTitle>
-              <SheetItem icon={ClipboardList} label="Log a visit" onClick={() => { setTmAddOpen(false); navigate("/log-visit"); }} testId="add-log-visit" />
-              <SheetItem icon={CalendarPlus} label="Book a meeting" onClick={() => { setTmAddOpen(false); navigate("/meetings/book"); }} testId="add-book-meeting" />
-              <SheetItem icon={ScanLine} label="Book an iTero demo" onClick={() => { setTmAddOpen(false); navigate("/meetings/book?demo=1"); }} testId="add-book-demo" subtitle="Auto-marks pipeline as Demo Booked" />
-              <SheetItem icon={Calendar} label="Add an event" onClick={() => { setTmAddOpen(false); navigate("/meetings?new_event=1"); }} testId="add-event" subtitle="Generic agenda item, no doctor" />
-              <SheetItem icon={CheckSquare} label="New task" onClick={() => { setTmAddOpen(false); navigate("/tasks?new=1"); }} testId="add-new-task" />
-              <SheetItem icon={Receipt} label="Add an expense" onClick={() => { setTmAddOpen(false); navigate("/expenses/log"); }} testId="add-expense" />
-              <SheetItem icon={Users} label="Add a doctor" onClick={() => { setTmAddOpen(false); navigate("/doctors/add"); }} testId="add-doctor" />
-              <SheetItem icon={Layers} label="Import doctors" onClick={() => { setTmAddOpen(false); navigate("/doctors/import"); }} testId="add-doctor-import" subtitle="From a spreadsheet" />
-            </BottomSheet>
-          )}
-          {/* More sheet (TM) */}
-          {moreOpen && (
-            <BottomSheet onClose={() => setMoreOpen(false)} testId="tm-more-sheet">
-              <SheetTitle>More</SheetTitle>
-              <SheetItem
-                icon={Wand2}
-                label="Quick capture"
-                testId="more-quick-capture"
-                onClick={() => { setMoreOpen(false); setQuickCaptureOpen(true); }}
-              />
-              {TM_MORE.map((m) => (
-                <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
-              ))}
-            </BottomSheet>
-          )}
-        </>
+        <MobileNavWithAdd
+          variant="tm"
+          slots={TM_BOTTOM}
+          moreItems={TM_MORE}
+          addOpen={addOpen}
+          setAddOpen={setAddOpen}
+          moreOpen={moreOpen}
+          setMoreOpen={setMoreOpen}
+          setQuickCaptureOpen={setQuickCaptureOpen}
+          navigate={navigate}
+        />
       )}
-
       {isSeniorTM && (
-        <>
-          <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="mobile-bottom-nav-seniortm">
-            <div className="grid grid-cols-5 h-16">
-              {/* slot 1, 2 */}
-              {SENIORTM_BOTTOM.slice(0, 2).map((t) => <BottomTab key={t.to} t={t} />)}
-              {/* slot 3 — central + Add (TM-hybrid: Senior TM logs their own visits) */}
-              <button
-                onClick={() => setTmAddOpen(true)}
-                data-testid="mobile-add-btn"
-                className="flex flex-col items-center justify-center -mt-5"
-                aria-label="Add"
-              >
-                <span className="w-12 h-12 rounded-full flex items-center justify-center text-white shadow-lg"
-                      style={{ background: "var(--brand-secondary)" }}>
-                  <Plus className="w-6 h-6" />
-                </span>
-                <span className="text-[10px] mt-1" style={{ color: "var(--brand-secondary)", fontWeight: 600 }}>Add</span>
-              </button>
-              {/* slot 4 */}
-              {SENIORTM_BOTTOM.slice(2, 3).map((t) => <BottomTab key={t.to} t={t} />)}
-              {/* slot 5 — More sheet */}
-              <button
-                onClick={() => setMoreOpen(true)}
-                data-testid="mobile-more-btn-seniortm"
-                className="flex flex-col items-center justify-center gap-1 text-[10px]"
-                style={{ color: moreOpen ? "var(--brand-primary)" : "var(--text-muted)" }}
-              >
-                <MoreHorizontal className="w-5 h-5" />
-                More
-              </button>
-            </div>
-          </nav>
-          {/* + Add bottom sheet (Senior TM — same options as TM) */}
-          {tmAddOpen && (
-            <BottomSheet onClose={() => setTmAddOpen(false)} testId="seniortm-add-sheet">
-              <SheetTitle>Add</SheetTitle>
-              <SheetItem icon={ClipboardList} label="Log a visit" onClick={() => { setTmAddOpen(false); navigate("/log-visit"); }} testId="add-log-visit" />
-              <SheetItem icon={CalendarPlus} label="Book a meeting" onClick={() => { setTmAddOpen(false); navigate("/meetings/book"); }} testId="add-book-meeting" />
-              <SheetItem icon={ScanLine} label="Book an iTero demo" onClick={() => { setTmAddOpen(false); navigate("/meetings/book?demo=1"); }} testId="add-book-demo" subtitle="Auto-marks pipeline as Demo Booked" />
-              <SheetItem icon={Calendar} label="Add an event" onClick={() => { setTmAddOpen(false); navigate("/meetings?new_event=1"); }} testId="add-event" subtitle="Generic agenda item, no doctor" />
-              <SheetItem icon={CheckSquare} label="New task" onClick={() => { setTmAddOpen(false); navigate("/tasks?new=1"); }} testId="add-new-task" />
-              <SheetItem icon={Receipt} label="Add an expense" onClick={() => { setTmAddOpen(false); navigate("/expenses/log"); }} testId="add-expense" />
-              <SheetItem icon={Users} label="Add a doctor" onClick={() => { setTmAddOpen(false); navigate("/doctors/add"); }} testId="add-doctor" />
-              <SheetItem icon={Layers} label="Import doctors" onClick={() => { setTmAddOpen(false); navigate("/doctors/import"); }} testId="add-doctor-import" subtitle="From a spreadsheet" />
-            </BottomSheet>
-          )}
-          {/* More sheet (Senior TM) */}
-          {moreOpen && (
-            <BottomSheet onClose={() => setMoreOpen(false)} testId="seniortm-more-sheet">
-              <SheetTitle>More</SheetTitle>
-              <SheetItem
-                icon={Wand2}
-                label="Quick capture"
-                testId="more-quick-capture"
-                onClick={() => { setMoreOpen(false); setQuickCaptureOpen(true); }}
-              />
-              {SENIORTM_MORE.map((m) => (
-                <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
-              ))}
-            </BottomSheet>
-          )}
-        </>
+        <MobileNavWithAdd
+          variant="seniortm"
+          slots={SENIORTM_BOTTOM}
+          moreItems={SENIORTM_MORE}
+          addOpen={addOpen}
+          setAddOpen={setAddOpen}
+          moreOpen={moreOpen}
+          setMoreOpen={setMoreOpen}
+          setQuickCaptureOpen={setQuickCaptureOpen}
+          navigate={navigate}
+        />
       )}
-
       {isManager && (
-        <>
-          <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="mobile-bottom-nav-manager">
-            <div className="grid grid-cols-5 h-16">
-              {MANAGER_BOTTOM.map((t) => <BottomTab key={t.to} t={t} />)}
-              <button
-                onClick={() => setMoreOpen(true)}
-                data-testid="mobile-more-btn"
-                className="flex flex-col items-center justify-center gap-1 text-[10px]"
-                style={{ color: moreOpen ? "var(--brand-primary)" : "var(--text-muted)" }}
-              >
-                <MoreHorizontal className="w-5 h-5" />
-                More
-              </button>
-            </div>
-          </nav>
-          {moreOpen && (
-            <BottomSheet onClose={() => setMoreOpen(false)} testId="manager-more-sheet">
-              <SheetTitle>More</SheetTitle>
-              <SheetItem
-                icon={Wand2}
-                label="Quick capture"
-                testId="more-quick-capture"
-                onClick={() => { setMoreOpen(false); setQuickCaptureOpen(true); }}
-              />
-              {MANAGER_MORE.map((m) => (
-                <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
-              ))}
-            </BottomSheet>
-          )}
-        </>
+        <ManagerMobileNav
+          moreOpen={moreOpen}
+          setMoreOpen={setMoreOpen}
+          setQuickCaptureOpen={setQuickCaptureOpen}
+          navigate={navigate}
+        />
       )}
 
-      {/* Admin: full top nav, no bottom nav (desktop-first) */}
+      {/* Admin/Owner without manager flag (defensive — covers any future role): tiny 3-slot bottom nav. */}
       {!isTM && !isManager && !isSeniorTM && (
         <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
           <div className="grid grid-cols-3 h-16">
@@ -431,13 +192,128 @@ export default function Layout({ children }) {
         </button>
       )}
 
-      {/* Global Quick Capture dialog — reachable from header & More sheet */}
       <QuickCaptureDialog
         open={quickCaptureOpen}
         onClose={() => setQuickCaptureOpen(false)}
         onCreated={() => setQuickCaptureOpen(false)}
       />
     </div>
+  );
+}
+
+// ---------- Mobile nav variants ----------
+
+// Used by TM and SeniorTM — 5 slots: 2 nav + central "+ Add" + 1 nav + More.
+function MobileNavWithAdd({ variant, slots, moreItems, addOpen, setAddOpen, moreOpen, setMoreOpen, setQuickCaptureOpen, navigate }) {
+  return (
+    <>
+      <nav
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t"
+        style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+        data-testid={`mobile-bottom-nav-${variant}`}
+      >
+        <div className="grid grid-cols-5 h-16">
+          {/* slots 1, 2 */}
+          {slots.slice(0, 2).map((t) => <BottomTab key={t.to} t={t} />)}
+          {/* slot 3 — central + Add */}
+          <button
+            onClick={() => setAddOpen(true)}
+            data-testid="mobile-add-btn"
+            className="flex flex-col items-center justify-center -mt-5"
+            aria-label="Add"
+          >
+            <span className="w-12 h-12 rounded-full flex items-center justify-center text-white shadow-lg"
+                  style={{ background: "var(--brand-secondary)" }}>
+              <Plus className="w-6 h-6" />
+            </span>
+            <span className="text-[10px] mt-1" style={{ color: "var(--brand-secondary)", fontWeight: 600 }}>Add</span>
+          </button>
+          {/* slot 4 */}
+          {slots.slice(2, 3).map((t) => <BottomTab key={t.to} t={t} />)}
+          {/* slot 5 — More */}
+          <button
+            onClick={() => setMoreOpen(true)}
+            data-testid={`mobile-more-btn-${variant}`}
+            className="flex flex-col items-center justify-center gap-1 text-[10px]"
+            style={{ color: moreOpen ? "var(--brand-primary)" : "var(--text-muted)" }}
+          >
+            <MoreHorizontal className="w-5 h-5" />
+            More
+          </button>
+        </div>
+      </nav>
+
+      {addOpen && (
+        <BottomSheet onClose={() => setAddOpen(false)} testId={`${variant}-add-sheet`}>
+          <SheetTitle>Add</SheetTitle>
+          {ADD_SHEET_ITEMS.map((item) => (
+            <SheetItem
+              key={item.testId}
+              icon={item.icon}
+              label={item.label}
+              subtitle={item.subtitle}
+              testId={item.testId}
+              onClick={() => { setAddOpen(false); navigate(item.to); }}
+            />
+          ))}
+        </BottomSheet>
+      )}
+
+      {moreOpen && (
+        <BottomSheet onClose={() => setMoreOpen(false)} testId={`${variant}-more-sheet`}>
+          <SheetTitle>More</SheetTitle>
+          <SheetItem
+            icon={Wand2}
+            label="Quick capture"
+            testId="more-quick-capture"
+            onClick={() => { setMoreOpen(false); setQuickCaptureOpen(true); }}
+          />
+          {moreItems.map((m) => (
+            <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
+          ))}
+        </BottomSheet>
+      )}
+    </>
+  );
+}
+
+// Used by Manager/Admin/Owner — 4 nav slots + More (no central + Add).
+function ManagerMobileNav({ moreOpen, setMoreOpen, setQuickCaptureOpen, navigate }) {
+  return (
+    <>
+      <nav
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bottom-nav border-t"
+        style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+        data-testid="mobile-bottom-nav-manager"
+      >
+        <div className="grid grid-cols-5 h-16">
+          {MANAGER_BOTTOM.map((t) => <BottomTab key={t.to} t={t} />)}
+          <button
+            onClick={() => setMoreOpen(true)}
+            data-testid="mobile-more-btn"
+            className="flex flex-col items-center justify-center gap-1 text-[10px]"
+            style={{ color: moreOpen ? "var(--brand-primary)" : "var(--text-muted)" }}
+          >
+            <MoreHorizontal className="w-5 h-5" />
+            More
+          </button>
+        </div>
+      </nav>
+      {moreOpen && (
+        <BottomSheet onClose={() => setMoreOpen(false)} testId="manager-more-sheet">
+          <SheetTitle>More</SheetTitle>
+          <SheetItem
+            icon={Wand2}
+            label="Quick capture"
+            testId="more-quick-capture"
+            onClick={() => { setMoreOpen(false); setQuickCaptureOpen(true); }}
+          />
+          {MANAGER_MORE.map((m) => (
+            <SheetItem key={m.to} icon={m.icon} label={m.label} testId={m.testId} onClick={() => { setMoreOpen(false); navigate(m.to); }} />
+          ))}
+        </BottomSheet>
+      )}
+    </>
   );
 }
 
@@ -459,8 +335,7 @@ function BottomTab({ t }) {
   );
 }
 
-// Phase L.3 — Desktop top nav with overflow "More ▾" dropdown. Splits the
-// `top` array into primary slots (always visible) + overflow (collapsed).
+// Phase L.3 — Desktop top nav with overflow "More ▾" dropdown.
 function DesktopTopNav({ top, role }) {
   const [open, setOpen] = useState(false);
   const ref = React.useRef(null);
