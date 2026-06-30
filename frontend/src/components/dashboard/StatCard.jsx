@@ -26,3 +26,32 @@ export default function StatCard({ label, value, sub, icon: Icon, kind = "muted"
     </div>
   );
 }
+
+// Compact loading variant — keeps the card outline + label visible (so the
+// grid layout is stable) but shows a shimmer block where the value will be.
+// Used during progressive Dashboard paint when only a subset of endpoints
+// have resolved.
+export function StatCardShimmer({ label, icon: Icon, kind = "muted", testId }) {
+  const colors = {
+    success: { bg: "var(--status-success-bg)", fg: "var(--status-success)" },
+    warning: { bg: "var(--status-warning-bg)", fg: "var(--status-warning)" },
+    danger: { bg: "var(--status-danger-bg)", fg: "var(--status-danger)" },
+    info: { bg: "var(--status-info-bg)", fg: "var(--status-info)" },
+    muted: { bg: "var(--bg-paper)", fg: "var(--text-primary)" },
+  }[kind];
+  return (
+    <div
+      className="rounded-md border p-5"
+      style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+      data-testid={testId ? `${testId}-shimmer` : "stat-shimmer"}
+    >
+      <div className="flex items-center justify-between">
+        <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{label}</div>
+        <div className="w-9 h-9 rounded-md flex items-center justify-center" style={{ background: colors.bg, color: colors.fg }}>
+          <Icon className="w-4 h-4 opacity-50" />
+        </div>
+      </div>
+      <div className="mt-3 h-8 w-16 rounded animate-pulse" style={{ background: "var(--bg-muted)" }} />
+    </div>
+  );
+}

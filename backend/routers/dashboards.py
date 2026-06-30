@@ -6,6 +6,7 @@ its handlers on it. Behaviour is byte-for-byte identical to pre-refactor.
 from __future__ import annotations
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta, date
+import asyncio
 import io
 import os
 import logging
@@ -252,11 +253,18 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "SeniorTM", "A
     top_topics = [{"name": k, "count": v} for k, v in sorted(topic_counts.items(), key=lambda x: -x[1])[:8]]
     top_barriers = [{"name": k, "count": v} for k, v in sorted(barrier_counts.items(), key=lambda x: -x[1])[:8]]
 
-    # Under-visited high-segment doctors
-    enriched = [await _enrich_doctor(d) for d in docs]
+    # Under-visited high-segment doctors.
+    # P1 follow-up perf — enriching every doctor was 5×N sequential awaits
+    # (~10s for Owner across 1000 doctors). We can pre-filter by segment
+    # cheaply (already in the doctor row) before paying the per-doc enrich
+    # cost — only ~5% of doctors typically match Engaged/Expert.
+    high_seg_candidates = [d for d in docs if d.get("segment") in ("Engaged", "Expert")]
+    enriched_candidates = await asyncio.gather(
+        *[_enrich_doctor(d) for d in high_seg_candidates]
+    ) if high_seg_candidates else []
     under_visited = [
-        d for d in enriched
-        if d["segment"] in ("Engaged", "Expert") and d["cadence_status"] in ("Overdue", "Critical")
+        d for d in enriched_candidates
+        if d["cadence_status"] in ("Overdue", "Critical")
     ][:8]
 
     market_pulse = _market_pulse(top_barriers, top_topics, sentiment_counts)

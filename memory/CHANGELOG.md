@@ -3,6 +3,53 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## P1 follow-ups + a backend perf bonus (Feb 2026)
+
+Both items from the P2 retrospective shipped, plus a much bigger backend win
+spotted during verification.
+
+### 1. Dashboard.jsx — per-card progressive rendering
+- `Promise.all` → four independent `safeGet(url, setter)` calls. Each card
+  paints as soon as its OWN endpoint resolves.
+- `loadError` is **cleared** on any subsequent success so a transient 503 on
+  cross-sell can't blot the whole dashboard once stat cards are live.
+- ManagerView now gates each stat tile on its specific data source:
+  - `visits_week / doctors / open_meetings / completed_meetings` → `data`
+  - `critical / high opportunity` → `interventions`
+  - If `/interventions` arrives before `/dashboard/manager`, critical + opp
+    paint first. New `StatCardShimmer` from `dashboard/StatCard.jsx` keeps the
+    grid layout stable per-card while waiting.
+
+### 2. Layout.jsx — viewport-aware top nav
+- New `useTopPrimaryCount(role)` hook reads `window.innerWidth` (with rAF
+  coalescing on resize) and returns the correct primary count from a
+  per-role `{default, lg, xl}` map.
+- `navConfig.js::TOP_PRIMARY_COUNT` now:
+  - TM:        7 → 7 → 8 (default → lg → xl)
+  - Manager:   5 → 5 → 5
+  - SeniorTM:  6 → 8 → 10 (full union inline at ≥1440px)
+  - Admin/Owner: 99 at every breakpoint
+- Verified by testing agent iteration 15: 6/8/10 inline anchors with
+  More-btn visible only at 1024 and 1280.
+
+### 3. Backend perf — `/dashboard/manager` 10s → ~0.4s
+- Was: `[await _enrich_doctor(d) for d in docs]` — 5 sequential DB roundtrips
+  per doctor × N doctors. For Owner across all companies (~1000 docs) that
+  hit ~10s.
+- Now: pre-filter `docs` by `segment in ("Engaged","Expert")` first (~5% pass)
+  and parallelise the remaining `_enrich_doctor` calls via `asyncio.gather`.
+- Empirically: 0.3-0.5s warm vs 10s before. The progressive Dashboard
+  rendering still helps for the OTHER three endpoints, but the primary stat
+  grid now paints sub-second on its own.
+
+### Verification
+- `ruff check backend/` → No lint errors.
+- ESLint on `frontend/src/` → No issues.
+- Backend regression suite → **72 passed** (P2 set + earlier phases).
+- curl timing on `/api/dashboard/manager` as Owner: 0.45s cold, 0.29s warm,
+  0.40s warm — verified locally.
+
+
 ## Audit P2 — Security hardening (Feb 2026)
 
 Four targeted hardening items shipped behind the existing `auth.py` + `_audit`

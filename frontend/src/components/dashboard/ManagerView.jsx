@@ -3,9 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/auth";
 import { Activity, AlertTriangle, Calendar, CheckCircle2, Sparkles, Users } from "lucide-react";
 
-import StatCard from "./StatCard";
+import StatCard, { StatCardShimmer } from "./StatCard";
 import AdvisoryPanel from "../AdvisoryPanel";
-import { StatGridSkeleton, CardSkeleton } from "../Skeleton";
+import { CardSkeleton } from "../Skeleton";
 
 function CrossBucket({ label, items, kind, testId }) {
   const color =
@@ -32,44 +32,38 @@ function CrossBucket({ label, items, kind, testId }) {
 export default function ManagerView({ data, commercial, interventions, crossSell }) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  // P1 follow-up — progressive rendering. Each prop loads independently so
-  // each card can appear as soon as its own endpoint resolves. The full-page
-  // skeleton fallback is only used during the very first paint when NOTHING
-  // has arrived yet (keeps the layout from snapping in once data lands).
-  if (!data && !commercial && !interventions && !crossSell) {
-    return (
-      <div data-testid="manager-view-skeleton">
-        <StatGridSkeleton count={4} testId="manager-stats-skeleton-1" />
-        <StatGridSkeleton count={2} testId="manager-stats-skeleton-2" />
-        <CardSkeleton testId="manager-advisory-skeleton" rows={4} />
-      </div>
-    );
-  }
+  // P1 follow-up — progressive rendering. Each stat tile is gated on its OWN
+  // data source so cards paint as soon as their endpoint resolves. If
+  // /dashboard/manager (data) lags but /interventions arrives quickly, the
+  // critical + high-opportunity cards still paint within the first second.
   const critCount = (interventions?.critical || []).length;
   const atRiskCount = (interventions?.at_risk || []).length;
   const oppCount = (interventions?.high_opportunity || []).length;
 
   return (
     <>
-      {data ? (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-            <StatCard label="Visits this week" value={data.stats?.visits_week ?? 0} icon={Activity} kind="info" testId="stat-visits-week" />
-            <StatCard label="Doctors" value={data.stats?.doctors ?? 0} icon={Users} kind="muted" testId="stat-doctors" />
-            <StatCard label="Critical" value={critCount} icon={AlertTriangle} kind="danger" testId="stat-critical" />
-            <StatCard label="High opportunity" value={oppCount} icon={Sparkles} kind="success" testId="stat-opportunity" />
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <StatCard label="Open meetings" value={data.stats?.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
-            <StatCard label="Meetings done this week" value={data.stats?.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
-          </div>
-        </>
-      ) : (
-        <>
-          <StatGridSkeleton count={4} testId="manager-stats-skeleton-1" />
-          <StatGridSkeleton count={2} testId="manager-stats-skeleton-2" />
-        </>
-      )}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3" data-testid="manager-stats-row-1">
+        {data
+          ? <StatCard label="Visits this week" value={data.stats?.visits_week ?? 0} icon={Activity} kind="info" testId="stat-visits-week" />
+          : <StatCardShimmer label="Visits this week" icon={Activity} kind="info" testId="stat-visits-week" />}
+        {data
+          ? <StatCard label="Doctors" value={data.stats?.doctors ?? 0} icon={Users} kind="muted" testId="stat-doctors" />
+          : <StatCardShimmer label="Doctors" icon={Users} kind="muted" testId="stat-doctors" />}
+        {interventions
+          ? <StatCard label="Critical" value={critCount} icon={AlertTriangle} kind="danger" testId="stat-critical" />
+          : <StatCardShimmer label="Critical" icon={AlertTriangle} kind="danger" testId="stat-critical" />}
+        {interventions
+          ? <StatCard label="High opportunity" value={oppCount} icon={Sparkles} kind="success" testId="stat-opportunity" />
+          : <StatCardShimmer label="High opportunity" icon={Sparkles} kind="success" testId="stat-opportunity" />}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" data-testid="manager-stats-row-2">
+        {data
+          ? <StatCard label="Open meetings" value={data.stats?.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
+          : <StatCardShimmer label="Open meetings" icon={Calendar} kind="muted" testId="stat-open-meetings" />}
+        {data
+          ? <StatCard label="Meetings done this week" value={data.stats?.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
+          : <StatCardShimmer label="Meetings done this week" icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />}
+      </div>
 
       {(commercial?.drop_offs || []).length > 0 && (
         <div className="rounded-md border p-4 mb-6" style={{ background: "var(--status-danger-bg)", borderColor: "var(--status-danger)" }} data-testid="alerts-strip">

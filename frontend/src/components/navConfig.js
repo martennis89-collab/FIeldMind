@@ -67,7 +67,7 @@ export const SENIORTM_TOP = [
 //   - SeniorTM:  6 at md, 8 at lg (≥1280px), 10 at xl (≥1440px) → ALL inline
 //   - Owner+Admin: all visible at every breakpoint (no overflow)
 export const TOP_PRIMARY_COUNT = {
-  TM: { default: 7, lg: 7, xl: 7 },
+  TM: { default: 7, lg: 7, xl: 8 },
   Manager: { default: 5, lg: 5, xl: 5 },
   SeniorTM: { default: 6, lg: 8, xl: 10 },
   Admin: { default: 99, lg: 99, xl: 99 },

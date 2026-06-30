@@ -37,7 +37,13 @@ export default function Dashboard() {
     const safeGet = async (url, setter) => {
       try {
         const r = await api.get(url);
-        if (!cancelled) setter(r.data);
+        if (!cancelled) {
+          setter(r.data);
+          // Clear a previously-set fatal banner once any subsequent fetch
+          // succeeds — a transient 503 on cross-sell shouldn't keep blotting
+          // the dashboard once /dashboard/manager + stat cards have rendered.
+          setLoadError(null);
+        }
       } catch (e) {
         if (!cancelled) setLoadError(e?.message || "Could not load the dashboard.");
       }
