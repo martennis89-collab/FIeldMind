@@ -3,6 +3,60 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Audit P1 — Spaghetti / maintainability refactor (Feb 2026)
+
+Goal: untangle the three largest hand-of-history files without changing any
+visible behaviour. Validated by 64/64 backend pytest + a full frontend smoke
+pass across Owner / SeniorTM / TM roles (testing agent iteration 14: 100%).
+
+### 1. `backend/_deps.py` (new) ← extracted from `server.py`
+- Moved **11 scope / RBAC helpers + 1 feature flag** out of `server.py`
+  (1,822 → 1,684 lines): `_doctor_query_for`, `_can_access_doctor`,
+  `_company_id_for`, `_company_query_for`, `_apply_company_scope`,
+  `_managed_tm_ids_for`, `_is_manager_role`, `_same_company`,
+  `_assert_same_company`, `_stamp_company`, `ENFORCE_COMPANY_ISOLATION`.
+- DB-accessing helpers use a lazy `from server import db` inside the function
+  body to break the import cycle. `server.py` re-exports the names via
+  `from _deps import (...)` so every existing `from server import _helper`
+  in routers keeps working — zero call-site changes.
+
+### 2. `pages/Dashboard.jsx` ← 640 → 152 lines
+- Extracted `ManagerView`, `TMView`, and the shared `StatCard` into
+  `components/dashboard/` (3 new files, ~360 LOC total). The page now
+  orchestrates role + view-toggle state and lets the sub-components render
+  themselves from their own data.
+- **Removed 145 lines of dead code** while at it: unused `TMPerformanceTable`,
+  `FunnelRow`, and `sentimentColor` plus the orphaned
+  `/dashboard/manager/performance` fetch (this data is rendered by the
+  dedicated `/pages/TeamPerformance.jsx` route — Dashboard was double-fetching
+  but never consuming it).
+
+### 3. `components/Layout.jsx` ← 580 → 458 lines
+- New `components/navConfig.js` (139 LOC) holds every role-based nav array:
+  `TM_TOP`, `MANAGER_TOP`, `SENIORTM_TOP`, `TM_BOTTOM`, `MANAGER_BOTTOM`,
+  `SENIORTM_BOTTOM`, the corresponding `_MORE` overflow arrays,
+  `TOP_PRIMARY_COUNT` map, and `ADD_SHEET_ITEMS`.
+- Unified the previously-triplicated mobile-nav JSX into two inner components:
+  `MobileNavWithAdd` (TM + SeniorTM — central + Add) and `ManagerMobileNav`
+  (Manager / Admin / Owner — no Add). `DesktopTopNav` handles the
+  primary-vs-overflow split with the "More ▾" dropdown.
+
+### Verification
+- `ruff check backend/` → No lint errors.
+- ESLint on `frontend/src/` → No issues.
+- Backend pytest (a/b, d_metrics, e_insights, i_enrichment, i1_past_week,
+  l_senior_tm) → **64 passed**.
+- Frontend testing agent iteration 14 → **100% smoke pass**; SeniorTM
+  dual-dashboard toggle, ADD_SHEET_ITEMS, More dropdown all verified.
+
+### Known minor follow-ups (non-blocking, captured for backlog)
+- Owner dashboard first paint is ~8s due to `Promise.all` of 4 cross-company
+  endpoints. Pre-existing — consider progressive per-card rendering later.
+- `TOP_PRIMARY_COUNT.SeniorTM = 6` always pushes 4 items into the More
+  dropdown. On 1920px viewports there's room to show all 10 inline —
+  consider a viewport-aware primary count.
+
+
 ## Audit P0 — Lint cleanup (Feb 2026)
 
 Cleared all 121 outstanding lint warnings across backend (84 ruff) and frontend

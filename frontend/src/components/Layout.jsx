@@ -35,14 +35,15 @@ export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  // Owner + Admin + SeniorTM all see the Manager-style top nav (oversight visibility).
+  // Top-nav routing splits roles into three lanes:
+  //   - Plain TM           -> TM_TOP
+  //   - SeniorTM (hybrid)  -> SENIORTM_TOP (full union of TM + Manager items)
+  //   - Manager / Admin / Owner -> MANAGER_TOP
+  // We keep `isManager` separate from `isSeniorTM` because SeniorTM also needs
+  // TM-only behaviour (the central "+ Add" button on mobile).
   const isManager = user?.role === "Manager" || user?.role === "Admin" || user?.role === "Owner";
   const isSeniorTM = user?.role === "SeniorTM";
   const isTM = user?.role === "TM";
-  // Top nav routing:
-  //   - Plain TM: TM_TOP
-  //   - SeniorTM: SENIORTM_TOP (full union of TM + Manager items)
-  //   - Manager / Admin / Owner: MANAGER_TOP
   const TOP = isSeniorTM ? SENIORTM_TOP : (isManager ? MANAGER_TOP : TM_TOP);
   const [addOpen, setAddOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
