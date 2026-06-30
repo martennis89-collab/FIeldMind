@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 15 — focused regression on (a) Owner dashboard progressive paint and (b) viewport-aware SeniorTM nav at 1024/1280/1920. Skeleton wiring is correct (manager-stats-skeleton-1 and cross-sell-skeleton both observed during initial load; cross-sell-skeleton resolved → cross-sell-panel after the panel mounted). Independent safeGet() per endpoint confirmed via code review. SeniorTM viewport-aware nav works exactly as designed: 6 inline anchors + More-btn @1024, 8 inline + More-btn @1280, 10 inline and NO More-btn @1920. Owner @1920 has no More-btn (7 anchors inline as MANAGER_TOP has 7 items). HOWEVER two findings deserve E1's attention: (1) The sub-3-second 'first stat-card paint' claim does NOT hold empirically — first stat-* visible took ~11.4s from submit click (skeleton was visible during this window). The bottleneck is the /dashboard/manager endpoint itself (Owner pulls cross-company data and it is slow); the progressive split helps the OTHER three endpoints (commercial/interventions/cross-sell) but the stat grid is gated on /dashboard/manager which is currently the slowest call. (2) TM @1920 shows the desktop-nav-more-btn — TM_TOP actually has 8 items (Dashboard/iTero/Invisalign/Doctors/Meetings/Tasks/Expenses/Reports) but TOP_PRIMARY_COUNT.TM={default:7,lg:7,xl:7}, so 1 item (Reports) is always in overflow. This contradicts the test request's stated expectation ('TM has 7 items, no More-btn'). Either the request's expectation is stale, or TOP_PRIMARY_COUNT.TM should be 8 (or include {xl:8}) to make all items inline at 1920px. Not a regression vs iteration 14, just a config-vs-spec mismatch worth resolving.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Dashboard.jsx / ManagerView (Owner)",
+        "issue": "First stat-card paint took ~11.4s from login submit click (target was <3s). Skeletons (manager-stats-skeleton-1 + cross-sell-skeleton) were correctly shown during the wait, so the progressive-render plumbing is sound — but the stat grid is gated on /dashboard/manager which is itself ~10s. Progressive rendering ONLY helps the 3 OTHER cards (commercial/interventions/cross-sell) paint as their endpoints land; the primary stat cards still wait for /dashboard/manager.",
+        "selector": "[data-testid^='stat-']",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Layout.jsx DesktopTopNav (TM role @1920)",
+        "issue": "TM @1920 still shows desktop-nav-more-btn (1 overflow item — Reports). TM_TOP has 8 items but TOP_PRIMARY_COUNT.TM = {default:7, lg:7, xl:7}. Request spec said 'TM has 7 items, no More-btn at 1920' — either remove one item from TM_TOP, or set TOP_PRIMARY_COUNT.TM.xl = 8 so all fit inline on 1920px screens.",
+        "selector": "[data-testid='desktop-nav-more-btn']",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Decide if the <3s 'first stat-card paint' goal needs a backend split of /dashboard/manager (e.g. /dashboard/manager/stats fast path + /dashboard/manager/market-pulse separate), OR if the goal should be relaxed. Current refactor is architecturally correct but the slowest endpoint is the one feeding stat-*.",
+    "Reconcile TM @1920 expectation: either set TOP_PRIMARY_COUNT.TM = {default:7, lg:7, xl:8} so Reports goes inline on wide screens (matches what the request claims happens), OR update the request's expectation to '1 overflow item'.",
+    "Optional UX: drop /dashboard/manager into two state slots so visits_week + doctors stats appear separately from market_pulse — would let stat cards paint in <2s while keeping market-pulse skeleton."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.jsx safeGet() — independent fetches look clean, but on a 4xx/5xx the loadError is set by whichever endpoint failed last, and subsequent successful endpoints DON'T clear it. Consider per-endpoint error state or scoping loadError to fatal failures only, so a transient 503 on /cross-sell doesn't blot the whole dashboard with a red banner while stat cards rendered fine.",
+    "Layout.jsx useTopPrimaryCount — works correctly at all 3 breakpoints. Uses rAF coalescing on resize. Pre-existing comment note: the resize listener does NOT re-run on initial mount if window.innerWidth changes between SSR initial state and first paint; not a concern in this CSR-only app but worth a one-line guard if SSR is ever added.",
+    "ManagerView.jsx 'if (!data && !commercial && !interventions && !crossSell)' fallback only triggers when NOTHING has resolved — correct intent. Once any one resolves the inline skeletons (manager-stats-skeleton-1 + cross-sell-skeleton) take over. Good.",
+    "navConfig.js TM_TOP contains 8 items (Dashboard, iTero, Invisalign, Doctors, Meetings, Tasks, Expenses, Reports) — request says 'TM has 7 items'. Either the spec or the config is wrong; one needs updating."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "n/a (not retested per request)",
+    "frontend": "5/7 expected behaviors fully match spec; 2/7 partial (Owner <3s paint target missed by ~8s due to /dashboard/manager latency, and TM @1920 still shows More-btn because TM_TOP has 8 items not 7)"
+  },
+  "test_credentials": "Owner: martennis89@gmail.com / 1234; SeniorTM: snr.demo.1782126329@field.io / senior123; TM: tm1@field.io / tm123 — all confirmed working.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 15 verified P1 follow-ups: (1) progressive paint skeletons (manager-stats-skeleton-1 and cross-sell-skeleton) DO appear during Owner dashboard load — wiring is correct; (2) useTopPrimaryCount(role) works at all 3 breakpoints for SeniorTM (6/8/10 with More-btn visible only at 1024 and 1280). Open issues: Owner first-paint timing target of <3s is NOT met because /dashboard/manager itself is the slow endpoint (~10s) and stat cards are gated on it; this is a backend perf issue, not a frontend regression. TM @1920 still shows More-btn (1 overflow: Reports) — TM_TOP has 8 items but TOP_PRIMARY_COUNT.TM.xl is 7. If E1 wants TM to be all-inline @1920, bump TM xl to 8 or remove one nav item.",
+  "rca of the issue": "Owner first-paint exceeded 3s target — RCA: Although Dashboard.jsx now calls safeGet() independently per endpoint (verified by source review of lines 37-54), the stat cards (visits-week/doctors/critical/opportunity) depend on TWO different setters: data.stats from /dashboard/manager AND interventions.{critical,high_opportunity} from /dashboard/manager/interventions. The render branch on line 54 (`{data ? ... : <StatGridSkeleton>}`) gates the entire stat grid on `data` (the manager endpoint). Empirically that endpoint is ~10s for Owner, which dominates the first-paint timing. Mitigation: either (a) speed up /dashboard/manager backend, or (b) split it into /dashboard/manager/stats (cheap) + /dashboard/manager/market-pulse (expensive AI) so stats can render in <2s. TM @1920 More-btn issue — RCA: TM_TOP in navConfig.js has 8 items (line 19-28) but TOP_PRIMARY_COUNT.TM.xl is 7 (line 70), so 1 item overflows on every viewport. Mitigation: set TOP_PRIMARY_COUNT.TM = {default:7, lg:7, xl:8} or remove one TM_TOP item to match the request's '7 items' claim."
+}

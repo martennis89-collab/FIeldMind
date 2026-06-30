@@ -58,16 +58,20 @@ export const SENIORTM_TOP = [
 // Phase L.3 — Desktop top-nav split into primary slots (always visible) and
 // overflow (collapsed under a "More ▾" dropdown). Keeps the header focused
 // on high-traffic links and prevents wrap on 1024-1280px laptop screens.
-//   - TM:        7 primary
-//   - Manager:   5 primary
-//   - SeniorTM:  6 primary (Dashboard / Intervention / Doctors / Tasks / Team / Reports)
-//   - Owner+Admin: all visible (no overflow)
+//
+// Values are { default, lg, xl } counts so the Senior TM nav can expand on
+// wide desktops (1440px+) where there's room for the full union of TM +
+// Manager links inline. `default` is the minimum used at md (≥768px).
+//   - TM:        7 primary at every breakpoint
+//   - Manager:   5 primary at every breakpoint
+//   - SeniorTM:  6 at md, 8 at lg (≥1280px), 10 at xl (≥1440px) → ALL inline
+//   - Owner+Admin: all visible at every breakpoint (no overflow)
 export const TOP_PRIMARY_COUNT = {
-  TM: 7,
-  Manager: 5,
-  SeniorTM: 6,
-  Admin: 99,
-  Owner: 99,
+  TM: { default: 7, lg: 7, xl: 7 },
+  Manager: { default: 5, lg: 5, xl: 5 },
+  SeniorTM: { default: 6, lg: 8, xl: 10 },
+  Admin: { default: 99, lg: 99, xl: 99 },
+  Owner: { default: 99, lg: 99, xl: 99 },
 };
 
 // ---------- Mobile bottom nav (max 5 slots) ----------

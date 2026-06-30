@@ -336,11 +336,41 @@ function BottomTab({ t }) {
   );
 }
 
-// Phase L.3 — Desktop top nav with overflow "More ▾" dropdown.
+// Phase L.3 — Desktop top nav with viewport-aware primary count + "More ▾"
+// dropdown for overflow. The breakpoints mirror Tailwind (lg=1280, xl=1440).
+// This keeps the SeniorTM full union of links inline on 1440px+ screens
+// while preserving the focused 6-item nav on 1024-1280 laptop displays.
+function useTopPrimaryCount(role) {
+  const counts = TOP_PRIMARY_COUNT[role] || TOP_PRIMARY_COUNT.TM;
+  const computeBreakpoint = () => {
+    if (typeof window === "undefined") return "default";
+    const w = window.innerWidth;
+    if (w >= 1440) return "xl";
+    if (w >= 1280) return "lg";
+    return "default";
+  };
+  const [bp, setBp] = React.useState(computeBreakpoint);
+  React.useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    let frame;
+    const onResize = () => {
+      // rAF coalescing — resize fires many times mid-drag.
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => setBp(computeBreakpoint()));
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+  return counts[bp] ?? counts.default ?? 99;
+}
+
 function DesktopTopNav({ top, role }) {
   const [open, setOpen] = useState(false);
   const ref = React.useRef(null);
-  const primaryCount = TOP_PRIMARY_COUNT[role] || 99;
+  const primaryCount = useTopPrimaryCount(role);
   const primary = top.slice(0, primaryCount);
   const overflow = top.slice(primaryCount);
 

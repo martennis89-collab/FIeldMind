@@ -32,7 +32,11 @@ function CrossBucket({ label, items, kind, testId }) {
 export default function ManagerView({ data, commercial, interventions, crossSell }) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  if (!data) {
+  // P1 follow-up — progressive rendering. Each prop loads independently so
+  // each card can appear as soon as its own endpoint resolves. The full-page
+  // skeleton fallback is only used during the very first paint when NOTHING
+  // has arrived yet (keeps the layout from snapping in once data lands).
+  if (!data && !commercial && !interventions && !crossSell) {
     return (
       <div data-testid="manager-view-skeleton">
         <StatGridSkeleton count={4} testId="manager-stats-skeleton-1" />
@@ -47,16 +51,25 @@ export default function ManagerView({ data, commercial, interventions, crossSell
 
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        <StatCard label="Visits this week" value={data.stats?.visits_week ?? 0} icon={Activity} kind="info" testId="stat-visits-week" />
-        <StatCard label="Doctors" value={data.stats?.doctors ?? 0} icon={Users} kind="muted" testId="stat-doctors" />
-        <StatCard label="Critical" value={critCount} icon={AlertTriangle} kind="danger" testId="stat-critical" />
-        <StatCard label="High opportunity" value={oppCount} icon={Sparkles} kind="success" testId="stat-opportunity" />
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Open meetings" value={data.stats?.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
-        <StatCard label="Meetings done this week" value={data.stats?.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
-      </div>
+      {data ? (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+            <StatCard label="Visits this week" value={data.stats?.visits_week ?? 0} icon={Activity} kind="info" testId="stat-visits-week" />
+            <StatCard label="Doctors" value={data.stats?.doctors ?? 0} icon={Users} kind="muted" testId="stat-doctors" />
+            <StatCard label="Critical" value={critCount} icon={AlertTriangle} kind="danger" testId="stat-critical" />
+            <StatCard label="High opportunity" value={oppCount} icon={Sparkles} kind="success" testId="stat-opportunity" />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <StatCard label="Open meetings" value={data.stats?.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
+            <StatCard label="Meetings done this week" value={data.stats?.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
+          </div>
+        </>
+      ) : (
+        <>
+          <StatGridSkeleton count={4} testId="manager-stats-skeleton-1" />
+          <StatGridSkeleton count={2} testId="manager-stats-skeleton-2" />
+        </>
+      )}
 
       {(commercial?.drop_offs || []).length > 0 && (
         <div className="rounded-md border p-4 mb-6" style={{ background: "var(--status-danger-bg)", borderColor: "var(--status-danger)" }} data-testid="alerts-strip">
@@ -74,7 +87,8 @@ export default function ManagerView({ data, commercial, interventions, crossSell
       <AdvisoryPanel variant="team" />
       {user?.role === "Admin" || user?.role === "Owner" ? <AdvisoryPanel variant="company" /> : null}
 
-      <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="cross-sell-panel">
+      {crossSell ? (
+        <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="cross-sell-panel">
         <div className="flex items-center justify-between mb-4">
           <div>
             <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Cross-sell insights</div>
@@ -87,11 +101,16 @@ export default function ManagerView({ data, commercial, interventions, crossSell
           <CrossBucket label="High opportunity for both" items={crossSell?.high_opportunity_both || []} kind="success" testId="cross-high-both" />
         </div>
       </div>
+      ) : (
+        <CardSkeleton testId="cross-sell-skeleton" rows={3} />
+      )}
 
-      <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="market-pulse-card">
-        <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Market pulse</div>
-        <p className="text-sm mt-1 leading-relaxed" data-testid="market-pulse" style={{ color: "var(--text-primary)" }}>{data.market_pulse}</p>
-      </div>
+      {data && (
+        <div className="rounded-md border p-6 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="market-pulse-card">
+          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Market pulse</div>
+          <p className="text-sm mt-1 leading-relaxed" data-testid="market-pulse" style={{ color: "var(--text-primary)" }}>{data.market_pulse}</p>
+        </div>
+      )}
 
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
         <button onClick={() => navigate("/itero")} data-testid="quick-link-itero" className="rounded-md border p-5 text-left card-lift" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>

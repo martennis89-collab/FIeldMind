@@ -26,42 +26,33 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      setLoadError(null);
-      try {
-        // SeniorTM pulls BOTH datasets in parallel. Manager/Admin/Owner pulls
-        // only the manager view. Plain TM pulls only the personal view.
-        const wantsManager = isManagerOnly || isSeniorTM;
-        const wantsTm = user.role === "TM" || isSeniorTM;
+    setLoadError(null);
 
-        const promises = [];
-        if (wantsManager) {
-          promises.push(
-            api.get("/dashboard/manager"),
-            api.get("/dashboard/manager/commercial"),
-            api.get("/dashboard/manager/interventions"),
-            api.get("/dashboard/manager/cross-sell"),
-          );
-        }
-        if (wantsTm) {
-          promises.push(api.get("/dashboard/tm"));
-        }
-        const results = await Promise.all(promises);
-        if (cancelled) return;
-        let i = 0;
-        if (wantsManager) {
-          setMgrData(results[i++].data);
-          setCommercialData(results[i++].data);
-          setInterventionsData(results[i++].data);
-          setCrossSellData(results[i++].data);
-        }
-        if (wantsTm) {
-          setTmData(results[i++].data);
-        }
+    // P1 follow-up — fire each endpoint independently so each card paints as
+    // soon as its data lands (previously a single Promise.all blocked the
+    // whole dashboard on the slowest cross-company endpoint ~8s for Owners).
+    const wantsManager = isManagerOnly || isSeniorTM;
+    const wantsTm = user.role === "TM" || isSeniorTM;
+
+    const safeGet = async (url, setter) => {
+      try {
+        const r = await api.get(url);
+        if (!cancelled) setter(r.data);
       } catch (e) {
         if (!cancelled) setLoadError(e?.message || "Could not load the dashboard.");
       }
-    })();
+    };
+
+    if (wantsManager) {
+      safeGet("/dashboard/manager", setMgrData);
+      safeGet("/dashboard/manager/commercial", setCommercialData);
+      safeGet("/dashboard/manager/interventions", setInterventionsData);
+      safeGet("/dashboard/manager/cross-sell", setCrossSellData);
+    }
+    if (wantsTm) {
+      safeGet("/dashboard/tm", setTmData);
+    }
+
     return () => { cancelled = true; };
   }, [user.role, isManagerOnly, isSeniorTM]);
 
