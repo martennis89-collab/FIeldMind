@@ -3,6 +3,56 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## Audit P2 — Security hardening (Feb 2026)
+
+Four targeted hardening items shipped behind the existing `auth.py` + `_audit`
+infrastructure. Zero schema changes outside of one new `login_attempts`
+collection. **72/72 backend tests pass** (regression suite of 64 + 8 new P2
+tests). Lint clean.
+
+### 1. Brute-force login throttling (`auth.py`, `routers/auth.py`)
+- New helpers `assert_not_locked_out`, `record_failed_login`,
+  `clear_login_attempts`. Tracks attempts in a new `login_attempts` collection
+  keyed by **both** `ip:{ip}|email:{email}` and `email:{email}` — so an
+  attacker who rotates IPs is still throttled per account.
+- Defaults: **5 failures within 15 min → HTTP 429**. Configurable via
+  `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_MINUTES`.
+- Successful login wipes both counters.
+- Deactivated-account hits also increment the counter (closes the email-
+  enumeration oracle).
+- Indexes: `identifier` + `last_attempt_at` TTL (24h hard ceiling).
+
+### 2. Per-user rate limit on `/api/reports/generate` (`routers/reports.py`)
+- In-memory sliding-window token bucket. **20 generations / 60s / user** by
+  default (`REPORT_GEN_LIMIT`, `REPORT_GEN_WINDOW_S`). Returns HTTP 429 with
+  a `Retry-After` header when exhausted.
+- Single-process safe; swap for Redis if the deployment fans out.
+
+### 3. Owner cross-company-read audit (`_deps.py`)
+- New `_audit_owner_cross_company_read(user, entity)` — appends one
+  `audit_logs` row per `(owner_id, target_company_id, day, entity_type)` via
+  the existing idempotency key on `_audit`. Pure observability (never raises;
+  never affects the read path). Event type: `owner_cross_company_read`.
+- Wired into `_can_access_doctor` (only entity Owner can reach today).
+
+### 4. AI error string sanitisation (`ai.py`)
+- New `_sanitise_ai_error(e)` redacts:
+  - The literal `EMERGENT_LLM_KEY` value (whatever it is)
+  - `sk-` / `pk-` / `Bearer` style tokens
+  - JWT-shaped triple-base64 strings
+  - Any 40+ char opaque blob
+- Used by both `analyze_visit_note` and `extract_task_from_text`.
+
+### 5. JWT secret env-only verification
+- Confirmed `auth.py` uses `os.environ["JWT_SECRET"]` (no `.get(..., default)`).
+- New static-source test in `test_audit_p2_security.py` blocks any future
+  regression that re-introduces a fallback default.
+
+### Verification
+- `ruff check backend/` → No lint errors.
+- Backend pytest (full suite + new P2 file) → **72 passed**.
+
+
 ## Audit P1 — Spaghetti / maintainability refactor (Feb 2026)
 
 Goal: untangle the three largest hand-of-history files without changing any

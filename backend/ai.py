@@ -12,6 +12,35 @@ EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 MODEL_PROVIDER = "anthropic"
 MODEL_NAME = "claude-sonnet-4-5-20250929"
 
+# Patterns that look like a credential the upstream LLM SDK might echo back to
+# us in an exception message. We blunt-redact them before showing the error
+# string to non-admin users in the UI.
+#  - sk-/Bearer style API tokens
+#  - JWT-ish triple-segment base64 tokens
+#  - The literal EMERGENT_LLM_KEY value (whatever it is)
+_SECRET_PATTERNS = [
+    re.compile(r"\b(sk|pk|rk|api|key|token|bearer)[-_a-z0-9]*[ =:]\S+", re.IGNORECASE),
+    re.compile(r"\beyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}\b"),  # JWT
+    re.compile(r"\b[A-Za-z0-9_\-]{40,}\b"),  # generic long opaque token
+]
+
+
+def _sanitise_ai_error(e: Exception) -> str:
+    """Return a short, safe error reason for the UI.
+
+    We KEEP the exception type (useful for users to report) and a redacted
+    snippet of the message. We DROP anything that could leak a key/token.
+    """
+    detail = str(e).strip()
+    if EMERGENT_KEY:
+        detail = detail.replace(EMERGENT_KEY, "<redacted>")
+    for pat in _SECRET_PATTERNS:
+        detail = pat.sub("<redacted>", detail)
+    if len(detail) > 180:
+        detail = detail[:180] + "…"
+    detail = detail.strip()
+    return f"{type(e).__name__}: {detail}" if detail else type(e).__name__
+
 SYSTEM_PROMPT = """You are an AI assistant for a Field Intelligence Platform used by dental/medical Territory Managers (TMs) to log conversations with doctors about Invisalign and aligner products.
 
 Your job: analyze a TM's free-text visit note and extract structured tags. You must NEVER invent facts. If you are uncertain, mark as "Unknown" or omit. Preserve the user's intent.
@@ -254,14 +283,10 @@ async def analyze_note(note: str, session_id: str) -> dict:
         return result
     except Exception as e:
         logger.exception("AI analyze_note failed: %s", e)
-        # Surface the real error reason for both debugging and the user's UI.
-        # Common cases: budget exhausted, key invalid, network. We include the
-        # exception type AND a short stringified message so the user can copy it
-        # back to support if needed. Stripped to avoid leaking secrets.
-        detail = str(e).strip()
-        if len(detail) > 180:
-            detail = detail[:180] + "…"
-        reason = f"{type(e).__name__}: {detail}" if detail else type(e).__name__
+        # Surface a sanitised error reason for the user UI. We strip anything
+        # that resembles a key or token so we don't leak secrets to non-admin
+        # users via the visit detail screen.
+        reason = _sanitise_ai_error(e)
         return _empty_result(reason)
 
 
@@ -347,5 +372,5 @@ async def extract_task_from_text(text: str, doctor_names: Optional[list] = None)
             "suggested_due_date": None,
             "priority": "Medium",
             "doctor_hint": None,
-            "ai_error": f"{type(e).__name__}",
+            "ai_error": _sanitise_ai_error(e),
         }

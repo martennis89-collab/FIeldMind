@@ -13,6 +13,40 @@ import uuid
 
 from fastapi import Depends, HTTPException, Request, Query, UploadFile, File, Form
 from pydantic import BaseModel
+from collections import defaultdict, deque
+from threading import Lock
+
+
+# ============================================================
+# P2 — Simple per-user in-memory rate limiter for /reports/generate.
+# The endpoint composes a PDF on the fly with N database aggregations; we cap
+# at REPORT_GEN_LIMIT calls per REPORT_GEN_WINDOW_S seconds per user.
+# In-memory is enough for a single-process supervisor deployment. If we go
+# multi-process later, swap for a Redis or Mongo-backed counter.
+# ============================================================
+REPORT_GEN_LIMIT = int(os.environ.get("REPORT_GEN_LIMIT", "20"))
+REPORT_GEN_WINDOW_S = int(os.environ.get("REPORT_GEN_WINDOW_S", "60"))
+_report_gen_hits: dict[str, deque[float]] = defaultdict(deque)
+_report_gen_lock = Lock()
+
+
+def _enforce_report_rate_limit(user_id: str) -> None:
+    import time
+    now = time.monotonic()
+    cutoff = now - REPORT_GEN_WINDOW_S
+    with _report_gen_lock:
+        bucket = _report_gen_hits[user_id]
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= REPORT_GEN_LIMIT:
+            retry_after = max(1, int(bucket[0] + REPORT_GEN_WINDOW_S - now))
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many report generations. Try again in {retry_after}s.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        bucket.append(now)
+
 
 # Pull every shared symbol the handlers reference. The router file is imported AFTER
 # server.py finishes initialising all of these so the names are guaranteed to exist.
@@ -87,6 +121,8 @@ async def generate_report(week_start: Optional[str] = None, user=Depends(get_cur
     if user["role"] not in ("TM", "SeniorTM"):
         # Admin/Manager can preview their own (no-op)
         raise HTTPException(status_code=403, detail="Only TMs generate reports")
+    # P2 — lightweight per-user rate limit for the expensive PDF/CSV path.
+    _enforce_report_rate_limit(user["id"])
     anchor = datetime.now(timezone.utc)
     if week_start:
         try:

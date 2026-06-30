@@ -27,6 +27,9 @@ from server import (
     hash_password,
     verify_password,
     create_token,
+    assert_not_locked_out,
+    record_failed_login,
+    clear_login_attempts,
     # helpers
     _now_iso,
     _audit,
@@ -74,14 +77,23 @@ from models import LoginRequest, LoginResponse, UserPublic
 
 @api.post("/auth/login", response_model=LoginResponse)
 async def login(body: LoginRequest, request: Request):
-    user = await db.users.find_one({"email": body.email.lower()})
+    ip = request.client.host if request.client else None
+    email = (body.email or "").lower().strip()
+    # P2 brute-force guard — short-circuit before the bcrypt verify burns CPU.
+    await assert_not_locked_out(ip, email)
+    user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user.get("password_hash", "")):
+        await record_failed_login(ip, email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.get("active_status", True):
+        # Treat deactivated-account hits as failed attempts so a deactivated
+        # user can't be used as a probing oracle for valid emails.
+        await record_failed_login(ip, email)
         raise HTTPException(status_code=403, detail="User is deactivated")
+    await clear_login_attempts(ip, email)
     token = create_token(user["id"], user["role"], user["email"])
     _strip_user(user)
-    await _audit(user, "login", "user", user["id"], ip=request.client.host if request.client else None)
+    await _audit(user, "login", "user", user["id"], ip=ip)
     return {"token": token, "user": user}
 
 @api.get("/auth/me", response_model=UserPublic)

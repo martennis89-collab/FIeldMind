@@ -20,6 +20,9 @@ from auth import (
     create_token,
     get_current_user,
     require_roles,
+    assert_not_locked_out,
+    record_failed_login,
+    clear_login_attempts,
     set_db as auth_set_db,
 )
 from models import (
@@ -1606,6 +1609,16 @@ async def on_startup():
     await db.tasks.create_index([("tm_user_id", 1), ("status", 1)])
     await db.tasks.create_index([("team_id", 1)])
     await db.audit_logs.create_index([("timestamp", -1)])
+    await db.audit_logs.create_index([("event_type", 1), ("timestamp", -1)])
+    await db.audit_logs.create_index(
+        [("idempotency_key", 1)], unique=False, sparse=True
+    )
+    # P2 brute-force protection — TTL purges old rows so the counter resets cleanly.
+    await db.login_attempts.create_index("identifier")
+    await db.login_attempts.create_index(
+        "last_attempt_at",
+        expireAfterSeconds=24 * 3600,  # auto-evict after a day even if never cleared
+    )
     await db.reports.create_index("id", unique=True)
     await db.reports.create_index([("tm_user_id", 1), ("week_start", -1)])
     await db.reports.create_index([("team_id", 1), ("status", 1)])

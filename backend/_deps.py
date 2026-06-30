@@ -138,6 +138,10 @@ async def _can_access_doctor(user, doctor) -> bool:
     if not _same_company(user, doctor):
         return False
     if user["role"] == "Owner":
+        # Audit P2 — record any Owner read that crosses company boundaries.
+        # Idempotency keyed by (owner, target_company, day) so we get one row
+        # per Owner per company per day, not a flood per request.
+        await _audit_owner_cross_company_read(user, doctor)
         return True
     if user["role"] == "Admin":
         return True
@@ -153,6 +157,45 @@ async def _can_access_doctor(user, doctor) -> bool:
         )
         return sub is not None
     return doctor.get("assigned_tm_id") == user["id"]
+
+
+async def _audit_owner_cross_company_read(user, entity) -> None:
+    """Append one audit_logs row when an Owner reads data from another company.
+
+    Idempotency: one row per (owner_id, target_company_id, calendar-day, entity_type).
+    Pure observability — never raises so a flaky write doesn't break reads.
+    """
+    if not isinstance(entity, dict):
+        return
+    target_company = entity.get("company_id")
+    if not target_company:
+        return
+    owner_company = user.get("company_id")
+    if target_company == owner_company:
+        return  # same company — not a cross-company read
+    try:
+        from server import _audit, _now_iso  # lazy
+        from datetime import datetime, timezone
+        day = datetime.now(timezone.utc).date().isoformat()
+        entity_type = "doctor"  # the only call site today; extend when adding more
+        idem = f"owner_xc_read|{user.get('id')}|{target_company}|{day}|{entity_type}"
+        await _audit(
+            user,
+            "read",
+            entity_type,
+            entity.get("id"),
+            new={
+                "target_company_id": target_company,
+                "owner_company_id": owner_company,
+                "day": day,
+            },
+            event_type="owner_cross_company_read",
+            idempotency_key=idem,
+        )
+        _ = _now_iso  # silence unused-import lint
+    except Exception:
+        # Observability path must not impact the read.
+        pass
 
 
 # Phase L — Senior TM scoping helpers.
