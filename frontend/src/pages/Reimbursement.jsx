@@ -185,6 +185,12 @@ function ReportDrawer({ id, onClose, onChange, user }) {
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
   const [comment, setComment] = useState("");
+  // Search widget for prior-month expenses — hooks must be declared before
+  // any early return to satisfy React rules-of-hooks.
+  const [expenseQuery, setExpenseQuery] = useState("");
+  const [expenseSearchMonth, setExpenseSearchMonth] = useState("");
+  const [searchResults, setSearchResults] = useState(null);
+  const [searching, setSearching] = useState(false);
 
   const load = async () => {
     const r = await api.get(`/reimbursement/reports/${id}`);
@@ -257,27 +263,34 @@ function ReportDrawer({ id, onClose, onChange, user }) {
     } finally { setBusy(false); }
   };
 
-  const toggleAll = async (include) => {
+  // Search widget for prior-month expenses (auto-current-month is
+  // implicit in the totals; the drawer only opts-in older receipts).
+  const runExpenseSearch = async () => {
+    setSearching(true);
+    try {
+      const params = {};
+      if (expenseQuery.trim()) params.q = expenseQuery.trim();
+      if (expenseSearchMonth) params.month = expenseSearchMonth;
+      const r = await api.get(`/reimbursement/reports/${id}/searchable-expenses`, { params });
+      setSearchResults(r.data.results || []);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Search failed");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const addFromSearch = async (expense_id) => {
     setBusy(true);
     try {
-      const rows = report.expenses || [];
-      // Sequential to avoid race conditions on the same report doc.
-      for (const e of rows) {
-        const currentlyIncluded = e.reimbursement_report_id === id;
-        if (include && currentlyIncluded) continue;
-        if (!include && !currentlyIncluded) continue;
-        // Skip rows attached to a different report (backend would 400).
-        if (include && e.reimbursement_report_id && e.reimbursement_report_id !== id) continue;
-        try {
-          await api.patch(`/reimbursement/reports/${id}/expenses/${e.id}`, { included: include });
-        } catch { /* soft-fail per row */ }
-      }
-      const fresh = await api.get(`/reimbursement/reports/${id}`);
-      setReport(fresh.data);
+      const r = await api.patch(`/reimbursement/reports/${id}/expenses/${expense_id}`, { included: true });
+      setReport(r.data);
       onChange();
-      toast.success(include ? "All eligible expenses included" : "All expenses excluded");
+      // Remove the added row from the results so the TM sees the effect.
+      setSearchResults((prev) => (prev || []).filter((x) => x.id !== expense_id));
+      toast.success("Expense added to this report");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not update expenses");
+      toast.error(e?.response?.data?.detail || "Could not add expense");
     } finally { setBusy(false); }
   };
 
@@ -519,78 +532,83 @@ function ReportDrawer({ id, onClose, onChange, user }) {
           )}
         </div>
 
-        {/* Expenses in this month — with per-row include toggle */}
+        {/* Expenses this month — auto-included; search widget for prior months */}
         <div className="rounded-md border p-4 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="expenses-panel">
           <div className="text-xs uppercase tracking-widest mb-3 flex items-center justify-between flex-wrap gap-2" style={{ color: "var(--text-muted)" }}>
-            <span><Receipt className="w-3 h-3 inline mr-1" /> Expenses this month ({(report.expenses || []).length}) — {t.included_expense_count || 0} included</span>
-            <div className="flex items-center gap-2">
-              {canEdit && (report.expenses || []).length > 0 && (
-                <>
-                  <button type="button" onClick={() => toggleAll(true)} className="text-[11px] underline hover:text-[var(--brand-primary)]" data-testid="include-all-btn">
-                    Include all
-                  </button>
-                  <button type="button" onClick={() => toggleAll(false)} className="text-[11px] underline hover:text-[var(--brand-primary)]" data-testid="include-none-btn">
-                    Include none
-                  </button>
-                </>
-              )}
-              {canEdit && (
-                <a href={`/expenses/log?reimbursement_report_id=${id}`} className="text-[11px] hover:text-[var(--brand-primary)]" data-testid="add-expense-link">
-                  + Log new
-                </a>
-              )}
-            </div>
+            <span><Receipt className="w-3 h-3 inline mr-1" /> Expenses ({(report.expenses || []).length}) — {t.included_expense_count || 0} counted</span>
+            {canEdit && (
+              <a href={`/expenses/log?reimbursement_report_id=${id}`} className="text-[11px] hover:text-[var(--brand-primary)]" data-testid="add-expense-link">
+                + Log new
+              </a>
+            )}
           </div>
           {(report.expenses || []).length === 0 ? (
             <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-              No expenses logged for {report.month} yet. Any expense you log with this month&apos;s date will show up here.
+              No expenses logged for {report.month} yet. Any expense you log with this month&apos;s date will show up here automatically.
             </div>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  <th className="px-2 py-1 w-8">Include</th>
+                  <th className="px-2 py-1">Status</th>
                   <th className="px-2 py-1">Category</th>
                   <th className="px-2 py-1">Vendor</th>
                   <th className="px-2 py-1">Date</th>
                   <th className="px-2 py-1">Amount</th>
                   <th className="px-2 py-1">Receipt</th>
+                  {canEdit && <th className="px-2 py-1"></th>}
                 </tr>
               </thead>
               <tbody>
                 {(report.expenses || []).map((e) => {
-                  const included = e.reimbursement_report_id === id;
-                  const otherReport = e.reimbursement_report_id && e.reimbursement_report_id !== id;
+                  const isPetrol = e.category === "Petrol";
+                  const inMonth = (e.expense_date || "").startsWith(report.month || "");
+                  const isLinked = e.reimbursement_report_id === id;
+                  const isCounted = !isPetrol && (inMonth || isLinked);
                   return (
                     <tr key={e.id} className="border-t align-middle" style={{ borderColor: "var(--border-default)" }} data-testid={`expense-row-${e.id}`}>
                       <td className="px-2 py-1">
-                        <input
-                          type="checkbox"
-                          checked={included}
-                          disabled={!canEdit || otherReport || busy}
-                          onChange={(ev) => toggleExpense(e.id, ev.target.checked)}
-                          data-testid={`expense-include-${e.id}`}
-                          title={otherReport ? "Attached to another report — detach it there first" : "Include in this month's reimbursement"}
-                        />
-                      </td>
-                      <td className="px-2 py-1">
-                        {e.category}
-                        {e.category === "Petrol" && (
-                          <span className="ml-1 text-[9px] px-1 rounded" title="Already covered by km-based fuel cost" style={{ background: "var(--bg-paper)", color: "var(--text-muted)" }}>
-                            fuel
+                        {isPetrol ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "var(--bg-paper)", color: "var(--text-muted)" }} title="Already covered by km-based fuel cost">
+                            Fuel via KM
+                          </span>
+                        ) : isCounted ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "var(--status-success-bg)", color: "var(--status-success)" }} data-testid={`expense-status-included-${e.id}`}>
+                            {inMonth ? "Auto-included" : "Added from search"}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "var(--bg-paper)", color: "var(--text-muted)" }}>
+                            Not counted
                           </span>
                         )}
                       </td>
+                      <td className="px-2 py-1">{e.category}</td>
                       <td className="px-2 py-1">{e.vendor || "—"}</td>
                       <td className="px-2 py-1 font-mono text-xs">{(e.expense_date || "").slice(0, 10)}</td>
                       <td className="px-2 py-1">{fmtEUR(e.amount)}</td>
                       <td className="px-2 py-1 text-[11px]">
                         {e.receipt_image_id ? <span style={{ color: "var(--status-success)" }}>Attached</span> :
                          e.exception_approved ? <span style={{ color: "var(--status-warning)" }}>Exception</span> :
-                         <span style={{ color: included ? "var(--status-danger)" : "var(--text-muted)" }}>
-                           {included ? "Missing" : "—"}
+                         <span style={{ color: isCounted ? "var(--status-danger)" : "var(--text-muted)" }}>
+                           {isCounted ? "Missing" : "—"}
                          </span>}
                       </td>
+                      {canEdit && (
+                        <td className="px-2 py-1 text-right">
+                          {isLinked && !inMonth && (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpense(e.id, false)}
+                              disabled={busy}
+                              className="text-[11px] underline"
+                              style={{ color: "var(--status-danger)" }}
+                              data-testid={`expense-remove-${e.id}`}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -599,7 +617,84 @@ function ReportDrawer({ id, onClose, onChange, user }) {
           )}
           {canEdit && (
             <div className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
-              Only <strong>included</strong> non-fuel expenses count toward the reimbursable amount. Petrol receipts are ignored because the fuel cost is already computed from KM.
+              {report.month} receipts are auto-included. Petrol never affects the manual total (already counted via KM). Use the search below to pull older receipts into this report.
+            </div>
+          )}
+
+          {/* Search prior-month expenses */}
+          {canEdit && (
+            <div className="mt-4 pt-3 border-t" style={{ borderColor: "var(--border-default)" }} data-testid="expense-search-widget">
+              <div className="text-[11px] uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>
+                Search other-month expenses to include
+              </div>
+              <div className="flex items-end gap-2 flex-wrap">
+                <div className="flex-1 min-w-[180px]">
+                  <label className="block text-[10px] mb-1" style={{ color: "var(--text-muted)" }}>Vendor / category</label>
+                  <input
+                    type="text"
+                    value={expenseQuery}
+                    onChange={(ev) => setExpenseQuery(ev.target.value)}
+                    onKeyDown={(ev) => { if (ev.key === "Enter") runExpenseSearch(); }}
+                    placeholder="Shell, Marriott, Food…"
+                    className="w-full px-2 py-1.5 rounded border text-sm bg-white"
+                    style={{ borderColor: "var(--border-default)" }}
+                    data-testid="expense-search-query"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] mb-1" style={{ color: "var(--text-muted)" }}>Month (optional)</label>
+                  <input
+                    type="month"
+                    value={expenseSearchMonth}
+                    onChange={(ev) => setExpenseSearchMonth(ev.target.value)}
+                    className="px-2 py-1.5 rounded border text-sm bg-white"
+                    style={{ borderColor: "var(--border-default)" }}
+                    data-testid="expense-search-month"
+                  />
+                </div>
+                <Button size="sm" onClick={runExpenseSearch} disabled={searching} data-testid="expense-search-run">
+                  {searching ? "Searching…" : "Search"}
+                </Button>
+              </div>
+              {searchResults != null && (
+                <div className="mt-3" data-testid="expense-search-results">
+                  {searchResults.length === 0 ? (
+                    <div className="text-xs" style={{ color: "var(--text-muted)" }}>No matching expenses in other months.</div>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {searchResults.map((r) => {
+                        const attachedElsewhere = r.reimbursement_report_id && r.reimbursement_report_id !== id;
+                        return (
+                          <li key={r.id} className="flex items-center justify-between gap-2 text-sm rounded px-2 py-1.5" style={{ background: "var(--bg-paper)" }}>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono text-xs" style={{ color: "var(--text-muted)" }}>{(r.expense_date || "").slice(0, 10)}</span>
+                                <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "var(--brand-primary-alpha)", color: "var(--brand-primary)" }}>{r.category}</span>
+                                <span className="truncate">{r.vendor || "—"}</span>
+                                <span className="font-semibold">{fmtEUR(r.amount)}</span>
+                              </div>
+                              {attachedElsewhere && (
+                                <div className="text-[10px] mt-0.5" style={{ color: "var(--status-warning)" }}>
+                                  Already attached to another report — detach it there first.
+                                </div>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busy || attachedElsewhere}
+                              onClick={() => addFromSearch(r.id)}
+                              data-testid={`expense-search-add-${r.id}`}
+                            >
+                              Add
+                            </Button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

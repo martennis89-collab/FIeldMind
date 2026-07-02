@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 24 — auto-include current-month expenses, searchable-expenses endpoint, PDF weekly-KM breakdown, and Cyrillic PDF font. 58/59 tests pass (including 53/53 full regression). Frontend expenses panel with status pills + search widget verified end-to-end. Cyrillic font IS embedded correctly in the PDF body (FMSans/LiberationSans found in raw stream) BUT a related edge-case bug was discovered: /reimbursement/reports/{id}/pdf returns HTTP 500 when the report's tm_name contains non-ASCII (e.g. Bulgarian) characters, because the Content-Disposition filename cannot be encoded to latin-1. This directly affects the exact 'Bulgarian in the report' scenario the user is fixing PDFs for.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/reimbursement/reports/{id}/pdf",
+        "issue": "500 UnicodeEncodeError when tm_name has Cyrillic/non-ASCII chars. Content-Disposition builds filename from tm_name and Starlette encodes headers as latin-1. Fix: RFC 5987 encoding e.g. `filename*=UTF-8''<urlencoded>` or ASCII-fold tm_name before building filename. Trace: starlette/responses.py init_headers -> v.encode('latin-1'). Reproduced by mutating tm_name to 'Демо Пенчев' and calling the PDF endpoint.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_24_pdf_weekly_cyrillic.py",
+    "/app/test_reports/pytest/iter24.xml"
+  ],
+  "action_items": [
+    "Fix Content-Disposition encoding in /api/reimbursement/reports/{id}/pdf so Cyrillic tm_names don't crash the download. Suggested: `headers={'Content-Disposition': f\"attachment; filename*=UTF-8''{quote(fname)}\"}` (from urllib.parse import quote) OR ASCII-fold/transliterate fname before use."
+  ],
+  "critical_code_review_comments": [
+    "reimbursement.py is now 1018 lines — the earlier flag from iter23 still stands; time to split into totals/hydrate/endpoints modules.",
+    "_register_pdf_font swallows exceptions silently and returns None,None which falls back to Helvetica (no Cyrillic). Consider logging registration failures so silent Cyrillic-glyph-missing regressions are visible in logs.",
+    "PDF endpoint builds filename from tm_name without sanitization — see critical bug above."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration_24_pdf_weekly_cyrillic.py"],
+  "success_rate": {"backend": "98% (58/59)", "frontend": "100% (search widget + status pills verified end-to-end)"},
+  "test_credentials": "tm1@field.io/tm123 verified via /app/memory/test_credentials.md",
+  "seed_data_creation": "Test-scoped expenses with vendor prefix pytest-it24-* auto-cleaned by module fixture.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Auto-include verified: fresh report totals.manual_expenses_total already reflects in-month non-Petrol expenses (12.50+55+8=75.50 in test). PDF now includes 'Weekly KM breakdown' heading (verified via pypdf text extraction on synthetic weekly input) and NO 'doctor breakdown'. Cyrillic font (FMSans backed by LiberationSans) is embedded — verified by raw byte scan. The one remaining bug is the Content-Disposition header — the PDF body renders Cyrillic fine, only the download-filename header explodes on non-ASCII.",
+  "rca of the issue": "Root cause: line 795-796 of /app/backend/routers/reimbursement.py — `headers={'Content-Disposition': f'attachment; filename=\"{fname}\"'}` where fname is `reimbursement_{tm_name}_{month}.pdf`. Starlette encodes header values as latin-1 (HTTP/1.1 spec). Any non-latin1 character (Cyrillic, CJK, etc.) raises UnicodeEncodeError → 500. Fix with RFC 5987: `filename*=UTF-8''{urllib.parse.quote(fname)}` and/or an ASCII fallback filename= variant."
+}
