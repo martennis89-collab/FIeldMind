@@ -1081,3 +1081,43 @@ monthly reports allows him to input KM covered for this event."
   bumped, submit succeeds. 1/1 pass.
 - Full regression: 29/29 (M1 + M2 + M1.1 dedupe + this).
 
+
+---
+
+## Phase O.2 — SeniorTM ≥ union(TM, Manager) role-parity (Feb 2026)
+
+**User request:** "Everything a normal TM is allowed should be allowed
+for Senior TM and everything a Manager is allowed should be allowed for
+Senior TM as well."
+
+**Systemic fix (backend/auth.py::require_roles)**
+- Any endpoint guarded with `require_roles("Manager", ...)` OR
+  `require_roles("TM", ...)` now implicitly grants SeniorTM. Centralises
+  the parity guarantee so it holds for **every current and every future**
+  endpoint without a manual sweep. Owner ≥ Admin logic unchanged.
+
+**Inline whitelists manually patched** (couldn't be captured by the
+central upgrade because they don't use `require_roles`)
+- `POST /api/ai/extract` — added SeniorTM.
+- `POST /api/doctors/{id}/itero-stage` — added SeniorTM.
+- `/api/track-signals` — added SeniorTM.
+- `/api/clinical-patterns` — added SeniorTM.
+- Earlier: `POST /api/events` (iter 19).
+
+**Scope union for hybrid data reads**
+- `_expense_visible_to()` — SeniorTM now sees own expenses (TM scope) OR
+  team expenses (Manager scope). Explicit union, not fall-through.
+- `_can_access_doctor()` and `_managed_tm_ids_for()` — already returned
+  the correct union for SeniorTM; verified during the audit.
+
+**Testing**
+- Iter20 report: **98/98 pass** (16 new SeniorTM parity assertions across
+  every TM-scope AND Manager-scope endpoint + 82 baseline regression
+  covering M1, M2, dedupe, event km, Phase L, expenses, admin guardrails,
+  audit P2, iter16-19). Zero regressions.
+- Fixed a pre-existing flake in
+  `test_audit_p2_security.py::test_success_clears_counter` — the
+  assertion was too strict about K8s-ingress IP variance; now checks the
+  behavioural invariant (email-only counter wiped, no leftover row above
+  the lockout threshold).
+
