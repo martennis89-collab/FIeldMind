@@ -671,6 +671,7 @@ class EventCreate(BaseModel):
     duration_minutes: int = 60
     location: Optional[str] = None
     notes: Optional[str] = None
+    km: Optional[float] = None  # Phase O — one-way distance travelled to attend the event
 
 
 class EventUpdate(BaseModel):
@@ -681,6 +682,7 @@ class EventUpdate(BaseModel):
     location: Optional[str] = None
     notes: Optional[str] = None
     status: Optional[EventStatus] = None
+    km: Optional[float] = None
 
 
 class Event(BaseModel):
@@ -696,6 +698,7 @@ class Event(BaseModel):
     duration_minutes: int = 60
     location: Optional[str] = None
     notes: Optional[str] = None
+    km: Optional[float] = None  # kms driven — used by monthly reimbursement report
     status: EventStatus = "Scheduled"
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)

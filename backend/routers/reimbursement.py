@@ -179,6 +179,51 @@ async def _build_breakdown(tm_user_id: str, month: str, company_id: Optional[str
     }
 
 
+async def _build_event_breakdown(tm_user_id: str, month: str, company_id: Optional[str]) -> dict:
+    """Fetch every event the TM had scheduled inside `month` and turn them into
+    reimbursement rows. Each event has an optional `km` field (the TM types it
+    in from the reimbursement drawer). Rows without km get `MissingKM`.
+
+    Cancelled events are ignored so a TM isn't paid for events they never
+    attended."""
+    start, end = _month_bounds(month)
+    q: dict = {
+        "tm_user_id": tm_user_id,
+        "scheduled_at": {"$gte": start, "$lte": f"{end}T23:59:59Z"},
+        "status": {"$ne": "Cancelled"},
+    }
+    if company_id:
+        q["company_id"] = company_id
+    events = await db.events.find(q, {"_id": 0}).sort([("scheduled_at", 1)]).to_list(500)
+    rows = []
+    missing = []
+    total_km = 0.0
+    for e in events:
+        km_val = e.get("km")
+        km_val = float(km_val) if km_val not in (None, "") else None
+        row = {
+            "event_id": e["id"],
+            "title": e.get("title") or "Event",
+            "scheduled_at": e.get("scheduled_at"),
+            "location": e.get("location") or "",
+            "status": e.get("status") or "Scheduled",
+            "km": km_val,
+            "match_status": "Matched" if km_val is not None else "MissingKM",
+        }
+        rows.append(row)
+        if km_val is None:
+            missing.append({"event_id": e["id"], "title": row["title"], "scheduled_at": row["scheduled_at"], "location": row["location"]})
+        else:
+            total_km += km_val
+    return {
+        "events": rows,
+        "missing_km": missing,
+        "event_count": len(rows),
+        "events_total_km": round(total_km, 2),
+    }
+
+
+
 def _compute_totals(report: dict, expenses: list[dict]) -> dict:
     consumption = float(report.get("fuel_consumption_l_per_100km") or DEFAULT_CONSUMPTION_L_PER_100KM)
     price = report.get("fuel_price_per_l")
@@ -264,6 +309,8 @@ async def generate_reimbursement_report(body: dict = Body(...), user=Depends(get
         return await _hydrate(dup)
 
     agg = await _build_breakdown(target_tm_id, month, tm.get("company_id"))
+    ev_agg = await _build_event_breakdown(target_tm_id, month, tm.get("company_id"))
+    combined_total_km = round(agg["total_km"] + ev_agg["events_total_km"], 2)
     weekly_ids = [r["id"] for r in await db.reports.find(
         {"tm_user_id": target_tm_id, "week_start": {"$regex": f"^{month}"}},
         {"_id": 0, "id": 1},
@@ -282,9 +329,13 @@ async def generate_reimbursement_report(body: dict = Body(...), user=Depends(get
         "fuel_price_per_l": None,
         "already_reimbursed": 0.0,
         "doctor_breakdown": agg["breakdown"],
+        "event_breakdown": ev_agg["events"],
         "total_visits": agg["total_visits"],
         "unique_doctors": agg["unique_doctors"],
-        "total_km": agg["total_km"],
+        "event_count": ev_agg["event_count"],
+        "doctor_total_km": agg["total_km"],
+        "events_total_km": ev_agg["events_total_km"],
+        "total_km": combined_total_km,
         "weekly_report_ids": weekly_ids,
         "comments": [],
         "audit": [{"at": _now_iso(), "by": user["id"], "role": user["role"], "action": "generated"}],
@@ -391,13 +442,19 @@ async def refresh_breakdown(report_id: str, user=Depends(get_current_user)):
     if user["role"] == "TM" and report["status"] not in ("Draft", "Changes Requested"):
         raise HTTPException(status_code=403, detail=f"Cannot refresh a {report['status']} report")
     agg = await _build_breakdown(report["tm_user_id"], report["month"], report.get("company_id"))
+    ev_agg = await _build_event_breakdown(report["tm_user_id"], report["month"], report.get("company_id"))
+    combined_total_km = round(agg["total_km"] + ev_agg["events_total_km"], 2)
     await db.reimbursement_reports.update_one(
         {"id": report_id},
         {"$set": {
             "doctor_breakdown": agg["breakdown"],
+            "event_breakdown": ev_agg["events"],
             "total_visits": agg["total_visits"],
             "unique_doctors": agg["unique_doctors"],
-            "total_km": agg["total_km"],
+            "event_count": ev_agg["event_count"],
+            "doctor_total_km": agg["total_km"],
+            "events_total_km": ev_agg["events_total_km"],
+            "total_km": combined_total_km,
             "updated_at": _now_iso(),
         },
          "$push": {"audit": {"at": _now_iso(), "by": user["id"], "role": user["role"], "action": "refresh"}}},
@@ -412,6 +469,9 @@ def _validate_submittable(report: dict, expenses: list[dict]) -> None:
     for row in report.get("doctor_breakdown", []):
         if row.get("km_per_visit") is None:
             raise HTTPException(status_code=400, detail=f"Missing KM for doctor '{row.get('doctor_name')}' — fill in the Missing KM table.")
+    for ev in report.get("event_breakdown", []):
+        if ev.get("km") is None:
+            raise HTTPException(status_code=400, detail=f"Missing KM for event '{ev.get('title')}' — enter the KM you drove for this event.")
     for e in expenses:
         if not e.get("receipt_image_id") and not e.get("exception_approved"):
             raise HTTPException(status_code=400, detail=f"Expense '{e.get('vendor') or e.get('category')}' has no receipt attached")

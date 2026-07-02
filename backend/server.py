@@ -1206,6 +1206,11 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "tm_user_id": tm_id,
         "visit_date": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
     }, {"_id": 0}).to_list(2000)
+    events_this_week = await db.events.find({
+        "tm_user_id": tm_id,
+        "status": {"$ne": "Cancelled"},
+        "scheduled_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
+    }, {"_id": 0}).sort([("scheduled_at", 1)]).to_list(500)
     tasks_created = await db.tasks.find({
         "tm_user_id": tm_id,
         "created_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
@@ -1453,6 +1458,20 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "demos_completed_list": demos_completed_list,
         "proposals_sent": proposals_sent,
         "proposals_followed_up": proposals_followed,
+        # Phase O — events attended this week (captured on monthly reimbursement).
+        "events_count": len(events_this_week),
+        "events_total_km": round(sum(float(e.get("km") or 0) for e in events_this_week), 2),
+        "events": [
+            {
+                "event_id": e["id"],
+                "title": e.get("title") or "Event",
+                "scheduled_at": e.get("scheduled_at"),
+                "location": e.get("location") or "",
+                "km": float(e["km"]) if e.get("km") not in (None, "") else None,
+                "status": e.get("status") or "Scheduled",
+            }
+            for e in events_this_week
+        ],
     }
     return {
         "tm_user_id": tm_id,

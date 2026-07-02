@@ -454,6 +454,7 @@ function EventDialog({ open, existing, onClose, onSaved }) {
   const [endsAt, setEndsAt] = useState("");
   const [location, setLocation] = useState("");
   const [notes, setNotes] = useState("");
+  const [km, setKm] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -468,9 +469,10 @@ function EventDialog({ open, existing, onClose, onSaved }) {
         setEndsAt(toLocalInput(fallbackEnd));
         setLocation(existing.location || "");
         setNotes(existing.notes || "");
+        setKm(existing.km == null ? "" : String(existing.km));
       } else {
         const { start, end } = defaultStartEnd();
-        setTitle(""); setStartsAt(start); setEndsAt(end); setLocation(""); setNotes("");
+        setTitle(""); setStartsAt(start); setEndsAt(end); setLocation(""); setNotes(""); setKm("");
       }
     }
   }, [open, existing]);
@@ -496,6 +498,7 @@ function EventDialog({ open, existing, onClose, onSaved }) {
         ends_at: new Date(endsAt).toISOString(),
         location: location.trim() || null,
         notes: notes.trim() || null,
+        km: km === "" ? null : Number(km),
       };
       if (existing) {
         await api.put(`/events/${existing.id}`, payload);
@@ -537,6 +540,15 @@ function EventDialog({ open, existing, onClose, onSaved }) {
             <Label>Location (optional)</Label>
             <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Office, Zoom link, city, address…"
               data-testid="event-location-input" className="bg-white" />
+          </div>
+          <div>
+            <Label>KM travelled (optional)</Label>
+            <Input type="number" step="0.5" min="0" value={km} onChange={(e) => setKm(e.target.value)}
+              placeholder="e.g. 120"
+              data-testid="event-km-input" className="bg-white" />
+            <div className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+              Adds to fuel reimbursement. You can also fill this in later from the Monthly report.
+            </div>
           </div>
           <div>
             <Label>Notes (optional)</Label>

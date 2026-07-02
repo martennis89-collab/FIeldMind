@@ -1038,3 +1038,46 @@ profiles created by TM and SeniorTM."
   city allowed, no-city fallback). All green alongside Phase M1 + M2
   regression (28/28 total).
 
+
+---
+
+## Phase O.1 — Event KM in monthly reimbursement (Feb 2026)
+
+**User request:** "TM logs an event, weekly reports captures it and
+monthly reports allows him to input KM covered for this event."
+
+**Backend**
+- `Event` model: new optional `km: float` field (works on
+  `EventCreate` / `EventUpdate` / `Event`).
+- New helper `_build_event_breakdown(tm_user_id, month, company_id)` in
+  `reimbursement.py` — fetches every non-cancelled event scheduled
+  inside the month, maps each to `{event_id, title, scheduled_at,
+  location, status, km, match_status}`, and returns totals.
+- `POST /reimbursement/reports/generate` and
+  `POST /reimbursement/reports/{id}/refresh-breakdown` now populate
+  `event_breakdown`, `event_count`, `events_total_km`, and roll
+  `events_total_km` into the report's `total_km` (so the fuel-cost
+  calculation catches event travel too).
+- `_validate_submittable()` blocks submission with a clear 400 if any
+  event in the month has a null `km`.
+- Weekly reports (`_build_report_draft`) now include an
+  `events / events_count / events_total_km` block in `content` so the
+  Senior TM sees the event roster in the weekly PDF/UI.
+
+**Frontend**
+- Reimbursement drawer: new **Events attended (N)** table between the
+  doctor breakdown and the manual expenses. Each row has an inline KM
+  input (`event-km-input-{event_id}`) + Save button that PUTs to
+  `/events/{id}` then refreshes the report. Read-only for Submitted /
+  Paid reports.
+- Meetings → "Add / Edit event" dialog: new KM field with helper text
+  "Adds to fuel reimbursement. You can also fill this in later from the
+  Monthly report."
+
+**Tests**
+- `test_phase_o_event_km.py` — end-to-end scenario: create event with no
+  km → generate report → verify MissingKM row → submit fails with
+  "event" in the error → PUT km → refresh → verify Matched, total_km
+  bumped, submit succeeds. 1/1 pass.
+- Full regression: 29/29 (M1 + M2 + M1.1 dedupe + this).
+

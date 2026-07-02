@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "../components/ui/button";
 import {
   FileText, Plus, Send, CheckCircle2, XCircle, MessageSquare, Wallet, Download,
-  AlertTriangle, RefreshCw, MapPin, Car, Receipt,
+  AlertTriangle, RefreshCw, MapPin, Car, Receipt, CalendarDays,
 } from "lucide-react";
 
 const fmtEUR = (v) => (v == null ? "—" : `€ ${Number(v).toFixed(2)}`);
@@ -172,6 +172,7 @@ function ReportDrawer({ id, onClose, onChange, user }) {
   const canReview = ["SeniorTM", "Admin", "Owner"].includes(user.role) && ["Submitted", "Changes Requested"].includes(report.status);
   const canMarkPaid = ["SeniorTM", "Admin", "Owner"].includes(user.role) && report.status === "Approved";
   const missingKm = (report.doctor_breakdown || []).filter((d) => d.match_status === "MissingKM");
+  const missingEventKm = (report.event_breakdown || []).filter((e) => e.match_status === "MissingKM");
   const t = report.totals || {};
 
   const patch = async (body) => {
@@ -196,6 +197,19 @@ function ReportDrawer({ id, onClose, onChange, user }) {
       toast.success("KM saved");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not save KM");
+    } finally { setBusy(false); }
+  };
+
+  const setEventKm = async (event_id, km) => {
+    setBusy(true);
+    try {
+      await api.put(`/events/${event_id}`, { km: Number(km) });
+      const r = await api.post(`/reimbursement/reports/${id}/refresh-breakdown`);
+      setReport(r.data);
+      onChange();
+      toast.success("Event KM saved");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not save event KM");
     } finally { setBusy(false); }
   };
 
@@ -356,6 +370,62 @@ function ReportDrawer({ id, onClose, onChange, user }) {
           </table>
         </div>
 
+        {/* Event breakdown */}
+        <div className="rounded-md border mb-6 overflow-hidden" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="event-breakdown">
+          <div className="px-4 py-2 text-xs uppercase tracking-widest flex items-center justify-between" style={{ color: "var(--text-muted)", background: "var(--bg-paper)" }}>
+            <span><CalendarDays className="w-3 h-3 inline mr-1" /> Events attended ({(report.event_breakdown || []).length})</span>
+            {missingEventKm.length > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "var(--status-warning-bg)", color: "var(--status-warning)" }}>
+                {missingEventKm.length} missing KM
+              </span>
+            )}
+          </div>
+          {(report.event_breakdown || []).length === 0 ? (
+            <div className="text-xs px-4 py-3" style={{ color: "var(--text-muted)" }}>
+              No events this month. Book one from the Calendar to include event travel in your reimbursement.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  <th className="px-4 py-2">Event</th>
+                  <th className="px-4 py-2">Date</th>
+                  <th className="px-4 py-2">Location</th>
+                  <th className="px-4 py-2">KM</th>
+                  <th className="px-4 py-2">Match</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(report.event_breakdown || []).map((ev) => (
+                  <tr key={ev.event_id} className="border-t align-middle" style={{ borderColor: "var(--border-default)" }} data-testid={`event-row-${ev.event_id}`}>
+                    <td className="px-4 py-2">{ev.title}</td>
+                    <td className="px-4 py-2 whitespace-nowrap">{(ev.scheduled_at || "").slice(0, 10)}</td>
+                    <td className="px-4 py-2">{ev.location || "—"}</td>
+                    <td className="px-4 py-2">
+                      {canEdit ? (
+                        <EventKMInput
+                          initial={ev.km}
+                          testId={`event-km-input-${ev.event_id}`}
+                          saveTestId={`event-km-save-${ev.event_id}`}
+                          onSave={(km) => setEventKm(ev.event_id, km)}
+                          disabled={busy}
+                        />
+                      ) : (
+                        ev.km != null ? `${ev.km.toFixed(1)} km` : "—"
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${ev.match_status === "Matched" ? "bg-[var(--status-success-bg)] text-[var(--status-success)]" : "bg-[var(--status-warning-bg)] text-[var(--status-warning)]"}`} data-testid={`event-match-${ev.event_id}`}>
+                        {ev.match_status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
         {/* Expenses summary */}
         <div className="rounded-md border p-4 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="expenses-panel">
           <div className="text-xs uppercase tracking-widest mb-3 flex items-center justify-between" style={{ color: "var(--text-muted)" }}>
@@ -477,3 +547,33 @@ function MissingKMRow({ d, onSave, disabled }) {
     </div>
   );
 }
+
+function EventKMInput({ initial, testId, saveTestId, onSave, disabled }) {
+  const [km, setKm] = useState(initial == null ? "" : String(initial));
+  const [dirty, setDirty] = useState(false);
+  const changed = km !== "" && Number(km) !== Number(initial);
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        type="number"
+        step="0.5"
+        min="0"
+        value={km}
+        onChange={(e) => { setKm(e.target.value); setDirty(true); }}
+        placeholder="km"
+        className="w-24 px-2 py-1 rounded border text-sm"
+        style={{ borderColor: "var(--border-default)" }}
+        data-testid={testId}
+      />
+      <Button
+        size="sm"
+        disabled={disabled || km === "" || (!dirty && !changed)}
+        onClick={() => onSave(km)}
+        data-testid={saveTestId}
+      >
+        Save
+      </Button>
+    </div>
+  );
+}
+
