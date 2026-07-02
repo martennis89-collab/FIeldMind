@@ -1527,10 +1527,19 @@ def _strip_id(doc):
 
 
 async def _expense_visible_to(user, exp: dict) -> bool:
-    if user["role"] == "Admin":
+    role = user["role"]
+    if role in ("Admin", "Owner"):
         return True
-    if user["role"] == "Manager":
+    if role == "Manager":
         return exp.get("team_id") == user.get("team_id")
+    if role == "SeniorTM":
+        # Phase L hybrid — SeniorTM sees own expenses (TM scope) OR any
+        # expense whose team_id matches (Manager scope). Union guarantees
+        # SeniorTM ≥ union(TM, Manager).
+        return (
+            exp.get("tm_user_id") == user["id"]
+            or exp.get("team_id") == user.get("team_id")
+        )
     return exp.get("tm_user_id") == user["id"]
 
 

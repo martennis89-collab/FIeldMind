@@ -81,7 +81,7 @@ class ExtractTaskBody(BaseModel):
 async def extract_task(body: ExtractTaskBody, user=Depends(get_current_user)):
     """Extract a single structured task suggestion from a quick voice/typed note.
     The user reviews and confirms before the task is actually created."""
-    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+    if user["role"] not in ("TM", "SeniorTM", "Manager", "Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
     note = (body.note or "").strip()
     if not note:

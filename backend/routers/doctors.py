@@ -498,7 +498,7 @@ async def set_itero_stage(doctor_id: str, body: IteroStageUpdate, user=Depends(g
     doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     if not doc or not await _can_access_doctor(user, doc):
         raise HTTPException(status_code=404, detail="Doctor not found")
-    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+    if user["role"] not in ("TM", "SeniorTM", "Manager", "Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
     current = doc.get("itero_stage") or "None"
     now = _now_iso()

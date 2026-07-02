@@ -91,7 +91,7 @@ async def create_clinical_pattern(body: ClinicalPatternCreate, user=Depends(get_
     """Doctor-level conversation pattern. AI-suggested patterns must arrive here
     only AFTER the user confirms — the AI extraction endpoint returns suggestions,
     this endpoint persists them."""
-    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+    if user["role"] not in ("TM", "SeniorTM", "Manager", "Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
     doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
     if not doctor or not await _can_access_doctor(user, doctor):

@@ -1,0 +1,32 @@
+{
+  "summary": "Verified SeniorTM ≥ union(TM, Manager) role-parity fix. 16/16 new parity tests pass + 82/82 baseline regression tests pass = 98/98 total. SeniorTM can reach every TM-scope and Manager-scope endpoint (POST /visits, /expenses, /tasks, /events, /reports/generate, /reimbursement/reports/generate, POST /users, PUT /users/{id}, POST /metrics/snapshots/run) and all four inline-whitelist patched endpoints (/ai/extract, /doctors/{id}/itero-stage, /track-signals, /clinical-patterns). Expense scope union verified: SeniorTM's GET /api/expenses returns rows for own tm_user_id AND for subordinate tm1@field.io. TM and Manager regression endpoints still return 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_seniortm_role_parity.py",
+    "/app/test_reports/pytest/iter20_parity.xml",
+    "/app/test_reports/pytest/iter20_baseline.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "auth.py::require_roles is now the single source of truth for SeniorTM inheritance — clean centralised approach; the four inline whitelist patches (ai_extract L84, doctors L501, track_signals L103, clinical_patterns L94) are unavoidable because they gate on `user['role']` string equality outside the require_roles Depends chain. Consider a small helper `is_at_least(user, 'TM')` to prevent future inline-check drift.",
+    "server.py::_expense_visible_to SeniorTM branch works (verified by union test) — recommend adding an inline docstring pointing to the require_roles promise so future refactors don't collapse it back to TM-only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_seniortm_role_parity.py (new)"
+  ],
+  "success_rate": {"backend": "100% (98/98)", "frontend": "n/a — backend only"},
+  "test_credentials": "SeniorTM: snr.demo.1782126329@field.io/senior123 · TM: tm1@field.io/tm123 · Manager: manager@field.io/manager123 · Admin: admin@field.io/admin123",
+  "seed_data_creation": "Test rows prefixed TEST_ (few expenses, tasks, events, visit, one TEST_senior_sub_* user). Small volume; can be cleaned via POST /api/admin/wipe-test-data if desired.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "SeniorTM parity fix is fully verified. If future features add new inline `if user['role'] not in (...)` checks (i.e. bypassing require_roles), they must include 'SeniorTM' explicitly OR refactor to require_roles. Reusable regression suite lives at /app/backend/tests/test_seniortm_role_parity.py — run it after any auth/authorization change. Note expenses endpoint uses multipart Form (not JSON) and category enum is [Petrol, Food, Hotel, Parking, Tolls, Other]; response shape is {'expense': {...}, 'duplicate_of': ...}.",
+  "rca of the issue": "N/A — this iteration verified a preventive systemic fix, not a bug fix. No 403 encountered for SeniorTM on any endpoint tested."
+}

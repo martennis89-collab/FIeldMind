@@ -169,6 +169,12 @@ def require_roles(*roles: str):
     effective = set(roles)
     if "Admin" in effective:
         effective.add("Owner")
+    # SeniorTM is a Phase-L hybrid — a TM AND a Manager. Any endpoint
+    # allowed to Manager or TM is therefore allowed to SeniorTM as well.
+    # This centralises the promise "SeniorTM ≥ union(TM, Manager)" so it
+    # holds for every current AND future route without a manual sweep.
+    if effective & {"Manager", "TM"}:
+        effective.add("SeniorTM")
 
     async def _checker(user: dict = Depends(get_current_user)):
         if user["role"] not in effective:

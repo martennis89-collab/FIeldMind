@@ -100,7 +100,7 @@ async def list_track_signals(
 async def create_track_signal(body: TrackSignalCreate, user=Depends(get_current_user)):
     """Manual TrackSignal creation — for when a user adds a signal outside the
     visit-log flow (rare, but supported). RBAC restricted to TMs & above."""
-    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+    if user["role"] not in ("TM", "SeniorTM", "Manager", "Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
     doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
     if not doctor or not await _can_access_doctor(user, doctor):
