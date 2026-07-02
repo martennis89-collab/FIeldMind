@@ -625,11 +625,26 @@ def _build_expense_pdf(exp: dict, image_bytes: Optional[bytes], image_mime: str)
     story.append(Spacer(1, 8 * mm))
 
     # Embed the phone-camera receipt image if we have one.
+    # Two-layer resilience:
+    #   1. Pre-validate with PIL.verify() so obviously corrupt bytes are
+    #      dropped BEFORE we hand them to reportlab.
+    #   2. If doc.build() still fails (e.g. reportlab-specific parser edge
+    #      cases PIL missed), re-build the PDF WITHOUT the image so a single
+    #      unreadable receipt can't 500 the whole team's monthly ZIP.
+    safe_image_bytes = None
     if image_bytes:
+        try:
+            from PIL import Image as _PILImage  # lazy — reportlab already imports Pillow
+            _PILImage.open(_io.BytesIO(image_bytes)).verify()
+            safe_image_bytes = image_bytes
+        except Exception:
+            safe_image_bytes = None
+
+    if safe_image_bytes:
         try:
             story.append(Paragraph("Receipt (original phone-camera image)", body))
             story.append(Spacer(1, 3 * mm))
-            img_buf = _io.BytesIO(image_bytes)
+            img_buf = _io.BytesIO(safe_image_bytes)
             # Cap width to page usable width, let reportlab scale height.
             img = Image(img_buf)
             page_w = A4[0] - 30 * mm  # left+right margin
@@ -644,6 +659,8 @@ def _build_expense_pdf(exp: dict, image_bytes: Optional[bytes], image_mime: str)
         except Exception:
             # Malformed / unsupported image — swallow and note it in the PDF
             # so the report still renders for the rest of the batch.
+            safe_image_bytes = None
+            story = [s for s in story if not isinstance(s, Image)]
             story.append(Paragraph(
                 f"<i>Receipt image could not be embedded (mime: {image_mime}).</i>",
                 small,
@@ -651,5 +668,22 @@ def _build_expense_pdf(exp: dict, image_bytes: Optional[bytes], image_mime: str)
     else:
         story.append(Paragraph("<i>No receipt image on file for this expense.</i>", small))
 
-    doc.build(story)
+    try:
+        doc.build(story)
+    except Exception:
+        # Belt-and-braces: if reportlab still can't render (extremely rare),
+        # strip any lingering Image flowable and render the metadata-only PDF.
+        buf = _io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4,
+            leftMargin=15 * mm, rightMargin=15 * mm,
+            topMargin=15 * mm, bottomMargin=15 * mm,
+            title=f"Expense {exp.get('id','')[:8]}",
+        )
+        fallback = [s for s in story if not isinstance(s, Image)]
+        fallback.append(Paragraph(
+            "<i>Receipt image could not be rendered by the PDF engine and was omitted.</i>",
+            small,
+        ))
+        doc.build(fallback)
     return buf.getvalue()

@@ -3,6 +3,56 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## SeniorTM expense fix — visibility, submission, PDF-per-expense ZIP (Feb 2026)
+
+**User bug report**: TM submitted an expense but Senior TM couldn't see it in
+the Team expenses tab; SeniorTM couldn't submit their own expenses; export
+format needed to be a ZIP of one-PDF-per-expense with the phone-camera image
+embedded.
+
+### Backend (`routers/expenses.py`)
+- **POST `/api/expenses`** and **POST `/api/expenses/extract`** and **POST
+  `/api/expenses/submit-month`** now accept SeniorTM in addition to TM.
+- **GET `/api/expenses`** + **GET `/api/expenses/summary`** — SeniorTM defaults
+  to the sub-team + self scope via `_managed_tm_ids_for(user)`. New optional
+  `?personal=true` query param forces the SeniorTM's OWN tm_user_id filter
+  (used by the "My expenses" panel).
+- **GET `/api/expenses/team-summary`** — role guard broadened from
+  `Manager+Admin` to `Manager+SeniorTM+Admin+Owner`. SeniorTM branch scopes
+  via `_managed_tm_ids_for(user)`.
+- **GET `/api/expenses/receipts.zip`** — role guard broadened; SeniorTM
+  scoping added. Content-Disposition filename changed from `receipts_...` to
+  `expense-report_...`.
+- **New helper `_build_expense_pdf(exp, image_bytes, image_mime)`** renders
+  one self-contained PDF per expense via reportlab. Layout: header "FieldMind
+  — Expense Report", metadata table (TM name, date, category, vendor, amount,
+  status, submission month, submitted_at, notes), then the phone-camera
+  receipt image embedded on the same page. Filename in the ZIP:
+  `<TM_name>/<YYYY-MM-DD>_<vendor_or_category>_<expense-id[:8]>.pdf`.
+- **Hardening**: two-layer image resilience — PIL `.verify()` pre-check +
+  reportlab fallback build. A single corrupt receipt image cannot 500 the
+  whole team's monthly export.
+
+### Frontend (`pages/Expenses.jsx`)
+- New SeniorTM view toggle at the top (`data-testid=seniortm-expenses-view-toggle`)
+  with two options: **Team view** (default, renders `ManagerExpenses`) and
+  **My expenses** (renders `TMExpenses` with `personal={true}`).
+- `TMExpenses` now takes a `personal` prop that appends `&personal=true` to
+  `/api/expenses` and `/api/expenses/summary` calls.
+- Download button relabelled to "Download all as PDFs (ZIP)" to match the
+  new format.
+- Route `/expenses/log` already permitted SeniorTM (no change needed).
+
+### Verification
+- Testing agent iteration 16 → **100% pass** (8/8 iter16 tests + 23/23
+  pre-existing expense + Phase L regression tests). All three bug-report
+  bullet points verified end-to-end.
+- Backend lint clean. Frontend lint clean.
+- Curl smoke: SeniorTM POST /expenses → 200, POST /submit-month → 200,
+  team-summary → 200 with sub-team rows, receipts.zip → 200 with valid
+  %PDF-1.4 PDF-per-expense entries.
+
+
 ## Backend perf sweep — every dashboard endpoint (Feb 2026)
 
 Applied the same `asyncio.gather` + segment-pre-filter pattern from the
