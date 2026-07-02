@@ -996,3 +996,45 @@ still green (35/35).
   view stacks per-day, and the Meetings page reads **114 visits + 19
   meetings** for `tm1@field.io` (previously would have shown 19).
 
+
+---
+
+## Phase O — Doctor duplicate prevention (Feb 2026)
+
+**User pain:** "Whether I put Dr in front of the name or not, the system
+should recognise the name and make sure there are no duplicate doctor
+profiles created by TM and SeniorTM."
+
+**What shipped**
+- New `normalize_person_name()` and `normalize_city_key()` in
+  `backend/_deps.py`. Strips stacked titles ("Prof. Dr. John Smith"),
+  accent-folds Unicode ("Ján Škrabáček" → "jan skrabacek"), collapses
+  whitespace, lowercases, and trims trailing punctuation.
+- `POST /api/doctors` now checks for a same-company duplicate before
+  inserting. Match rule: normalized name is identical AND (both cities
+  equal OR one side has no city). Response on collision is HTTP **409**
+  with a structured `detail`:
+    ```json
+    {
+      "code": "DUPLICATE_DOCTOR",
+      "message": "A doctor named \"…\" already exists…",
+      "existing_id": "...",
+      "existing_name": "...",
+      "existing_city": "...",
+      "existing_assigned_tm_id": "..."
+    }
+    ```
+- New `doctors.name_normalized` field persisted on every future create /
+  import row for fast lookups as the collection grows.
+- Import commit path (`POST /doctors/import/commit`) uses the same
+  normaliser so a spreadsheet row of "Dr. Ivan Petrov" collapses onto an
+  existing "Ivan Petrov" record for the same TM.
+- Frontend UX (`AddDoctor.jsx` + `InlineAddDoctor.jsx`) — on 409 the toast
+  now surfaces an "Open existing" / "Use existing" action button that
+  jumps straight to the existing profile instead of a dead-end error.
+- Tests: 17-case suite in `test_doctor_dedupe.py` — 12 unit-tests of the
+  normalizer (stacked titles, Cyrillic accents, no-title edge cases) plus
+  5 API-level tests (Dr prefix blocked, multi-variant blocked, different
+  city allowed, no-city fallback). All green alongside Phase M1 + M2
+  regression (28/28 total).
+

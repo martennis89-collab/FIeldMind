@@ -47,7 +47,20 @@ export default function AddDoctor() {
         navigate(`/doctors/${data.id}`);
       }
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Could not add doctor");
+      const detail = err?.response?.data?.detail;
+      // Duplicate doctor: offer to open the existing profile instead of a dead-end toast.
+      if (err?.response?.status === 409 && detail && typeof detail === "object" && detail.code === "DUPLICATE_DOCTOR") {
+        toast.error(detail.message || "Doctor already exists", {
+          description: "Open the existing profile instead?",
+          duration: 8000,
+          action: {
+            label: "Open existing",
+            onClick: () => navigate(`/doctors/${detail.existing_id}`),
+          },
+        });
+      } else {
+        toast.error(typeof detail === "string" ? detail : "Could not add doctor");
+      }
     } finally {
       setSaving(false);
     }

@@ -16,9 +16,59 @@ while still letting the runtime resolve `db` once supervisor has fully booted.
 from __future__ import annotations
 
 import os
+import re
+import unicodedata
 from typing import Optional
 
 from fastapi import HTTPException
+
+
+# ============================================================
+# Doctor-name normalisation — used for duplicate detection so that
+# "Dr John Smith", "dr. john smith", "John Smith" and "Ján Smith"
+# collapse to the same key. Applied at both create-doctor and
+# import time so the two paths stay consistent.
+# ============================================================
+
+# Common honorifics — repeated stripping handles "Prof. Dr. John".
+_TITLE_RE = re.compile(
+    r"^(?:dr\.?|drs\.?|doctor|prof\.?|professor|mr\.?|mrs\.?|ms\.?|mx\.?|sir|dame)\s+",
+    re.IGNORECASE,
+)
+
+
+def normalize_person_name(name: object) -> str:
+    """Return a stable lowercase key for a doctor / person name.
+
+    - Strips titles (Dr, Prof, Mr, Mrs, Ms, Doctor, etc.), even stacked.
+    - Removes accents (é -> e) so cross-locale entries collide.
+    - Collapses internal whitespace.
+    - Strips trailing punctuation.
+    """
+    if not name:
+        return ""
+    s = str(name).strip()
+    # Strip repeated leading titles.
+    while True:
+        s2 = _TITLE_RE.sub("", s).strip()
+        if s2 == s:
+            break
+        s = s2
+    # Unicode-fold accents.
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    # Collapse whitespace, strip trailing punctuation.
+    s = re.sub(r"\s+", " ", s).strip(" .,;:")
+    return s.lower()
+
+
+def normalize_city_key(city: object) -> str:
+    """Loose city key — lowercase, strip accents & punctuation. Empty for None."""
+    if not city:
+        return ""
+    s = unicodedata.normalize("NFKD", str(city).strip())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", s).strip(" .,;:").lower()
 
 
 # ============================================================

@@ -52,7 +52,22 @@ export default function InlineAddDoctor({ open, onClose, onCreated, prefillName 
       toast.success(`Added ${data.doctor_name}`);
       onCreated?.(data);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Could not add doctor");
+      const detail = err?.response?.data?.detail;
+      if (err?.response?.status === 409 && detail && typeof detail === "object" && detail.code === "DUPLICATE_DOCTOR") {
+        toast.error(detail.message || "Doctor already exists", {
+          description: "Use the existing profile instead?",
+          duration: 8000,
+          action: {
+            label: "Use existing",
+            onClick: () => {
+              onCreated?.({ id: detail.existing_id, doctor_name: detail.existing_name, city: detail.existing_city });
+              onClose?.();
+            },
+          },
+        });
+      } else {
+        toast.error(typeof detail === "string" ? detail : "Could not add doctor");
+      }
     } finally {
       setSaving(false);
     }

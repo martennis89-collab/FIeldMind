@@ -70,6 +70,31 @@ from server import (
     seed_owner,
 )
 from models import Doctor, DoctorCreate, DoctorUpdate, IteroStageUpdate
+from _deps import normalize_person_name, normalize_city_key
+
+
+async def _find_duplicate_doctor(company_id: str, name: str, city: str | None) -> dict | None:
+    """Return the first same-company doctor whose name (title-stripped, accent-
+    folded, lowercased) matches the given name. If both sides have a city,
+    require that city to match as well. Returns None if no duplicate."""
+    norm_name = normalize_person_name(name)
+    norm_city = normalize_city_key(city)
+    if not norm_name:
+        return None
+    # Load all doctors in the company (bounded by a generous cap). Company
+    # doctor counts sit well under this in every real deployment.
+    company_docs = await db.doctors.find(
+        {"company_id": company_id},
+        {"_id": 0, "id": 1, "doctor_name": 1, "city": 1, "assigned_tm_id": 1, "clinic_name": 1},
+    ).to_list(10000)
+    for existing in company_docs:
+        if normalize_person_name(existing.get("doctor_name")) != norm_name:
+            continue
+        ec = normalize_city_key(existing.get("city"))
+        # Match if either side has no city, or cities agree.
+        if not norm_city or not ec or norm_city == ec:
+            return existing
+    return None
 
 
 @api.get("/doctors")
@@ -114,6 +139,36 @@ async def create_doctor(body: DoctorCreate, user=Depends(require_roles("Admin", 
     elif user["role"] == "Manager" and not doc.get("team_id"):
         doc["team_id"] = user.get("team_id")
     _stamp_company(doc, user)
+
+    # Duplicate guard — title-agnostic, accent-folded, case-insensitive.
+    dup = await _find_duplicate_doctor(doc["company_id"], doc.get("doctor_name") or "", doc.get("city"))
+    if dup:
+        # Enrich the response so the UI can offer "Open existing" instead of a
+        # dead-end error toast.
+        assigned_hint = ""
+        if dup.get("assigned_tm_id") and dup["assigned_tm_id"] != user["id"]:
+            owner = await db.users.find_one({"id": dup["assigned_tm_id"]}, {"_id": 0, "name": 1, "email": 1})
+            if owner:
+                assigned_hint = f" It's currently in {owner.get('name') or owner.get('email')}'s book."
+        raise HTTPException(status_code=409, detail={
+            "code": "DUPLICATE_DOCTOR",
+            "message": (
+                f"A doctor named \"{dup['doctor_name']}\" already exists in your company"
+                + (f" in {dup['city']}" if dup.get("city") else "")
+                + "."
+                + assigned_hint
+            ),
+            "existing_id": dup["id"],
+            "existing_name": dup["doctor_name"],
+            "existing_city": dup.get("city"),
+            "existing_clinic_name": dup.get("clinic_name"),
+            "existing_assigned_tm_id": dup.get("assigned_tm_id"),
+        })
+
+    # Persist the normalized key so future lookups can skip the full scan when
+    # the collection grows. Older documents will be backfilled lazily by the
+    # same dedupe path.
+    doc["name_normalized"] = normalize_person_name(doc.get("doctor_name") or "")
     await db.doctors.insert_one(doc)
     await _audit(user, "create", "doctor", doc["id"], new={"doctor_name": doc["doctor_name"]})
     _strip_id(doc)
@@ -222,10 +277,11 @@ async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "
     ).to_list(5000)
 
     def key1(name, city):
-        return f"{(name or '').strip().lower()}|{(city or '').strip().lower()}"
+        # Title-agnostic, accent-folded — must match POST /doctors dedupe.
+        return f"{normalize_person_name(name)}|{normalize_city_key(city)}"
 
     def key2(clinic, city):
-        return f"{(clinic or '').strip().lower()}|{(city or '').strip().lower()}"
+        return f"{(clinic or '').strip().lower()}|{normalize_city_key(city)}"
 
     name_city = {key1(d.get("doctor_name"), d.get("city")): d for d in existing_docs}
     clinic_city = {key2(d.get("clinic_name"), d.get("city")): d for d in existing_docs if d.get("clinic_name")}
@@ -277,6 +333,7 @@ async def commit_doctor_import(body: dict, user=Depends(require_roles("Admin", "
             "assigned_tm_id": assigned_tm_id,
             "team_id": target_team_id,
             "status": "Active",
+            "name_normalized": normalize_person_name(p["doctor_name"]),
             "created_at": now,
             "updated_at": now,
         }
