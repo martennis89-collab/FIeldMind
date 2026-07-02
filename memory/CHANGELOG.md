@@ -1164,3 +1164,50 @@ expense from visiting kilometres."
   across M1, M2, O.1, O.2, dedupe, iterations 16-17).
 - Zero backend / frontend issues per testing agent.
 
+
+---
+
+## Phase O.4 — Explicit expense inclusion in monthly report (Feb 2026)
+
+**User request:** "I want to be able to choose to include recorded
+expenses to whatever monthly report I am currently building."
+
+**Behaviour change**
+- Previous (O.3): every expense in the month auto-counted toward
+  `manual_expenses_total`.
+- New (O.4): every expense in the month is still **shown** in the
+  drawer, but **only expenses the TM explicitly opts-in** (i.e. linked
+  via `reimbursement_report_id`) count toward `manual_expenses_total`
+  and therefore the reimbursable amount.
+
+**Backend** (`routers/reimbursement.py`)
+- `_compute_totals` now discriminates on link status:
+    * `manual_expenses_total` — sum of non-Petrol expenses where
+      `reimbursement_report_id == report.id`.
+    * `petrol_receipts_total` — every Petrol receipt in the month
+      (link-status irrelevant, never contributes to manual_total).
+    * `expenses_recorded_total` — everything logged in the month.
+    * `included_expense_count` — how many rows are attached.
+- New endpoint `PATCH /api/reimbursement/reports/{report_id}/expenses/{expense_id}`
+  body `{included: bool}`. RBAC:
+    * Report owner (TM/SeniorTM) — only own report, only Draft/Changes-Requested.
+    * Admin/Owner — any status, any owner.
+    * 400 if the expense is already linked to a different report
+      ("detach it there first").
+- Submission validation unchanged for **linked** expenses: still 400 if
+  a linked non-Petrol expense has no receipt.
+
+**Frontend** (`pages/Reimbursement.jsx`)
+- Expenses-panel now shows a checkbox column, per-row
+  `expense-include-{id}` toggle, `include-all-btn` / `include-none-btn`
+  bulk actions, and a "fuel" badge next to Petrol rows so the TM knows
+  they don't affect the manual total.
+- Manual-expenses stat card updates immediately on each toggle via the
+  hydrated `totals` from the PATCH response.
+
+**Tests**
+- New `test_phase_o4_expense_include.py` (3 tests): toggle math, Petrol
+  immunity, cross-report-hijack rejection.
+- Iter23 report: **50/50 pass** — 3 new + 47 baseline regression. Zero
+  issues per testing agent.
+
