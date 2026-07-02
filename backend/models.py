@@ -671,7 +671,7 @@ class EventCreate(BaseModel):
     duration_minutes: int = 60
     location: Optional[str] = None
     notes: Optional[str] = None
-    km: Optional[float] = None  # Phase O — one-way distance travelled to attend the event
+    km: Optional[float] = Field(default=None, ge=0)  # Phase O — one-way distance travelled to attend the event
 
 
 class EventUpdate(BaseModel):
@@ -682,7 +682,7 @@ class EventUpdate(BaseModel):
     location: Optional[str] = None
     notes: Optional[str] = None
     status: Optional[EventStatus] = None
-    km: Optional[float] = None
+    km: Optional[float] = Field(default=None, ge=0)
 
 
 class Event(BaseModel):
