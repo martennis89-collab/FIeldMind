@@ -3,6 +3,54 @@
 This file tracks shippable changes by phase, growing forward. Original product
 requirements and historical iteration log remain in `/app/memory/PRD.md`.
 
+## SeniorTM expense download bug fix + TM "Download my report" (Feb 2026)
+
+**User report** (hit on production): "Download all as PDFs (ZIP)" button
+showed a red "Could not download" toast and no file ever arrived.
+**User request**: TMs should be able to download the same report after
+they submit to their SeniorTM.
+
+### Bug root causes (three-in-one)
+1. `server.py` CORSMiddleware had no `expose_headers` — browser JS couldn't
+   read `Content-Disposition`, so the filename fell back and any real HTTP
+   error was masked.
+2. `/expenses/receipts.zip` returned a buffered `Response` — on large batches
+   the production ingress (30s default) killed the request before the whole
+   ZIP was serialised.
+3. Frontend `catch` clause swallowed the real backend message and always
+   displayed the generic "Could not download".
+
+### Fixes
+- **`server.py`**: added `expose_headers=["Content-Disposition"]` so
+  browser JS can read the download filename.
+- **`routers/expenses.py`**:
+  - Endpoint now returns a `StreamingResponse` chunked at 64 KB with an
+    explicit `Content-Length`. Reliable delivery on constrained ingress.
+  - Per-row `try/except` around `_build_expense_pdf` so one corrupt
+    receipt image cannot 500 the whole batch (also closes the iter16
+    hardening minor).
+  - Endpoint now accepts role `TM` — auto-scoped to `q.tm_user_id =
+    user.id` BEFORE any `tm_user_id` query param is applied. RBAC-safe.
+- **`pages/Expenses.jsx`**:
+  - New module-level `downloadExpenseZip(url, fallbackName)` helper reads
+    JSON error bodies from `responseType: blob` responses. Surfaces the
+    real backend `detail` (e.g. 404 → "No expenses to export").
+  - `TMExpenses` gains a `downloading` state + `downloadMyReport` handler
+    + a new button `data-testid="download-my-report-btn"` (label
+    "Download my report").
+  - `ManagerExpenses.downloadAll` refactored onto the shared helper —
+    no duplicated download logic between the two views.
+
+### Verification
+- Testing agent iteration 17 → **100% pass** (8/8 new iter17 tests + 31/31
+  regression from iter16 + Phase L + expenses).
+- Verified end-to-end via Playwright: SeniorTM Team download, SeniorTM
+  Personal download, TM Download-my-report all trigger real blob
+  downloads with correct filenames.
+- CORS `Access-Control-Expose-Headers: Content-Disposition` confirmed
+  over HTTP.
+
+
 ## SeniorTM expense fix — visibility, submission, PDF-per-expense ZIP (Feb 2026)
 
 **User bug report**: TM submitted an expense but Senior TM couldn't see it in
