@@ -215,9 +215,10 @@ class TestExpensesEndToEnd:
         # 404 when no receipts
         r2 = requests.get(f"{API}/expenses/receipts.zip?month=1999-01", headers=H(self.manager), timeout=10)
         assert r2.status_code == 404
-        # TM forbidden
+        # TM CAN access their own receipts (new feature Feb 2026 —
+        # `Download my report` button). Backend auto-scopes to tm_user_id.
         r3 = requests.get(f"{API}/expenses/receipts.zip?month=2026-11", headers=H(self.tm), timeout=10)
-        assert r3.status_code == 403
+        assert r3.status_code in (200, 404), f"TM own-report should be 200 or 404 (no data), got {r3.status_code}"
 
     def test_submit_month_validation(self):
         r = requests.post(f"{API}/expenses/submit-month", headers=H(self.tm),

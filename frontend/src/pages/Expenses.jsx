@@ -94,19 +94,57 @@ export default function Expenses() {
 }
 
 // ===================== TM VIEW =====================
-function TMExpenses() {
+// Shared blob-download helper used by both TMExpenses and ManagerExpenses.
+// - Parses JSON error bodies from a blob responseType so we can surface the
+//   actual server message (previously any non-200 became a generic
+//   "Could not download").
+// - Reads Content-Disposition (now exposed via CORS `expose_headers` on the
+//   backend) to preserve the server-generated filename.
+async function downloadExpenseZip(url, fallbackName) {
+  const res = await api.get(url, { responseType: "blob", validateStatus: () => true });
+  if (res.status >= 400) {
+    let msg = `Download failed (HTTP ${res.status})`;
+    try {
+      const text = await res.data.text();
+      const parsed = JSON.parse(text);
+      if (parsed?.detail) msg = parsed.detail;
+    } catch {
+      /* not JSON — keep generic */
+    }
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  const blobUrl = URL.createObjectURL(res.data);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  const cd = res.headers?.["content-disposition"] || "";
+  const match = /filename="?([^"]+)"?/i.exec(cd);
+  a.download = match ? match[1] : fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+}
+
+// `personal` — when true, adds ?personal=true to the API calls. Used by
+// SeniorTMs viewing their own personal expenses (so the endpoint scopes to
+// their own tm_user_id instead of the sub-team default).
+function TMExpenses({ personal = false }) {
   const [month, setMonth] = useState(monthKey());
   const [list, setList] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const load = async (m = month) => {
     setLoading(true);
     try {
+      const suffix = personal ? "&personal=true" : "";
       const [a, b] = await Promise.all([
-        api.get(`/expenses?month=${m}`),
-        api.get(`/expenses/summary?month=${m}`),
+        api.get(`/expenses?month=${m}${suffix}`),
+        api.get(`/expenses/summary?month=${m}${suffix}`),
       ]);
       setList(a.data.expenses || []);
       setSummary(b.data || null);
@@ -114,7 +152,7 @@ function TMExpenses() {
       setLoading(false);
     }
   };
-  useEffect(() => { load(month); }, [month]);
+  useEffect(() => { load(month); }, [month, personal]);
 
   const submitMonth = async () => {
     if (!summary?.submittable_drafts) {
@@ -145,6 +183,26 @@ function TMExpenses() {
     }
   };
 
+  const downloadMyReport = async () => {
+    setDownloading(true);
+    try {
+      // Personal-scoped: the backend forces q.tm_user_id = user.id when the
+      // caller is a plain TM (personal flag is ignored), and honours
+      // ?personal=true when the caller is a SeniorTM.
+      const suffix = personal ? "&personal=true" : "";
+      await downloadExpenseZip(
+        `/expenses/receipts.zip?month=${month}${suffix}`,
+        `my-expense-report_${month}.zip`,
+      );
+      toast.success("Report downloaded");
+    } catch (e) {
+      if (e.status === 404) toast.info("No expenses to export for this month");
+      else toast.error(e.message || "Could not download");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <>
       <div className="rounded-md border p-5 mb-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="expenses-month-card">
@@ -154,7 +212,7 @@ function TMExpenses() {
             <div className="font-display text-xl font-medium min-w-[180px] text-center" style={{ color: "var(--brand-primary)" }} data-testid="current-month">{fmtMonth(month)}</div>
             <button onClick={() => setMonth(shiftMonth(month, 1))} data-testid="month-next" className="p-1.5 rounded hover:bg-[var(--bg-paper)]"><ChevronRight className="w-4 h-4" /></button>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Link to="/expenses/log" data-testid="add-expense-btn">
               <Button style={{ background: "var(--brand-secondary)", color: "white" }}>
                 <Plus className="w-4 h-4 mr-1" /> Add expense
@@ -162,6 +220,15 @@ function TMExpenses() {
             </Link>
             <Button variant="outline" onClick={submitMonth} disabled={submitting || !summary?.submittable_drafts} data-testid="submit-month-btn">
               <Send className="w-4 h-4 mr-1" /> Submit month
+            </Button>
+            <Button
+              variant="outline"
+              onClick={downloadMyReport}
+              disabled={downloading || !summary?.count}
+              data-testid="download-my-report-btn"
+              title="Download this month as a ZIP of PDF receipts"
+            >
+              <Download className="w-4 h-4 mr-1" /> Download my report
             </Button>
           </div>
         </div>
@@ -300,20 +367,14 @@ function ManagerExpenses() {
     try {
       const params = new URLSearchParams({ month });
       if (tmFilter) params.set("tm_user_id", tmFilter);
-      const res = await api.get(`/expenses/receipts.zip?${params.toString()}`, { responseType: "blob" });
-      const url = URL.createObjectURL(res.data);
-      const a = document.createElement("a");
-      a.href = url;
-      const cd = res.headers?.["content-disposition"] || "";
-      const match = /filename="?([^"]+)"?/i.exec(cd);
-      a.download = match ? match[1] : `receipts_${month}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-      toast.success("Receipts downloaded");
+      await downloadExpenseZip(
+        `/expenses/receipts.zip?${params.toString()}`,
+        `expense-report_${month}.zip`,
+      );
+      toast.success("Report downloaded");
     } catch (e) {
-      toast.error(e?.response?.status === 404 ? "No receipts to download" : "Could not download");
+      if (e.status === 404) toast.info("No expenses to export for this month");
+      else toast.error(e.message || "Could not download");
     } finally {
       setDownloading(false);
     }

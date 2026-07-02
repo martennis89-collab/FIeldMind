@@ -1583,6 +1583,9 @@ app.add_middleware(
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
+    # Expose custom headers so browser JS can read the download filename from
+    # streamed exports (receipts.zip, report PDFs, etc.).
+    expose_headers=["Content-Disposition"],
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

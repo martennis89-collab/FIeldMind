@@ -153,6 +153,27 @@ def test_bug2_seniortm_can_submit_month():
 
 # ============================== BUG 3 ==============================
 def test_bug3_receipts_zip_is_pdf_per_expense():
+    # Seed one no-image expense + one big-image expense so the test doesn't
+    # depend on ambient DB state. Both belong to this month for the SeniorTM.
+    from PIL import Image as _PIL
+    marker = f"iter16-bug3-{int(__import__('time').time())}"
+    # (a) no-image
+    r_ni = requests.post(f"{API}/expenses", headers=H(SR_TOK), data={
+        "expense_date": TODAY, "category": "Food", "amount": "1.23",
+        "vendor": f"NoImg-{marker}", "notes": "iter16",
+    }, timeout=30)
+    assert r_ni.status_code == 200, r_ni.text
+    # (b) big 800x800 phone-camera image
+    big = io.BytesIO()
+    _PIL.new("RGB", (800, 800), color="blue").save(big, format="JPEG")
+    r_bi = requests.post(f"{API}/expenses", headers=H(SR_TOK),
+                         files={"receipt": ("big.jpg", big.getvalue(), "image/jpeg")},
+                         data={
+                             "expense_date": TODAY, "category": "Food", "amount": "9.99",
+                             "vendor": f"BigImg-{marker}", "notes": "iter16",
+                         }, timeout=30)
+    assert r_bi.status_code == 200, r_bi.text
+
     r = requests.get(f"{API}/expenses/receipts.zip",
                      headers=H(SR_TOK), params={"month": CURRENT_MONTH}, timeout=60)
     assert r.status_code == 200, r.text
@@ -163,35 +184,19 @@ def test_bug3_receipts_zip_is_pdf_per_expense():
 
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     names = zf.namelist()
-    assert len(names) >= 1
-    all_sizes = []
+    assert len(names) >= 2
     for name in names:
         assert name.endswith(".pdf"), f"non-pdf in zip: {name}"
         data = zf.read(name)
         assert data[:5] == b"%PDF-", f"not a PDF: {name} starts with {data[:8]!r}"
-        all_sizes.append(len(data))
-    baseline_max = max(all_sizes)
 
-    # Verify separately with a REAL sized phone-camera-ish image that PDFs
-    # materially grow when the image is embedded (BUG 3 acceptance criterion).
-    from PIL import Image as _PIL
-    big = io.BytesIO()
-    _PIL.new("RGB", (800, 800), color="blue").save(big, format="JPEG")
-    files = {"receipt": ("big.jpg", big.getvalue(), "image/jpeg")}
-    rp = requests.post(f"{API}/expenses", headers=H(SR_TOK), files=files, data={
-        "expense_date": TODAY, "category": "Food", "amount": "9.99",
-        "vendor": "Iter16-BigImg", "notes": "iter16",
-    }, timeout=30)
-    assert rp.status_code == 200, rp.text
-    r2 = requests.get(f"{API}/expenses/receipts.zip",
-                      headers=H(SR_TOK), params={"month": CURRENT_MONTH}, timeout=60)
-    assert r2.status_code == 200
-    zf2 = zipfile.ZipFile(io.BytesIO(r2.content))
-    big_pdf = [zf2.read(n) for n in zf2.namelist() if "BigImg" in n]
-    assert big_pdf, "big-image PDF not in ZIP"
-    assert len(big_pdf[0]) > baseline_max, (
-        f"PDF with embedded phone image ({len(big_pdf[0])}) is not materially "
-        f"larger than metadata-only PDFs (max was {baseline_max})"
+    no_img_pdfs = [zf.read(n) for n in names if f"NoImg-{marker}" in n]
+    big_img_pdfs = [zf.read(n) for n in names if f"BigImg-{marker}" in n]
+    assert no_img_pdfs, "no-image PDF missing from ZIP"
+    assert big_img_pdfs, "big-image PDF missing from ZIP"
+    assert len(big_img_pdfs[0]) > len(no_img_pdfs[0]) + 5000, (
+        f"PDF with embedded phone image ({len(big_img_pdfs[0])}) is not "
+        f"materially larger than the metadata-only PDF ({len(no_img_pdfs[0])})"
     )
 
 

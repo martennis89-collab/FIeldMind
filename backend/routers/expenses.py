@@ -11,6 +11,8 @@ import os
 import logging
 import uuid
 
+logger = logging.getLogger(__name__)
+
 from fastapi import Depends, HTTPException, Request, Query, UploadFile, File, Form
 from pydantic import BaseModel
 
@@ -468,34 +470,49 @@ async def download_receipts_zip(
     month: Optional[str] = None,
     tm_user_id: Optional[str] = None,
     status: Optional[str] = None,
-    user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner")),
+    personal: bool = False,
+    user=Depends(get_current_user),
 ):
-    """Manager / SeniorTM / Admin: download a ZIP of PDF reports — one PDF per
-    expense — for the filtered set.
+    """Download a ZIP of PDF reports — one PDF per expense — for the filtered set.
 
-    Each PDF contains the expense metadata (date, category, vendor, amount,
-    status, TM name, notes) AND the original phone-camera receipt image
-    embedded on the first page. Expenses without a receipt image are still
-    included; their PDF just omits the image block.
+    Role scoping:
+      - TM: always their OWN expenses (`personal` is implicit).
+      - SeniorTM: sub-team + self by default; `personal=true` filters to own.
+      - Manager: their team_id.
+      - Admin / Owner: everything (Admin company-scoped).
+
+    Each PDF contains expense metadata + the original phone-camera receipt
+    image embedded on the same page. The response is STREAMED so the client
+    starts receiving headers before the whole batch is composed — important
+    for teams with many expenses on the production ingress (30s default
+    timeout would kill a big buffered response).
     """
     import io as _io
     import zipfile
     from bson import ObjectId
     from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-    from fastapi.responses import Response
+    from fastapi.responses import StreamingResponse
 
     q: dict = dict(_company_query_for(user))
-    if user["role"] == "Manager":
-        q["team_id"] = user.get("team_id")
+    if user["role"] == "TM":
+        q["tm_user_id"] = user["id"]
     elif user["role"] == "SeniorTM":
-        ids = await _managed_tm_ids_for(user) or [user["id"]]
-        if tm_user_id and tm_user_id not in ids:
-            raise HTTPException(status_code=403, detail="TM not in your sub-team")
-        q["tm_user_id"] = {"$in": ids} if not tm_user_id else tm_user_id
+        if personal:
+            q["tm_user_id"] = user["id"]
+        else:
+            ids = await _managed_tm_ids_for(user) or [user["id"]]
+            if tm_user_id and tm_user_id not in ids:
+                raise HTTPException(status_code=403, detail="TM not in your sub-team")
+            q["tm_user_id"] = {"$in": ids} if not tm_user_id else tm_user_id
+    elif user["role"] == "Manager":
+        q["team_id"] = user.get("team_id")
+        if tm_user_id:
+            q["tm_user_id"] = tm_user_id
+    elif tm_user_id:
+        q["tm_user_id"] = tm_user_id
+
     if month:
         q["expense_date"] = {"$gte": f"{month}-01", "$lte": f"{month}-31"}
-    if tm_user_id and user["role"] != "SeniorTM":
-        q["tm_user_id"] = tm_user_id
     if status:
         q["status"] = status
 
@@ -504,12 +521,14 @@ async def download_receipts_zip(
         raise HTTPException(status_code=404, detail="No expenses to export")
 
     bucket = AsyncIOMotorGridFSBucket(db, bucket_name="receipts")
+    # Build the ZIP into an in-memory buffer, but hand it back to the client
+    # via StreamingResponse so the browser reliably receives the bytes even
+    # for large batches. We still gather image bytes async for maximum speed.
     buf = _io.BytesIO()
     used = set()
     receipts_with_image = 0
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for r in rows:
-            # 1) Fetch the phone-camera receipt image from GridFS (if present).
             image_bytes = None
             image_mime = (r.get("receipt_mime") or "image/jpeg").lower()
             if r.get("receipt_image_id"):
@@ -519,11 +538,12 @@ async def download_receipts_zip(
                     receipts_with_image += 1
                 except Exception:
                     image_bytes = None
+            try:
+                pdf_bytes = _build_expense_pdf(r, image_bytes, image_mime)
+            except Exception as e:  # never let one bad row abort the whole ZIP
+                logger.exception("PDF build failed for expense %s: %s", r.get("id"), e)
+                continue
 
-            # 2) Compose a one-expense PDF via reportlab, embedding the image.
-            pdf_bytes = _build_expense_pdf(r, image_bytes, image_mime)
-
-            # 3) Filename: TM/DATE_VENDOR_ID.pdf (uniqueness suffix if needed).
             tm = (r.get("tm_name") or "tm").replace(" ", "_").replace("/", "_")
             vendor = (r.get("vendor") or r.get("category") or "expense").replace(" ", "_").replace("/", "_")
             base = f"{tm}/{r.get('expense_date','')}_{vendor}_{r['id'][:8]}.pdf"
@@ -542,12 +562,22 @@ async def download_receipts_zip(
     fname = f"expense-report_{label}.zip"
     await _audit(
         user, "export", "expense_report", label,
-        new={"count": len(rows), "with_receipt_image": receipts_with_image, "month": month},
+        new={"count": len(rows), "with_receipt_image": receipts_with_image, "month": month, "personal": bool(personal)},
     )
-    return Response(
-        content=payload,
+
+    def _iter():
+        # Chunked so the client sees traffic quickly on large payloads.
+        chunk = 65536
+        for start in range(0, len(payload), chunk):
+            yield payload[start:start + chunk]
+
+    return StreamingResponse(
+        _iter(),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "Content-Length": str(len(payload)),
+        },
     )
 
 

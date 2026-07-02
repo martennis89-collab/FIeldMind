@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 17 — Expense ZIP download bug fix + TM 'Download my report' feature verified end-to-end. All acceptance points pass: (1) SeniorTM Team view download-all-receipts-btn now downloads a valid ZIP (Content-Disposition attachment; filename=\"expense-report_YYYY-MM.zip\", Content-Type application/zip, Content-Length present). (2) Empty month (month=1999-01) returns HTTP 404 with body {\"detail\":\"No expenses to export\"} — frontend maps to info toast 'No expenses to export for this month'. (3) StreamingResponse used and Content-Length explicit — no chunked-only edge case for browsers. (4) NEW: TM (tm1@field.io) role now allowed on /expenses/receipts.zip and auto-scoped to their own rows; the new download-my-report-btn is visible next to add-expense-btn and submit-month-btn on the TM view and produces a valid ZIP. (5) RBAC: TM passing ?tm_user_id=<other-tm-id> only gets their own PDFs (no leak). (6) SeniorTM personal view (?personal=true) also shows download-my-report-btn and downloads only SeniorTM's own rows. (7) Regression: SeniorTM Team view per-TM download icon still filters correctly. (8) CORS Access-Control-Expose-Headers: Content-Disposition confirmed via pytest — filename now readable from JS. 8/8 iter17 pytest + 31/31 iter16+phase_l+expenses regression = 39/39 backend tests pass. 3/3 UI Playwright flows pass (real blob downloads captured in browser).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_17_expense_download_fixes.py",
+    "/app/test_reports/pytest/iter17_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routers/expenses.py /expenses/receipts.zip — StreamingResponse is set up correctly with explicit Content-Length header (browsers with strict progress bars work). Bad-row loop now `continue`s on PDF-build exception, so a single unreadable receipt image cannot 500 the whole batch — this closes the iter16 minor hardening item.",
+    "routers/expenses.py TM branch — `if user['role'] == 'TM': q['tm_user_id'] = user['id']` is set BEFORE any `tm_user_id` query param is applied, so even a crafted `?tm_user_id=<other>` from a TM is overwritten. Verified RBAC via pytest.",
+    "server.py CORS — expose_headers=['Content-Disposition'] present; verified over HTTP that the response includes Access-Control-Expose-Headers: Content-Disposition, so browser JS can read the filename.",
+    "frontend/pages/Expenses.jsx downloadExpenseZip helper — cleanly parses JSON error bodies from a blob responseType (previously swallowed). 404 branch surfaces as info toast (not red), other statuses surface real backend detail. Both TMExpenses and ManagerExpenses reuse the helper — no duplicated download logic. Nice DRY refactor.",
+    "Expenses.jsx TM view — download-my-report-btn is disabled while `downloading` state is true (prevents double-clicks) and disabled when `!summary?.count` (prevents 404 flash for empty months). Correct UX."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_17_expense_download_fixes.py (new)",
+    "/app/test_reports/pytest/iter17_results.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "8/8 iter17 (100%) + 31/31 regression (test_iteration_16_seniortm_expenses + test_expenses + test_phase_l_senior_tm) = 39/39 (100%)",
+    "frontend": "3/3 critical UI flows verified (SeniorTM Team download / SeniorTM Personal download / TM Download my report) — all triggered real blob downloads with correct filenames"
+  },
+  "test_credentials": "SeniorTM snr.demo.1782126329@field.io/senior123 ✓; TM tm1@field.io/tm123 ✓; TM tm2@field.io/tm123 ✓; Admin admin@field.io/admin123 ✓; Manager manager@field.io/manager123 ✓",
+  "seed_data_creation": "Each test posts a lightweight `notes='iter17'` expense so it doesn't depend on ambient DB state; no explicit cleanup required (test data is small and tagged).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 17 verified all points from the review request: the original bug (red 'Could not download' toast) is fixed via CORS expose_headers + StreamingResponse + Content-Length + per-row try/except + frontend blob-JSON error parsing. The new TM 'Download my report' feature works end-to-end with correct RBAC (auto-scope on the server ignores any tm_user_id query param manipulation from TM callers). Frontend downloadExpenseZip helper is shared between TMExpenses and ManagerExpenses — a good place to add future features (e.g. progress toast, retry). No open issues.",
+  "rca of the issue": "Original bug had 2 root causes and 1 UX issue: (a) CORS did NOT expose Content-Disposition — the browser could still download, but frontend JS could not read the filename and any real HTTP error was masked; (b) the endpoint buffered the entire ZIP into memory then returned it in one shot — on large batches, production ingress (30s) killed it; (c) the frontend catch was `catch { toast.error('Could not download') }`, swallowing the real backend message. Fixes shipped: server.py sets expose_headers=['Content-Disposition']; routers/expenses.py uses StreamingResponse and iterates the buffered payload in 64KB chunks with an explicit Content-Length header; a per-row try/except now `continue`s on _build_expense_pdf failure so one corrupt receipt image cannot 500 the whole batch (also closes iter16 minor); downloadExpenseZip helper reads JSON error body from the blob response and surfaces backend `detail`. The 404 empty-month case is now differentiated in the UI: toast.info('No expenses to export for this month') instead of red toast.error. Feature side: the endpoint now accepts role='TM' and auto-scopes to q.tm_user_id = user.id before any tm_user_id query param is applied, so RBAC is safe. All verified end-to-end."
+}
