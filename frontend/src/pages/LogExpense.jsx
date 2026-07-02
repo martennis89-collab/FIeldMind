@@ -24,7 +24,7 @@ export default function LogExpense() {
   const [extracted, setExtracted] = useState(null);
   const [duplicateOf, setDuplicateOf] = useState(null);
 
-  const [category, setCategory] = useState("Petrol");
+  const [category, setCategory] = useState(reimbursementReportId ? "Food" : "Petrol");
   const [date, setDate] = useState(todayISO());
   const [amount, setAmount] = useState("");
   const [vendor, setVendor] = useState("");
@@ -60,7 +60,12 @@ export default function LogExpense() {
       if (ex.amount != null) setAmount(String(ex.amount));
       if (ex.expense_date) setDate(ex.expense_date);
       if (ex.vendor) setVendor(ex.vendor);
-      if (ex.category_hint) setCategory(ex.category_hint);
+      if (ex.category_hint) {
+        // In reimbursement flow, Petrol is not a manual expense — auto-computed from KM.
+        if (!(reimbursementReportId && ex.category_hint === "Petrol")) {
+          setCategory(ex.category_hint);
+        }
+      }
       if (ex.notes && !notes) setNotes(ex.notes);
       const conf = ex.confidence != null ? Math.round(ex.confidence * 100) : 0;
       if (conf >= 50) {
@@ -157,11 +162,15 @@ export default function LogExpense() {
       {/* Category */}
       <div className="rounded-md border p-5 mt-4" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="category-section">
         <Label className="mb-2 block">Category</Label>
-        <div className="flex gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {[
             { v: "Petrol", emoji: "⛽" },
             { v: "Food", emoji: "🍔" },
-          ].map((opt) => {
+            { v: "Hotel", emoji: "🏨" },
+            { v: "Parking", emoji: "🅿️" },
+            { v: "Tolls", emoji: "🛣️" },
+            { v: "Other", emoji: "📎" },
+          ].filter((opt) => !(reimbursementReportId && opt.v === "Petrol")).map((opt) => {
             const active = category === opt.v;
             return (
               <button
@@ -169,7 +178,7 @@ export default function LogExpense() {
                 type="button"
                 onClick={() => setCategory(opt.v)}
                 data-testid={`cat-${opt.v.toLowerCase()}`}
-                className="flex-1 px-4 py-3 rounded-md text-sm font-medium transition-all"
+                className="px-3 py-2 rounded-md text-sm font-medium transition-all"
                 style={{
                   background: active ? "var(--brand-primary)" : "white",
                   color: active ? "white" : "var(--text-secondary)",

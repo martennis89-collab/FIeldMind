@@ -93,8 +93,8 @@ async def create_expense(
     """
     if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="Only TMs can log expenses")
-    if category not in ("Petrol", "Food"):
-        raise HTTPException(status_code=400, detail="category must be 'Petrol' or 'Food'")
+    if category not in ("Petrol", "Food", "Hotel", "Parking", "Tolls", "Other"):
+        raise HTTPException(status_code=400, detail="category must be one of Petrol, Food, Hotel, Parking, Tolls, Other")
     if amount < 0:
         raise HTTPException(status_code=400, detail="amount must be non-negative")
     try:

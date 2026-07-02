@@ -23,7 +23,7 @@ SYSTEM_PROMPT = """You are an AI receipt parser for a field-rep expense tracking
   "currency": <"USD"|"EUR"|"GBP"|"INR"|"AED"|"SAR"|"PLN"|"BGN"|other 3-letter code or null>,
   "expense_date": <"YYYY-MM-DD" or null>,
   "vendor": <string or null>,
-  "category_hint": <"Petrol"|"Food"|null>,
+  "category_hint": <"Petrol"|"Food"|"Hotel"|"Parking"|"Tolls"|"Other"|null>,
   "confidence": <number 0-1>,
   "notes": <string or null>
 }
@@ -31,8 +31,15 @@ SYSTEM_PROMPT = """You are an AI receipt parser for a field-rep expense tracking
 Rules:
 - amount must be the total / grand total (not subtotal, not tax line). If multiple totals appear, pick the largest.
 - expense_date is the date PRINTED on the receipt. If only a partial date is visible, return null.
-- vendor is the merchant name (e.g. "Shell", "Starbucks", "McDonald's"). Use what's printed.
-- category_hint: "Petrol" if it's clearly a gas/petrol/fuel station, "Food" if it's a restaurant/cafe/grocery, otherwise null.
+- vendor is the merchant name (e.g. "Shell", "Starbucks", "Marriott", "Europcar"). Use what's printed.
+- category_hint classification:
+    * "Petrol" — gas / petrol / fuel station (Shell, BP, Lukoil, OMV, Total, Eni, Circle K fuel pump, etc.).
+    * "Food"   — restaurant, cafe, bar, grocery, food delivery, catering.
+    * "Hotel"  — hotel, motel, B&B, AirBnB, guest-house, lodging.
+    * "Parking" — parking lot, parking garage, parking meter, valet.
+    * "Tolls"  — highway toll booth, e-vignette, road toll, bridge toll.
+    * "Other"  — anything else (office supplies, taxi, small repair, etc.).
+    * null     — if the image is not clearly a receipt.
 - If the image is not a receipt or unreadable, return all nulls and confidence=0.
 - Do NOT include any extra fields or commentary.
 - Output JSON ONLY.
@@ -113,7 +120,7 @@ async def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> 
         except Exception:
             out["confidence"] = 0.0
         # Category hint to allowed set
-        if out["category_hint"] not in ("Petrol", "Food"):
+        if out["category_hint"] not in ("Petrol", "Food", "Hotel", "Parking", "Tolls", "Other"):
             out["category_hint"] = None
         return out
     except Exception:

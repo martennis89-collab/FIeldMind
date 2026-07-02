@@ -898,3 +898,45 @@ acceptance points verified (see `/app/test_reports/iteration_18.json`).
 - Analytics Phase D V2 trend / delta snapshots.
 - Weekly `/insights/me/digest` email.
 
+
+---
+
+## Phase M2 — Receipt OCR extraction (Feb 2026)
+
+**Status:** SHIPPED — 6/6 new backend tests pass; Phase M1 regression suite
+still green (35/35).
+
+**What shipped**
+- Extended the existing Claude Sonnet 4.5 vision OCR (`expenses_ai.py`,
+  `/api/expenses/extract`) to recognise the full M1 category set:
+  `Petrol | Food | Hotel | Parking | Tolls | Other`. Previously only
+  `Petrol / Food`.
+- Widened `POST /api/expenses` category whitelist to accept the same set.
+  Unknown categories still 400.
+- Frontend `LogExpense.jsx` now shows a 6-tile category picker (3-column
+  grid with emoji labels). When opened from a reimbursement report
+  (`?reimbursement_report_id=…`), Petrol is hidden (fuel is auto-computed
+  from KM in M1) and the default category is Food. OCR-inferred Petrol is
+  ignored in the reimbursement flow to prevent double-counting.
+- New pytest coverage: `/app/backend/tests/test_phase_m2_receipt_ocr.py`
+  — parametrised category acceptance, unknown-category rejection, and
+  extract-endpoint response shape stability.
+
+**How it works end-to-end**
+1. TM taps "Take or upload receipt" in `/expenses/log`.
+2. Image is uploaded to `/api/expenses/extract` → Claude Sonnet 4.5 vision
+   returns `{amount, currency, expense_date, vendor, category_hint,
+   confidence, notes}`.
+3. Frontend prefills the form; TM can override any field before saving.
+4. On save, the image is stored in GridFS (bucket `receipts`) and the
+   expense is linked to the reimbursement report via
+   `reimbursement_report_id`.
+5. Duplicate SHA-1 hash check surfaces "Looks like you already uploaded
+   this receipt" when a TM re-uploads.
+
+**Backlog (still P1+)**
+- Analytics Phase D V2 trend / delta snapshots, team / company / per-doctor
+  scope metrics, `comparison_value` back-fill.
+- `/insights/me/digest` weekly email.
+- Owner Benchmark Insights tab.
+
