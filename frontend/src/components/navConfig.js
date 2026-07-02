@@ -87,6 +87,7 @@ export const TM_MORE = [
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "more-invisalign" },
   { to: "/meetings", label: "Meetings", icon: Calendar, testId: "more-meetings" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
+  { to: "/reimbursement", label: "Reimbursement", icon: FileText, testId: "more-reimbursement" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
   { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
 ];
@@ -102,6 +103,7 @@ export const MANAGER_BOTTOM = [
 export const MANAGER_MORE = [
   { to: "/team-performance", label: "Team performance", icon: TrendingUp, testId: "more-team" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
+  { to: "/reimbursement", label: "Reimbursement", icon: FileText, testId: "more-reimbursement" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
   { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
 ];
@@ -125,6 +127,7 @@ export const SENIORTM_MORE = [
   { to: "/doctors", label: "Doctors", icon: Users, testId: "more-doctors" },
   { to: "/meetings", label: "Meetings", icon: Calendar, testId: "more-meetings" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
+  { to: "/reimbursement", label: "Reimbursement", icon: FileText, testId: "more-reimbursement" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "more-expenses" },
   { to: "/account", label: "My account", icon: UserRound, testId: "more-account" },
 ];

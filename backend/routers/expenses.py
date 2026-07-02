@@ -82,6 +82,7 @@ async def create_expense(
     amount: float = Form(...),
     vendor: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
+    reimbursement_report_id: Optional[str] = Form(None),
     receipt: Optional[UploadFile] = File(None),
     user=Depends(get_current_user),
 ):
@@ -147,6 +148,7 @@ async def create_expense(
         "ocr": None,
         "status": "Draft",
         "submitted_at": None,
+        "reimbursement_report_id": reimbursement_report_id,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }

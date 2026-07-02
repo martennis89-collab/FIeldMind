@@ -27,6 +27,7 @@ import BookMeeting from "@/pages/BookMeeting";
 import IteroPipeline from "@/pages/IteroPipeline";
 import IteroDemos from "@/pages/IteroDemos";
 import Account from "@/pages/Account";
+import Reimbursement from "@/pages/Reimbursement";
 
 export default function App() {
   return (
@@ -105,6 +106,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout><Reports /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reimbursement"
+            element={
+              <ProtectedRoute roles={["TM", "SeniorTM", "Admin", "Owner"]}>
+                <Layout><Reimbursement /></Layout>
               </ProtectedRoute>
             }
           />

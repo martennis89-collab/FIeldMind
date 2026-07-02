@@ -131,8 +131,8 @@ def test_new_feature_tm_can_download_own_report():
 # ============================== RBAC: TM cannot leak other TMs =================
 def test_rbac_tm_cannot_download_another_tm_via_query_param():
     # Seed one expense for tm2, then have tm1 request tm2's data via query param.
-    tm2_exp = _seed_expense(TM2_TOK, f"iter17-tm2only-{int(time.time())}")
-    tm1_exp = _seed_expense(TM_TOK, f"iter17-tm1only-{int(time.time())}")
+    _seed_expense(TM2_TOK, f"iter17-tm2only-{int(time.time())}")
+    _seed_expense(TM_TOK, f"iter17-tm1only-{int(time.time())}")
 
     r = requests.get(
         f"{API}/expenses/receipts.zip",

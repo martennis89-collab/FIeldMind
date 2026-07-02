@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -15,6 +15,8 @@ function todayISO() {
 
 export default function LogExpense() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const reimbursementReportId = searchParams.get("reimbursement_report_id");
   const fileRef = useRef(null);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -86,9 +88,10 @@ export default function LogExpense() {
       if (vendor.trim()) fd.append("vendor", vendor.trim());
       if (notes.trim()) fd.append("notes", notes.trim());
       if (file) fd.append("receipt", file);
+      if (reimbursementReportId) fd.append("reimbursement_report_id", reimbursementReportId);
       const { data } = await api.post("/expenses", fd);
       toast.success(`Saved ${data.expense?.category} expense`);
-      navigate("/expenses");
+      navigate(reimbursementReportId ? "/reimbursement" : "/expenses");
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Save failed");
     } finally {
