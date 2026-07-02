@@ -828,3 +828,73 @@ surfaces.
 - Owner Benchmark Insights tab.
 - Batch `POST /benchmark/cohorts/refresh-all`.
 - Per-company "Request opt-in" admin flow.
+
+---
+
+## Phase M1 — Monthly Reimbursement Report (Feb 2026)
+
+**Status:** SHIPPED — 5/5 backend pytest cases green, 13/14 E2E frontend
+acceptance points verified (see `/app/test_reports/iteration_18.json`).
+
+**Backend** (`/app/backend/routers/reimbursement.py`)
+- `POST /api/reimbursement/reports/generate` — TM (self) / SeniorTM (team
+  member) generates a monthly report by aggregating `visits` for the month,
+  matching every visited doctor against the new `doctor_km` collection,
+  computing total KM. Dedupes to a single active report per `(tm_user_id,
+  month)`.
+- `GET /api/reimbursement/reports` — scoped list (TM=own, SeniorTM=team,
+  Admin/Owner=company).
+- `GET /api/reimbursement/reports/{id}` — hydrated with expenses + totals.
+- `PATCH /api/reimbursement/reports/{id}` — TM edits `fuel_price_per_l` /
+  `already_reimbursed`; SeniorTM+ can also edit
+  `fuel_consumption_l_per_100km`. Locked once Submitted (TM can only edit in
+  Draft / Changes Requested).
+- `POST /api/reimbursement/reports/{id}/refresh-breakdown` — re-runs the
+  aggregation after KM fill.
+- `POST /api/reimbursement/reports/{id}/submit` — validates fuel price + all
+  doctor KM + all expenses have a receipt or exception, then Draft →
+  Submitted.
+- `POST /api/reimbursement/reports/{id}/{approve|reject|request-changes}` —
+  Senior review transitions with mandatory comment on reject / request-changes.
+- `POST /api/reimbursement/reports/{id}/mark-paid` — Approved → Paid.
+- `GET /api/reimbursement/reports/{id}/pdf` — ReportLab-rendered A4 PDF with
+  meta, totals, doctor breakdown, expenses, and comments.
+- `GET/POST /api/doctor-km` — company-scoped KM lookup. TMs can seed a
+  missing row (marked `PendingReview`) but cannot overwrite an existing one
+  (403 → "ask your Senior TM"). SeniorTM/Admin/Owner have full write access.
+
+**Frontend** (`/app/frontend/src/pages/Reimbursement.jsx`, wired in
+`/app/frontend/src/App.js` and `navConfig.js`)
+- Role-aware header ("Your monthly claims" / "Team reimbursement" /
+  "Reimbursement — all teams").
+- Month picker + Generate button; empty state with hint.
+- Reports table with per-row totals + Open drawer button.
+- Report drawer: totals grid, fuel inputs (consumption for SeniorTM+, price
+  for TM), MissingKM panel with inline save, doctor breakdown table with
+  match badges, expenses summary + link to `/expenses/log?reimbursement_report_id=…`,
+  comments log, action bar (Submit / Approve / Request changes / Reject /
+  Mark paid / PDF).
+- Data-testids on every interactive element and every status pill for
+  deterministic E2E.
+
+**Data model additions**
+- `doctor_kms` — `{id, doctor_id, company_id, km_per_visit, status, ...}`.
+- `reimbursement_reports` — `{id, tm_user_id, month, status, total_km,
+  fuel_price_per_l, doctor_breakdown, comments[], audit[], …}`.
+- `expenses.reimbursement_report_id` — optional link so a TM's monthly
+  receipts roll up into the report.
+
+**Backend tests** (`/app/backend/tests/test_phase_m1_reimbursement.py`)
+- Fixture fixes applied this session: load `frontend/.env` so
+  `REACT_APP_BACKEND_URL` resolves; use `PUT /users/{id}` (not PATCH) to
+  link the TM under the demo Senior TM; wipe stale
+  `reimbursement_reports` + `doctor_km` rows before each module run to keep
+  tests idempotent. Router bug fixed: dedup branch was returning the
+  Mongo document with `_id` still attached — projection added.
+
+**Backlog (untouched, still P1+)**
+- Phase M2: OCR receipt extraction (Claude Sonnet 4.5 via Emergent LLM
+  Key).
+- Analytics Phase D V2 trend / delta snapshots.
+- Weekly `/insights/me/digest` email.
+
