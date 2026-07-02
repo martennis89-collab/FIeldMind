@@ -1,0 +1,36 @@
+{
+  "summary": "Iter19 validated SeniorTM event-creation bug fix. Backend: SeniorTM POST /api/events -> 200 with km persisted; TM/Manager/Admin regressions -> 200. Baseline regression pytests (M1, M2, O, doctor_dedupe) still 29/29 green. Frontend: logged in as SeniorTM on preview, opened Add-event dialog on /meetings, saved event with km=37 -> POST 200, 'Event added' toast, no 'Forbidden' toast, dialog closed, event visible in Meetings list and on /calendar month grid.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (test fixture)", "issue": "Review request listed Manager password as 'mgr123' — real seeded credential is 'manager123' per /app/memory/test_credentials.md. Testing agent corrected the local test."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter19_seniortm_event.py",
+    "/app/test_reports/pytest/iter19_results.xml"
+  ],
+  "action_items": [
+    "Update review request / handoff note: Manager credential is manager@field.io / manager123 (not mgr123). Selector names in Meetings.jsx are event-start-input / event-end-input (not event-startsAt-input / event-endsAt-input)."
+  ],
+  "critical_code_review_comments": [
+    "routers/events.py L77 role whitelist now includes SeniorTM — matches Phase L policy. Consider centralising the writable-role tuple (TM|SeniorTM|Manager|Admin|Owner) as a constant since it is repeated across expenses/reimbursement/events routers.",
+    "L108 km plumbed into Event constructor — good. Consider validating km >= 0 in EventCreate (pydantic Field(ge=0)) to prevent negative distances that would poison _build_event_breakdown.",
+    "list_events (L122-125) still hardcodes role branches for TM vs Manager — SeniorTM falls through to the default (company-wide) scope, which is likely intended, but worth an inline comment for future maintainers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter19_seniortm_event.py (new)"
+  ],
+  "success_rate": {"backend": "100% (33/33 across new suite + M1+M2+O+doctor_dedupe)", "frontend": "100% (SeniorTM meeting-create + calendar visibility)"},
+  "test_credentials": "SeniorTM snr.demo.1782126329@field.io/senior123, TM tm1@field.io/tm123, Manager manager@field.io/manager123 (NOT mgr123), Admin admin@field.io/admin123",
+  "seed_data_creation": "None permanent; test created a few Iter19 events (Scheduled state) via API/UI on preview. Can be cleared via /api/admin/wipe-test-data if needed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug fix verified end-to-end. New regression file /app/backend/tests/test_iter19_seniortm_event.py covers the four-role event-create matrix; keep it in the standard regression sweep.",
+  "rca of the issue": "Root cause: (1) POST /api/events role whitelist in routers/events.py omitted 'SeniorTM' -> 403 for hybrid role introduced in Phase L. (2) EventCreate.km (Phase O.1) was not forwarded into Event() constructor -> km lost even when accepted by pydantic. Fix (already applied by main agent): add 'SeniorTM' to allowed roles, pass body.km through to Event(...). Verified via curl (POST returns 200, GET returns km=42.5) and Playwright (dialog saves, no Forbidden toast, calendar shows the pill)."
+}

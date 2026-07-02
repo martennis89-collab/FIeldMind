@@ -74,7 +74,7 @@ from models import Event, EventCreate, EventUpdate
 
 @api.post("/events", response_model=Event)
 async def create_event(body: EventCreate, user=Depends(get_current_user)):
-    if user["role"] not in ("TM", "Manager", "Admin", "Owner"):
+    if user["role"] not in ("TM", "SeniorTM", "Manager", "Admin", "Owner"):
         raise HTTPException(status_code=403, detail="Forbidden")
     # Resolve start, end, and duration so all three stay in sync.
     starts = body.scheduled_at
@@ -105,6 +105,7 @@ async def create_event(body: EventCreate, user=Depends(get_current_user)):
         duration_minutes=duration,
         location=body.location,
         notes=body.notes,
+        km=body.km,
         status="Scheduled",
     ).model_dump()
     _stamp_company(e, user)
