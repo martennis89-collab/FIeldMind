@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 22 verified: monthly reimbursement report auto-includes ALL month expenses (not just linked ones) and exposes the new reconciliation totals (petrol_receipts_total, expenses_recorded_total, variance_vs_km_fuel). Backend: ran 47 tests across all requested suites — 100% pass. Frontend: logged in as TM (tm1@field.io) on preview, opened the 2026-06 report, confirmed the expense-reconciliation panel renders with all 4 stat cards, values match backend totals, and variance color coding uses --brand-secondary for the negative case.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_phase_o3_month_expenses.py",
+    "/app/backend/tests/test_phase_m1_reimbursement.py",
+    "/app/backend/tests/test_phase_m2_receipt_ocr.py",
+    "/app/backend/tests/test_phase_o_event_km.py",
+    "/app/backend/tests/test_iteration_16_seniortm_expenses.py",
+    "/app/backend/tests/test_iteration_17_expense_download_fixes.py",
+    "/app/backend/tests/test_doctor_dedupe.py",
+    "/app/test_reports/pytest/iter22_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_load_expenses_for correctly restricts by tm_user_id + expense_date month bounds and no longer filters on reimbursement_report_id — matches spec.",
+    "_compute_totals cleanly separates Petrol (already in km-based fuel_cost) from manual_total so manual_expenses_total isn't double-counted, while expenses_recorded_total sums both for the reconciliation view.",
+    "_validate_submittable now only enforces receipt-attachment on expenses whose reimbursement_report_id equals the current report — ad-hoc month expenses no longer block submission.",
+    "VarianceStat color mapping is correct: >0 --status-warning, <0 --brand-secondary, ==0 --status-success, null --text-muted."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (47/47)", "frontend": "100%"},
+  "test_credentials": "TM tm1@field.io/tm123 (used); SeniorTM & Admin credentials available but not needed for this iteration's scope.",
+  "seed_data_creation": "pytest-o3-* petrol/food/parking expenses were created & cleaned by test_phase_o3_month_expenses.py fixtures. One out-of-month pytest-o3-food-outside-* row is left by design to prove exclusion; harmless.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 22 fully green. New reconciliation totals shape: totals.petrol_receipts_total, totals.expenses_recorded_total (=petrol+manual), totals.variance_vs_km_fuel (=expenses_recorded_total - fuel_cost, null if no fuel_price). Frontend testids: expense-reconciliation, stat-petrol-receipts, stat-nonfuel-expenses, stat-expenses-recorded, stat-variance-vs-km-fuel. Verified sample: month 2026-06 → petrol=€102.10, non-fuel=€33.00, recorded=€135.10, fuel_cost=€229.90, variance=-€94.80 (brand-secondary color)."
+}

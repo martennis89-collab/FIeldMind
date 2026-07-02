@@ -314,15 +314,40 @@ function ReportDrawer({ id, onClose, onChange, user }) {
         </div>
 
         {/* Totals */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6" data-testid="report-totals">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3" data-testid="report-totals">
           <Stat label="Total visits" value={report.total_visits ?? 0} />
           <Stat label="Total KM" value={(report.total_km || 0).toFixed(1)} />
           <Stat label="Litres used" value={(t.litres_used || 0).toFixed(2)} />
-          <Stat label="Fuel cost" value={fmtEUR(t.fuel_cost)} />
+          <Stat label="Fuel cost (KM-based)" value={fmtEUR(t.fuel_cost)} />
           <Stat label="Manual expenses" value={fmtEUR(t.manual_expenses_total)} />
           <Stat label="Total reimbursable" value={fmtEUR(t.total_reimbursable)} />
           <Stat label="Already reimbursed" value={fmtEUR(t.already_reimbursed)} />
           <Stat label="To reimburse" value={fmtEUR(t.amount_to_reimburse)} strong />
+        </div>
+
+        {/* Phase O.3 — reconciliation between actual receipts logged this
+            month and the km-based fuel model. Helps the TM/Senior spot when
+            the km calc is under- or over-estimating real spend. */}
+        <div className="rounded-md border p-4 mb-6" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }} data-testid="expense-reconciliation">
+          <div className="text-xs uppercase tracking-widest mb-3" style={{ color: "var(--text-muted)" }}>
+            <Receipt className="w-3 h-3 inline mr-1" /> Recorded spend this month
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Petrol receipts logged" value={fmtEUR(t.petrol_receipts_total)} testId="stat-petrol-receipts" />
+            <Stat label="Non-fuel expenses" value={fmtEUR(t.manual_expenses_total)} testId="stat-nonfuel-expenses" />
+            <Stat label="All recorded expenses" value={fmtEUR(t.expenses_recorded_total)} testId="stat-expenses-recorded" />
+            <VarianceStat value={t.variance_vs_km_fuel} testId="stat-variance-vs-km-fuel" />
+          </div>
+          <div className="text-[11px] mt-3" style={{ color: "var(--text-muted)" }}>
+            Difference = All recorded expenses − Fuel cost (KM-based).
+            {t.variance_vs_km_fuel != null && (
+              t.variance_vs_km_fuel > 0
+                ? " Positive means your receipts cost more than the km fuel calculation — the extras will still be reimbursed via manual expenses."
+                : t.variance_vs_km_fuel < 0
+                  ? " Negative means the km fuel calculation is more generous than what you actually spent on petrol."
+                  : " You spent exactly what the km model predicts."
+            )}
+          </div>
         </div>
 
         {/* Fuel inputs */}
@@ -555,11 +580,27 @@ function ReportDrawer({ id, onClose, onChange, user }) {
 }
 
 
-function Stat({ label, value, strong }) {
+function Stat({ label, value, strong, testId }) {
   return (
-    <div className="rounded border px-3 py-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-paper)" }}>
+    <div data-testid={testId} className="rounded border px-3 py-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-paper)" }}>
       <div className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{label}</div>
       <div className={`mt-0.5 ${strong ? "text-lg font-semibold" : "text-sm font-medium"}`} style={{ color: "var(--brand-primary)" }}>{value}</div>
+    </div>
+  );
+}
+
+function VarianceStat({ value, testId }) {
+  const color = value == null
+    ? "var(--text-muted)"
+    : value > 0 ? "var(--status-warning)"
+    : value < 0 ? "var(--brand-secondary)"
+    : "var(--status-success)";
+  const sign = value == null ? "" : value > 0 ? "+" : "";
+  const fmt = value == null ? "—" : `${sign}€${value.toFixed(2)}`;
+  return (
+    <div data-testid={testId} className="rounded border px-3 py-2" style={{ borderColor: color, background: "var(--bg-default)" }}>
+      <div className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Difference (Rec. − KM fuel)</div>
+      <div className="mt-0.5 text-lg font-semibold" style={{ color }}>{fmt}</div>
     </div>
   );
 }

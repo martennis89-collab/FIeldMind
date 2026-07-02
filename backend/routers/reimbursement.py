@@ -231,8 +231,13 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
     litres = round(total_km * consumption / 100.0, 3)
     fuel_cost = round(litres * float(price), 2) if price is not None else None
 
-    by_cat: dict[str, float] = {"Food": 0.0, "Hotel": 0.0, "Parking": 0.0, "Tolls": 0.0, "Other": 0.0}
-    manual_total = 0.0
+    # Petrol is tracked separately because it's already covered by the km-based
+    # fuel_cost. It's not added to manual_expenses_total (which would double-
+    # count), but it IS included in `expenses_recorded_total` (all real spend
+    # the TM logged) so the variance below is meaningful.
+    by_cat: dict[str, float] = {"Petrol": 0.0, "Food": 0.0, "Hotel": 0.0, "Parking": 0.0, "Tolls": 0.0, "Other": 0.0}
+    manual_total = 0.0        # non-petrol expenses — reimbursed on top of km fuel
+    petrol_receipts_total = 0.0
     receipt_count = 0
     exception_count = 0
     for e in expenses:
@@ -241,11 +246,26 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
         if cat not in by_cat:
             cat = "Other"
         by_cat[cat] += amt
-        manual_total += amt
+        if cat == "Petrol":
+            petrol_receipts_total += amt
+        else:
+            manual_total += amt
         if e.get("receipt_image_id"):
             receipt_count += 1
         elif e.get("exception_approved"):
             exception_count += 1
+
+    expenses_recorded_total = round(manual_total + petrol_receipts_total, 2)
+    # Phase O.3 — variance = "what the TM actually logged as receipts" minus
+    # "what the km-based fuel model says the trip cost".
+    #   > 0 : the TM spent more than the km model calculates (fuel is under-
+    #         estimated OR there are extra receipts like tolls/parking not
+    #         yet counted in `manual_expenses_total`).
+    #   < 0 : the km model is generous vs actual spend.
+    #   = 0 : perfectly balanced.
+    variance = None
+    if fuel_cost is not None:
+        variance = round(expenses_recorded_total - fuel_cost, 2)
 
     already = float(report.get("already_reimbursed") or 0.0)
     total_reimbursable = (fuel_cost or 0.0) + manual_total
@@ -257,6 +277,9 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
         "fuel_cost": fuel_cost,
         "by_category": {k: round(v, 2) for k, v in by_cat.items()},
         "manual_expenses_total": round(manual_total, 2),
+        "petrol_receipts_total": round(petrol_receipts_total, 2),
+        "expenses_recorded_total": expenses_recorded_total,
+        "variance_vs_km_fuel": variance,
         "total_reimbursable": round(total_reimbursable, 2) if price is not None else None,
         "already_reimbursed": round(already, 2),
         "amount_to_reimburse": amount_due if price is not None else None,
@@ -266,8 +289,28 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
 
 
 async def _load_expenses_for(report: dict) -> list[dict]:
-    q = {"reimbursement_report_id": report["id"]}
-    return await db.expenses.find(q, {"_id": 0}).to_list(5000)
+    """Return every expense the TM logged during the report's month.
+
+    Historically this was filtered by `reimbursement_report_id == report.id`,
+    which missed expenses the TM logged directly in `/expenses/log` outside
+    the reimbursement drawer. Phase O.3 broadens the query to "all this
+    TM's expenses whose `expense_date` falls in the report's month" so the
+    monthly report reflects real spend even for ad-hoc receipts.
+
+    The `reimbursement_report_id` link still exists for audit /
+    export-consistency purposes but is no longer required for the row to
+    appear in the monthly report.
+    """
+    tm_user_id = report.get("tm_user_id")
+    month = report.get("month") or ""
+    m_from, m_to = _month_bounds(month) if month else (None, None)
+    if not tm_user_id or not m_from:
+        return []
+    q = {
+        "tm_user_id": tm_user_id,
+        "expense_date": {"$gte": m_from, "$lte": f"{m_to}T23:59:59"},
+    }
+    return await db.expenses.find(q, {"_id": 0}).sort([("expense_date", 1)]).to_list(5000)
 
 
 async def _hydrate(report: dict) -> dict:
@@ -475,6 +518,12 @@ def _validate_submittable(report: dict, expenses: list[dict]) -> None:
         if ev.get("km") is None:
             raise HTTPException(status_code=400, detail=f"Missing KM for event '{ev.get('title')}' — enter the KM you drove for this event.")
     for e in expenses:
+        # Phase O.3 — receipts are only required for expenses the TM
+        # explicitly attached to THIS report (via `reimbursement_report_id`).
+        # Other month expenses show up for reconciliation totals but aren't
+        # gated by receipt-attachment.
+        if e.get("reimbursement_report_id") != report["id"]:
+            continue
         if not e.get("receipt_image_id") and not e.get("exception_approved"):
             raise HTTPException(status_code=400, detail=f"Expense '{e.get('vendor') or e.get('category')}' has no receipt attached")
 
