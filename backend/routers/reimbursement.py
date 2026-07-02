@@ -230,39 +230,44 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
     total_km = float(report.get("total_km") or 0.0)
     litres = round(total_km * consumption / 100.0, 3)
     fuel_cost = round(litres * float(price), 2) if price is not None else None
+    report_id = report.get("id")
 
-    # Petrol is tracked separately because it's already covered by the km-based
-    # fuel_cost. It's not added to manual_expenses_total (which would double-
-    # count), but it IS included in `expenses_recorded_total` (all real spend
-    # the TM logged) so the variance below is meaningful.
-    by_cat: dict[str, float] = {"Petrol": 0.0, "Food": 0.0, "Hotel": 0.0, "Parking": 0.0, "Tolls": 0.0, "Other": 0.0}
-    manual_total = 0.0        # non-petrol expenses — reimbursed on top of km fuel
-    petrol_receipts_total = 0.0
-    receipt_count = 0
-    exception_count = 0
+    # Buckets:
+    #   by_cat_recorded      — sum by category across EVERY expense in the
+    #                          month (petrol + non-fuel + linked + unlinked).
+    #   manual_total         — sum of non-Petrol expenses ONLY when the TM
+    #                          has explicitly linked them to this report
+    #                          (`reimbursement_report_id == report.id`).
+    #                          This is what feeds `total_reimbursable`.
+    #   petrol_recorded      — every Petrol receipt in the month, whether
+    #                          linked or not (already covered by km fuel).
+    #   included_count       — how many expenses are currently attached to
+    #                          the report (drives the drawer badge).
+    by_cat_recorded: dict[str, float] = {"Petrol": 0.0, "Food": 0.0, "Hotel": 0.0, "Parking": 0.0, "Tolls": 0.0, "Other": 0.0}
+    manual_total = 0.0
+    petrol_recorded = 0.0
+    receipt_count_linked = 0
+    exception_count_linked = 0
+    included_count = 0
     for e in expenses:
         cat = e.get("category") or "Other"
         amt = float(e.get("amount") or 0)
-        if cat not in by_cat:
+        if cat not in by_cat_recorded:
             cat = "Other"
-        by_cat[cat] += amt
+        by_cat_recorded[cat] += amt
+        is_linked = e.get("reimbursement_report_id") == report_id
         if cat == "Petrol":
-            petrol_receipts_total += amt
-        else:
+            petrol_recorded += amt
+        elif is_linked:
             manual_total += amt
-        if e.get("receipt_image_id"):
-            receipt_count += 1
-        elif e.get("exception_approved"):
-            exception_count += 1
+        if is_linked:
+            included_count += 1
+            if e.get("receipt_image_id"):
+                receipt_count_linked += 1
+            elif e.get("exception_approved"):
+                exception_count_linked += 1
 
-    expenses_recorded_total = round(manual_total + petrol_receipts_total, 2)
-    # Phase O.3 — variance = "what the TM actually logged as receipts" minus
-    # "what the km-based fuel model says the trip cost".
-    #   > 0 : the TM spent more than the km model calculates (fuel is under-
-    #         estimated OR there are extra receipts like tolls/parking not
-    #         yet counted in `manual_expenses_total`).
-    #   < 0 : the km model is generous vs actual spend.
-    #   = 0 : perfectly balanced.
+    expenses_recorded_total = round(petrol_recorded + sum(v for k, v in by_cat_recorded.items() if k != "Petrol"), 2)
     variance = None
     if fuel_cost is not None:
         variance = round(expenses_recorded_total - fuel_cost, 2)
@@ -275,16 +280,21 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
         "fuel_price_per_l": price,
         "litres_used": litres,
         "fuel_cost": fuel_cost,
-        "by_category": {k: round(v, 2) for k, v in by_cat.items()},
+        # `by_category` remains the sum across EVERY expense in the month
+        # so the reconciliation view is honest about spend distribution.
+        "by_category": {k: round(v, 2) for k, v in by_cat_recorded.items()},
+        # manual_expenses_total = only expenses the TM has explicitly linked
+        # to this report. This is what gets reimbursed.
         "manual_expenses_total": round(manual_total, 2),
-        "petrol_receipts_total": round(petrol_receipts_total, 2),
+        "petrol_receipts_total": round(petrol_recorded, 2),
         "expenses_recorded_total": expenses_recorded_total,
         "variance_vs_km_fuel": variance,
+        "included_expense_count": included_count,
         "total_reimbursable": round(total_reimbursable, 2) if price is not None else None,
         "already_reimbursed": round(already, 2),
         "amount_to_reimburse": amount_due if price is not None else None,
-        "receipt_invoice_count": receipt_count,
-        "exception_count": exception_count,
+        "receipt_invoice_count": receipt_count_linked,
+        "exception_count": exception_count_linked,
     }
 
 
@@ -506,6 +516,69 @@ async def refresh_breakdown(report_id: str, user=Depends(get_current_user)):
     )
     report = await db.reimbursement_reports.find_one({"id": report_id}, {"_id": 0})
     return await _hydrate(report)
+
+
+# ============================================================
+# Include / exclude a recorded expense in this report
+# ============================================================
+@api.patch("/reimbursement/reports/{report_id}/expenses/{expense_id}")
+async def toggle_expense_inclusion(
+    report_id: str,
+    expense_id: str,
+    body: dict,
+    user=Depends(get_current_user),
+):
+    """Attach or detach a single expense to/from this monthly report.
+
+    Body: `{"included": true|false}`.
+
+    - included=true  → sets `expense.reimbursement_report_id = report_id`
+                       so the expense counts toward `manual_expenses_total`
+                       and gets validated for receipts on submission.
+    - included=false → clears the link. The expense stays visible in the
+                       reconciliation panel but no longer contributes to
+                       the reimbursable amount.
+
+    Only the report owner (TM or SeniorTM) can toggle their own report
+    while it's in Draft / Changes Requested. Admin/Owner can toggle any
+    report. The expense must belong to the same TM as the report.
+    """
+    report = await _load_report_scoped(report_id, user)
+    if user["role"] in ("TM", "SeniorTM"):
+        if report["tm_user_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if report["status"] not in ("Draft", "Changes Requested"):
+            raise HTTPException(status_code=403, detail=f"Cannot edit a {report['status']} report")
+    exp = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
+    if not exp:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    if exp.get("tm_user_id") != report["tm_user_id"]:
+        raise HTTPException(status_code=403, detail="Expense does not belong to this TM")
+
+    include = bool(body.get("included"))
+    if include:
+        # If the expense is already linked to a DIFFERENT report, prevent
+        # silent theft — the TM must first detach from the other report.
+        other = exp.get("reimbursement_report_id")
+        if other and other != report_id:
+            raise HTTPException(
+                status_code=400,
+                detail="This expense is already attached to another report. Detach it there first.",
+            )
+        await db.expenses.update_one(
+            {"id": expense_id},
+            {"$set": {"reimbursement_report_id": report_id, "updated_at": _now_iso()}},
+        )
+    else:
+        await db.expenses.update_one(
+            {"id": expense_id},
+            {"$unset": {"reimbursement_report_id": ""}, "$set": {"updated_at": _now_iso()}},
+        )
+    await _audit(user, "toggle_expense", "reimbursement_report", report_id,
+                 new={"expense_id": expense_id, "included": include})
+    report = await db.reimbursement_reports.find_one({"id": report_id}, {"_id": 0})
+    return await _hydrate(report)
+
 
 
 def _validate_submittable(report: dict, expenses: list[dict]) -> None:

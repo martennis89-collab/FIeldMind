@@ -1,0 +1,23 @@
+{
+  "summary": "Phase O.4 (explicit opt-in expense inclusion) tested backend + frontend end-to-end. All 50 targeted regression tests pass, 2 new supplemental tests added (RBAC admin toggle + submit-validation regression) and pass. Frontend drawer shows checkboxes, include-all/include-none buttons behave correctly, Manual expenses stat card updates dynamically, and Petrol rows carry a 'fuel' badge and never contribute to Manual expenses.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_phase_o4_expense_include.py",
+    "/app/backend/tests/test_phase_o4_rbac_and_submit.py",
+    "/app/test_reports/pytest/iter23.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "reimbursement.py is 840 lines — consider splitting into submodules (totals, hydrate, endpoints) as it approaches complexity limits.",
+    "toggle_expense_inclusion returns _hydrate(report) which re-reads report — good, but consider adding an idempotency short-circuit when included flag matches current state to avoid needless writes/audits."
+  ],
+  "updated_files": ["/app/backend/tests/test_phase_o4_rbac_and_submit.py"],
+  "success_rate": {"backend": "100% (52/52)", "frontend": "100% (all flows verified)"},
+  "test_credentials": "tm1@field.io/tm123, admin@field.io/admin123 — verified via /app/memory/test_credentials.md and login endpoint",
+  "seed_data_creation": "Test-scoped expenses created with vendor prefix pytest-o4-* and pytest-o4rbac-* (auto-cleaned by module fixtures).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Explicit opt-in model verified: totals.manual_expenses_total starts at 0 on fresh report; PATCH /reimbursement/reports/{rid}/expenses/{eid} with {included:true/false} toggles link. Petrol never contributes to manual_expenses_total (only to petrol_receipts_total). Submit validation still enforces receipt-on-linked-only. UI checkboxes verified using data-testid=expense-include-{id}, include-all-btn, include-none-btn. Backend test suites run in ~28s.",
+  "rca of the issue": "N/A — feature works as designed."
+}

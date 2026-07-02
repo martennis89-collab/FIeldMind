@@ -246,6 +246,41 @@ function ReportDrawer({ id, onClose, onChange, user }) {
     } finally { setBusy(false); }
   };
 
+  const toggleExpense = async (expense_id, included) => {
+    setBusy(true);
+    try {
+      const r = await api.patch(`/reimbursement/reports/${id}/expenses/${expense_id}`, { included });
+      setReport(r.data);
+      onChange();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update expense");
+    } finally { setBusy(false); }
+  };
+
+  const toggleAll = async (include) => {
+    setBusy(true);
+    try {
+      const rows = report.expenses || [];
+      // Sequential to avoid race conditions on the same report doc.
+      for (const e of rows) {
+        const currentlyIncluded = e.reimbursement_report_id === id;
+        if (include && currentlyIncluded) continue;
+        if (!include && !currentlyIncluded) continue;
+        // Skip rows attached to a different report (backend would 400).
+        if (include && e.reimbursement_report_id && e.reimbursement_report_id !== id) continue;
+        try {
+          await api.patch(`/reimbursement/reports/${id}/expenses/${e.id}`, { included: include });
+        } catch { /* soft-fail per row */ }
+      }
+      const fresh = await api.get(`/reimbursement/reports/${id}`);
+      setReport(fresh.data);
+      onChange();
+      toast.success(include ? "All eligible expenses included" : "All expenses excluded");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update expenses");
+    } finally { setBusy(false); }
+  };
+
   const submitReport = async () => {
     setBusy(true);
     try {
@@ -484,22 +519,37 @@ function ReportDrawer({ id, onClose, onChange, user }) {
           )}
         </div>
 
-        {/* Expenses summary */}
+        {/* Expenses in this month — with per-row include toggle */}
         <div className="rounded-md border p-4 mb-6" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="expenses-panel">
-          <div className="text-xs uppercase tracking-widest mb-3 flex items-center justify-between" style={{ color: "var(--text-muted)" }}>
-            <span><Receipt className="w-3 h-3 inline mr-1" /> Manual expenses ({(report.expenses || []).length})</span>
-            {canEdit && (
-              <a href={`/expenses/log?reimbursement_report_id=${id}`} className="text-[11px] hover:text-[var(--brand-primary)]" data-testid="add-expense-link">
-                + Add expense
-              </a>
-            )}
+          <div className="text-xs uppercase tracking-widest mb-3 flex items-center justify-between flex-wrap gap-2" style={{ color: "var(--text-muted)" }}>
+            <span><Receipt className="w-3 h-3 inline mr-1" /> Expenses this month ({(report.expenses || []).length}) — {t.included_expense_count || 0} included</span>
+            <div className="flex items-center gap-2">
+              {canEdit && (report.expenses || []).length > 0 && (
+                <>
+                  <button type="button" onClick={() => toggleAll(true)} className="text-[11px] underline hover:text-[var(--brand-primary)]" data-testid="include-all-btn">
+                    Include all
+                  </button>
+                  <button type="button" onClick={() => toggleAll(false)} className="text-[11px] underline hover:text-[var(--brand-primary)]" data-testid="include-none-btn">
+                    Include none
+                  </button>
+                </>
+              )}
+              {canEdit && (
+                <a href={`/expenses/log?reimbursement_report_id=${id}`} className="text-[11px] hover:text-[var(--brand-primary)]" data-testid="add-expense-link">
+                  + Log new
+                </a>
+              )}
+            </div>
           </div>
           {(report.expenses || []).length === 0 ? (
-            <div className="text-xs" style={{ color: "var(--text-muted)" }}>No receipts attached yet.</div>
+            <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+              No expenses logged for {report.month} yet. Any expense you log with this month&apos;s date will show up here.
+            </div>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  <th className="px-2 py-1 w-8">Include</th>
                   <th className="px-2 py-1">Category</th>
                   <th className="px-2 py-1">Vendor</th>
                   <th className="px-2 py-1">Date</th>
@@ -508,21 +558,49 @@ function ReportDrawer({ id, onClose, onChange, user }) {
                 </tr>
               </thead>
               <tbody>
-                {(report.expenses || []).map((e) => (
-                  <tr key={e.id} className="border-t" style={{ borderColor: "var(--border-default)" }} data-testid={`expense-row-${e.id}`}>
-                    <td className="px-2 py-1">{e.category}</td>
-                    <td className="px-2 py-1">{e.vendor || "—"}</td>
-                    <td className="px-2 py-1 font-mono text-xs">{(e.expense_date || "").slice(0, 10)}</td>
-                    <td className="px-2 py-1">{fmtEUR(e.amount)}</td>
-                    <td className="px-2 py-1 text-[11px]">
-                      {e.receipt_image_id ? <span style={{ color: "var(--status-success)" }}>Attached</span> :
-                       e.exception_approved ? <span style={{ color: "var(--status-warning)" }}>Exception</span> :
-                       <span style={{ color: "var(--status-danger)" }}>Missing</span>}
-                    </td>
-                  </tr>
-                ))}
+                {(report.expenses || []).map((e) => {
+                  const included = e.reimbursement_report_id === id;
+                  const otherReport = e.reimbursement_report_id && e.reimbursement_report_id !== id;
+                  return (
+                    <tr key={e.id} className="border-t align-middle" style={{ borderColor: "var(--border-default)" }} data-testid={`expense-row-${e.id}`}>
+                      <td className="px-2 py-1">
+                        <input
+                          type="checkbox"
+                          checked={included}
+                          disabled={!canEdit || otherReport || busy}
+                          onChange={(ev) => toggleExpense(e.id, ev.target.checked)}
+                          data-testid={`expense-include-${e.id}`}
+                          title={otherReport ? "Attached to another report — detach it there first" : "Include in this month's reimbursement"}
+                        />
+                      </td>
+                      <td className="px-2 py-1">
+                        {e.category}
+                        {e.category === "Petrol" && (
+                          <span className="ml-1 text-[9px] px-1 rounded" title="Already covered by km-based fuel cost" style={{ background: "var(--bg-paper)", color: "var(--text-muted)" }}>
+                            fuel
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1">{e.vendor || "—"}</td>
+                      <td className="px-2 py-1 font-mono text-xs">{(e.expense_date || "").slice(0, 10)}</td>
+                      <td className="px-2 py-1">{fmtEUR(e.amount)}</td>
+                      <td className="px-2 py-1 text-[11px]">
+                        {e.receipt_image_id ? <span style={{ color: "var(--status-success)" }}>Attached</span> :
+                         e.exception_approved ? <span style={{ color: "var(--status-warning)" }}>Exception</span> :
+                         <span style={{ color: included ? "var(--status-danger)" : "var(--text-muted)" }}>
+                           {included ? "Missing" : "—"}
+                         </span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+          )}
+          {canEdit && (
+            <div className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+              Only <strong>included</strong> non-fuel expenses count toward the reimbursable amount. Petrol receipts are ignored because the fuel cost is already computed from KM.
+            </div>
           )}
         </div>
 

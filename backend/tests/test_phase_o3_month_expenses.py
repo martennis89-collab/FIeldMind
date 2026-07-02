@@ -111,11 +111,16 @@ def test_report_includes_all_month_expenses_and_variance(tm, month_str):
     assert "variance_vs_km_fuel" in totals
 
     # Numeric assertions
+    # Petrol receipts are visible regardless of link status (they're always
+    # in the "recorded spend" bucket alongside the km-based fuel calc).
     assert totals["petrol_receipts_total"] >= 60.00
-    # Non-fuel manual total should include food+parking (33.00 minimum)
-    assert totals["manual_expenses_total"] >= 33.00
-    # All recorded = petrol + non-fuel
-    assert abs(totals["expenses_recorded_total"] - (totals["petrol_receipts_total"] + totals["manual_expenses_total"])) < 0.01
+    # Phase O.4 — manual_expenses_total is now opt-in: it counts ONLY
+    # expenses the TM has explicitly linked to this report. Fresh generate
+    # leaves everything unlinked, so it starts at 0.
+    assert totals["manual_expenses_total"] == 0.00
+    assert totals["included_expense_count"] == 0
+    # All recorded = petrol receipts + all non-fuel receipts (both linked and unlinked).
+    assert totals["expenses_recorded_total"] >= (totals["petrol_receipts_total"] + 33.00)
 
     # Variance is null until a fuel_price is set (fuel_cost is None otherwise).
     if totals.get("fuel_cost") is None:
