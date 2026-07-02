@@ -24,6 +24,7 @@ export const TM_TOP = [
   { to: "/meetings", label: "Meetings", icon: Calendar, testId: "nav-meetings" },
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
+  { to: "/reimbursement", label: "Reimbursement", icon: FileText, testId: "nav-reimbursement" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
 ];
 
@@ -34,6 +35,7 @@ export const MANAGER_TOP = [
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
   { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
+  { to: "/reimbursement", label: "Reimbursement", icon: FileText, testId: "nav-reimbursement" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
 ];
 
@@ -52,6 +54,7 @@ export const SENIORTM_TOP = [
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
   { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
+  { to: "/reimbursement", label: "Reimbursement", icon: FileText, testId: "nav-reimbursement" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "nav-reports" },
 ];
 
