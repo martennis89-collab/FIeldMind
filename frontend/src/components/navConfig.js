@@ -1,6 +1,7 @@
 import {
   CalendarPlus,
   Calendar,
+  CalendarDays,
   LayoutDashboard,
   Users,
   ClipboardList,
@@ -21,6 +22,7 @@ export const TM_TOP = [
   { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
   { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
+  { to: "/calendar", label: "Calendar", icon: CalendarDays, testId: "nav-calendar" },
   { to: "/meetings", label: "Meetings", icon: Calendar, testId: "nav-meetings" },
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
@@ -33,6 +35,7 @@ export const MANAGER_TOP = [
   { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
   { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "nav-invisalign" },
+  { to: "/calendar", label: "Calendar", icon: CalendarDays, testId: "nav-calendar" },
   { to: "/team-performance", label: "Team", icon: TrendingUp, testId: "nav-team-performance" },
   { to: "/expenses", label: "Expenses", icon: Receipt, testId: "nav-expenses" },
   { to: "/reimbursement", label: "Reimbursement", icon: FileText, testId: "nav-reimbursement" },
@@ -48,6 +51,7 @@ export const SENIORTM_TOP = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
   { to: "/intervention", label: "Intervention", icon: AlertOctagon, testId: "nav-intervention" },
   { to: "/doctors", label: "Doctors", icon: Users, testId: "nav-doctors" },
+  { to: "/calendar", label: "Calendar", icon: CalendarDays, testId: "nav-calendar" },
   { to: "/meetings", label: "Meetings", icon: Calendar, testId: "nav-meetings" },
   { to: "/tasks", label: "Tasks", icon: CheckSquare, testId: "nav-tasks" },
   { to: "/itero", label: "iTero", icon: ScanLine, testId: "nav-itero" },
@@ -86,6 +90,7 @@ export const TM_BOTTOM = [
 ];
 
 export const TM_MORE = [
+  { to: "/calendar", label: "Calendar", icon: CalendarDays, testId: "more-calendar" },
   { to: "/itero", label: "iTero", icon: ScanLine, testId: "more-itero" },
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "more-invisalign" },
   { to: "/meetings", label: "Meetings", icon: Calendar, testId: "more-meetings" },
@@ -104,6 +109,7 @@ export const MANAGER_BOTTOM = [
 ];
 
 export const MANAGER_MORE = [
+  { to: "/calendar", label: "Calendar", icon: CalendarDays, testId: "more-calendar" },
   { to: "/team-performance", label: "Team performance", icon: TrendingUp, testId: "more-team" },
   { to: "/reports", label: "Reports", icon: FileText, testId: "more-reports" },
   { to: "/reimbursement", label: "Reimbursement", icon: FileText, testId: "more-reimbursement" },
@@ -124,6 +130,7 @@ export const SENIORTM_BOTTOM = [
 ];
 
 export const SENIORTM_MORE = [
+  { to: "/calendar", label: "Calendar", icon: CalendarDays, testId: "more-calendar" },
   { to: "/itero", label: "iTero", icon: ScanLine, testId: "more-itero" },
   { to: "/invisalign", label: "Invisalign", icon: Smile, testId: "more-invisalign" },
   { to: "/team-performance", label: "Team performance", icon: TrendingUp, testId: "more-team" },

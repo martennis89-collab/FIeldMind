@@ -37,6 +37,7 @@ const FILTERS = [
   { id: "all", label: "All" },
   { id: "meetings", label: "Meetings" },
   { id: "events", label: "Events" },
+  { id: "visits", label: "Visits" },
 ];
 
 const TABS = [
@@ -48,6 +49,7 @@ const TABS = [
 export default function Meetings() {
   const [meetings, setMeetings] = useState([]);
   const [events, setEvents] = useState([]);
+  const [visits, setVisits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("upcoming");
   const [filter, setFilter] = useState("all");
@@ -67,33 +69,42 @@ export default function Meetings() {
   const load = async () => {
     setLoading(true);
     try {
-      const [m, e] = await Promise.all([
+      const [m, e, v] = await Promise.all([
         api.get(`/meetings`, { params: { when: tab } }),
         api.get(`/events`, { params: { when: tab } }),
+        api.get(`/visits`),
       ]);
-      setMeetings(m.data); setEvents(e.data);
+      setMeetings(m.data); setEvents(e.data); setVisits(v.data || []);
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [tab]);
 
-  // Combine + sort
+  // Combine + sort. Visits carry `visit_date`; meetings/events carry `scheduled_at`.
   const combined = useMemo(() => {
-    const m = (filter !== "events") ? meetings.map((x) => ({ ...x, _kind: "meeting" })) : [];
-    const e = (filter !== "meetings") ? events.map((x) => ({ ...x, _kind: "event" })) : [];
-    const all = [...m, ...e].sort((a, b) => (a.scheduled_at || "").localeCompare(b.scheduled_at || ""));
+    const m = (filter === "all" || filter === "meetings") ? meetings.map((x) => ({ ...x, _kind: "meeting", _when: x.scheduled_at })) : [];
+    const e = (filter === "all" || filter === "events") ? events.map((x) => ({ ...x, _kind: "event", _when: x.scheduled_at })) : [];
+    // Visits are always past. Include on `past` and `all` tabs (never `upcoming`).
+    const vFiltered = (filter === "all" || filter === "visits") && tab !== "upcoming"
+      ? visits.map((x) => ({ ...x, _kind: "visit", _when: x.visit_date }))
+      : [];
+    const asc = tab !== "past";
+    const all = [...m, ...e, ...vFiltered].sort((a, b) => {
+      const cmp = (a._when || "").localeCompare(b._when || "");
+      return asc ? cmp : -cmp;
+    });
     return all;
-  }, [meetings, events, filter]);
+  }, [meetings, events, visits, filter, tab]);
 
   const grouped = useMemo(() => {
     const g = { Today: [], "This week": [], Later: [], Past: [] };
     for (const r of combined) {
-      const k = tab === "past" ? "Past" : dayBucket(r.scheduled_at);
+      const k = tab === "past" ? "Past" : dayBucket(r._when || r.scheduled_at || r.visit_date);
       (g[k] = g[k] || []).push(r);
     }
     return g;
   }, [combined, tab]);
 
-  const sectionOrder = tab === "past" ? ["Past"] : ["Today", "This week", "Later"];
+  const sectionOrder = tab === "past" ? ["Past"] : tab === "all" ? ["Today", "This week", "Later", "Past"] : ["Today", "This week", "Later"];
 
   const cancelMeeting = async (m) => {
     if (!window.confirm(`Cancel meeting with ${m.doctor_name}?`)) return;
@@ -208,7 +219,9 @@ export default function Meetings() {
                   {grouped[sec].map((r) =>
                     r._kind === "meeting"
                       ? <MeetingCard key={`m-${r.id}`} m={r} onLog={() => logVisit(r)} onCancel={() => cancelMeeting(r)} onMarkDemoDone={() => setDemoDoneFor(r)} onMarkDone={() => markMeetingDone(r)} />
-                      : <EventCard key={`e-${r.id}`} e={r} onEdit={() => setEventDialog(r)} onDone={() => markEventDone(r)} onDelete={() => deleteEvent(r)} />,
+                      : r._kind === "visit"
+                        ? <VisitCard key={`v-${r.id}`} v={r} />
+                        : <EventCard key={`e-${r.id}`} e={r} onEdit={() => setEventDialog(r)} onDone={() => markEventDone(r)} onDelete={() => deleteEvent(r)} />,
                   )}
                 </div>
               </div>
@@ -299,6 +312,55 @@ function MeetingCard({ m, onLog, onCancel, onMarkDemoDone, onMarkDone }) {
     </div>
   );
 }
+
+function VisitCard({ v }) {
+  return (
+    <div
+      data-testid={`visit-card-${v.id}`}
+      className="rounded-md border p-4"
+      style={{
+        background: "var(--bg-default)",
+        borderColor: "var(--border-default)",
+        borderLeftWidth: 3,
+        borderLeftColor: "var(--status-success)",
+      }}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--status-success)" }}>
+              Logged visit
+            </span>
+            <Link to={`/doctors/${v.doctor_id}`} className="font-display text-lg font-semibold hover:underline" style={{ color: "var(--brand-primary)" }}>
+              {v.doctor_name || "Doctor"}
+            </Link>
+          </div>
+          <div className="text-sm flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5" style={{ color: "var(--text-secondary)" }}>
+            <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{fmtDate(v.visit_date)}</span>
+            {(v.clinic_name || v.city) && (
+              <span className="inline-flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5" /> {[v.clinic_name, v.city].filter(Boolean).join(" · ")}
+              </span>
+            )}
+          </div>
+          {v.note && (
+            <div className="text-sm mt-1.5 line-clamp-2" style={{ color: "var(--text-primary)" }}>
+              {v.note}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <span className="pill pill-success inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Done</span>
+          <Link to={`/doctors/${v.doctor_id}`} className="text-xs underline" data-testid={`visit-view-${v.id}`}>
+            View timeline
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 
 function EventCard({ e, onEdit, onDone, onDelete }) {
   const done = e.status === "Done";

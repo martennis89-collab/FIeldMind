@@ -28,6 +28,7 @@ import IteroPipeline from "@/pages/IteroPipeline";
 import IteroDemos from "@/pages/IteroDemos";
 import Account from "@/pages/Account";
 import Reimbursement from "@/pages/Reimbursement";
+import CalendarPage from "@/pages/Calendar";
 
 export default function App() {
   return (
@@ -114,6 +115,14 @@ export default function App() {
             element={
               <ProtectedRoute roles={["TM", "SeniorTM", "Admin", "Owner"]}>
                 <Layout><Reimbursement /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/calendar"
+            element={
+              <ProtectedRoute>
+                <Layout><CalendarPage /></Layout>
               </ProtectedRoute>
             }
           />

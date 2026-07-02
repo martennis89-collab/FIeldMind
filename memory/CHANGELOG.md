@@ -962,3 +962,37 @@ still green (35/35).
 - Verified via Playwright with mocked OCR response: high/medium/low tones
   render correctly and badge dismisses on edit.
 
+
+---
+
+## Phase N — Field Calendar + Visits on Meetings page (Feb 2026)
+
+**User pain points addressed**
+- "Only 7 meetings show up even though I logged 20+ visits" — the
+  `/meetings` page was reading only the `meetings` collection, never
+  `visits`. Fixed: `/api/visits` is now fetched alongside meetings +
+  events and merged into the list.
+- "I want a visual calendar to see my logged meetings and visits" —
+  new `/calendar` page with Month + Week views.
+
+**What shipped**
+- New `/app/frontend/src/pages/Calendar.jsx` — Month + Week toggle
+  (`view-month-btn` / `view-week-btn`). Prev / Today / Next controls, Log
+  visit + Book meeting shortcuts. Colour legend: meeting (secondary),
+  iTero demo (rust), event (primary green), logged visit (success green).
+  Each event is a link to the doctor timeline or meetings page.
+- New route `/calendar` added in `App.js` (any authenticated role).
+- Nav wiring: Calendar added to `TM_TOP`, `MANAGER_TOP`, `SENIORTM_TOP`
+  and to all three `*_MORE` mobile menus.
+- `Meetings.jsx` updated:
+    * Fetches `/api/visits` in parallel with meetings + events.
+    * New "Visits" filter chip alongside All / Meetings / Events.
+    * Visit rows render as `VisitCard` (green "Logged visit" pill,
+      timestamp, note preview, "View timeline" link).
+    * Visits are bucketed under "Past" (`upcoming` tab hides them). `all`
+      tab shows Today / This week / Later / Past sections.
+    * Sort direction: ascending for upcoming, descending for past/all.
+- Verified via Playwright on preview: Month grid shows 12 events, Week
+  view stacks per-day, and the Meetings page reads **114 visits + 19
+  meetings** for `tm1@field.io` (previously would have shown 19).
+
