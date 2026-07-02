@@ -84,7 +84,18 @@ def test_extract_receipt_shape(tm_token):
     j = r.json()
     assert "extracted" in j and "duplicate_of" in j
     ex = j["extracted"]
-    for k in ("amount", "currency", "expense_date", "vendor", "category_hint", "confidence", "notes"):
+    for k in ("amount", "currency", "expense_date", "vendor", "category_hint", "confidence", "field_confidence", "notes"):
         assert k in ex, f"missing key {k} in extracted payload"
     # category_hint must be null or one of the whitelisted values.
     assert ex["category_hint"] in (None, "Petrol", "Food", "Hotel", "Parking", "Tolls", "Other")
+    # field_confidence must be a dict with the 4 per-field scores.
+    fc = ex["field_confidence"]
+    assert isinstance(fc, dict)
+    for k in ("amount", "expense_date", "vendor", "category_hint"):
+        assert k in fc, f"missing field_confidence key {k}"
+        v = fc[k]
+        assert isinstance(v, (int, float)) and 0 <= v <= 1, f"field_confidence[{k}] must be 0..1, got {v!r}"
+    # If a field is null, its confidence must be 0 (defensive coercion).
+    for k in ("amount", "expense_date", "vendor", "category_hint"):
+        if ex.get(k) in (None, ""):
+            assert fc[k] == 0, f"expected 0 confidence for null field {k}, got {fc[k]}"

@@ -940,3 +940,25 @@ still green (35/35).
 - `/insights/me/digest` weekly email.
 - Owner Benchmark Insights tab.
 
+
+### Phase M2.1 — Per-field AI confidence badges (Feb 2026)
+
+- OCR contract extended: `expenses_ai.extract_receipt` now returns
+  `field_confidence: {amount, expense_date, vendor, category_hint}` with
+  each score clamped to `[0, 1]`. Null fields are forcibly zeroed to
+  prevent misleading badges.
+- Prompt rewritten to instruct Claude Sonnet 4.5 to return per-field
+  confidence (1.0 = clearly read, 0.5 = inferred, 0 = unreadable).
+- `LogExpense.jsx` displays a colored `AI %` pill next to each auto-filled
+  field label:
+    * green ≥ 85% (`--status-success`)
+    * amber 50–84% (`--status-warning`)
+    * red < 50% (`--status-danger`)
+- Badges disappear the instant the TM edits the field (per-field `aiFields`
+  Set with `clearAiField(name)` on every `onChange` / button click).
+- Test coverage: `test_extract_receipt_shape` in
+  `test_phase_m2_receipt_ocr.py` now asserts `field_confidence` shape,
+  numeric range, and null-field-zero coercion.
+- Verified via Playwright with mocked OCR response: high/medium/low tones
+  render correctly and badge dismisses on edit.
+

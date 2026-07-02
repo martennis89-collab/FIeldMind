@@ -13,6 +13,27 @@ function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function ConfBadge({ pct, testId }) {
+  if (pct == null) return null;
+  // green ≥85%, amber 50–84%, red <50%
+  let bg = "var(--status-success-bg)";
+  let color = "var(--status-success)";
+  let tone = "high";
+  if (pct < 50) { bg = "var(--status-danger-bg)"; color = "var(--status-danger)"; tone = "low"; }
+  else if (pct < 85) { bg = "var(--status-warning-bg)"; color = "var(--status-warning)"; tone = "medium"; }
+  return (
+    <span
+      data-testid={testId}
+      data-conf-tone={tone}
+      className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full ml-2"
+      style={{ background: bg, color }}
+      title={`AI confidence ${pct}%`}
+    >
+      AI {pct}%
+    </span>
+  );
+}
+
 export default function LogExpense() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -30,6 +51,15 @@ export default function LogExpense() {
   const [vendor, setVendor] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // Tracks which fields still hold the AI-extracted value (badge visible until user edits).
+  const [aiFields, setAiFields] = useState(() => new Set());
+  const clearAiField = (name) =>
+    setAiFields((prev) => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
 
   const onPick = () => fileRef.current?.click();
 
@@ -57,15 +87,18 @@ export default function LogExpense() {
       setExtracted(ex);
       if (data.duplicate_of) setDuplicateOf(data.duplicate_of);
       // Pre-fill form with whatever AI returned (currency forced to EUR — ignored)
-      if (ex.amount != null) setAmount(String(ex.amount));
-      if (ex.expense_date) setDate(ex.expense_date);
-      if (ex.vendor) setVendor(ex.vendor);
+      const populated = new Set();
+      if (ex.amount != null) { setAmount(String(ex.amount)); populated.add("amount"); }
+      if (ex.expense_date) { setDate(ex.expense_date); populated.add("expense_date"); }
+      if (ex.vendor) { setVendor(ex.vendor); populated.add("vendor"); }
       if (ex.category_hint) {
         // In reimbursement flow, Petrol is not a manual expense — auto-computed from KM.
         if (!(reimbursementReportId && ex.category_hint === "Petrol")) {
           setCategory(ex.category_hint);
+          populated.add("category_hint");
         }
       }
+      setAiFields(populated);
       if (ex.notes && !notes) setNotes(ex.notes);
       const conf = ex.confidence != null ? Math.round(ex.confidence * 100) : 0;
       if (conf >= 50) {
@@ -105,6 +138,12 @@ export default function LogExpense() {
   };
 
   const conf = extracted?.confidence != null ? Math.round(extracted.confidence * 100) : null;
+  const fieldConf = (name) => {
+    if (!aiFields.has(name)) return null;
+    const raw = extracted?.field_confidence?.[name];
+    if (raw == null) return null;
+    return Math.round(Math.max(0, Math.min(1, Number(raw))) * 100);
+  };
 
   return (
     <div className="max-w-xl mx-auto" data-testid="log-expense-page">
@@ -161,7 +200,7 @@ export default function LogExpense() {
 
       {/* Category */}
       <div className="rounded-md border p-5 mt-4" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid="category-section">
-        <Label className="mb-2 block">Category</Label>
+        <Label className="mb-2 block flex items-center">Category<ConfBadge pct={fieldConf("category_hint")} testId="category-conf-badge" /></Label>
         <div className="grid grid-cols-3 gap-2">
           {[
             { v: "Petrol", emoji: "⛽" },
@@ -176,7 +215,7 @@ export default function LogExpense() {
               <button
                 key={opt.v}
                 type="button"
-                onClick={() => setCategory(opt.v)}
+                onClick={() => { setCategory(opt.v); clearAiField("category_hint"); }}
                 data-testid={`cat-${opt.v.toLowerCase()}`}
                 className="px-3 py-2 rounded-md text-sm font-medium transition-all"
                 style={{
@@ -195,10 +234,10 @@ export default function LogExpense() {
       {/* Amount & date */}
       <div className="rounded-md border p-5 mt-4 grid grid-cols-2 gap-3" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
         <div className="col-span-2">
-          <Label className="mb-1 block">Amount (EUR)</Label>
+          <Label className="mb-1 block flex items-center">Amount (EUR)<ConfBadge pct={fieldConf("amount")} testId="amount-conf-badge" /></Label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg font-medium" style={{ color: "var(--text-muted)" }}>€</span>
-            <Input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" min="0" placeholder="0.00" className="bg-white text-lg pl-8" data-testid="amount-input" />
+            <Input value={amount} onChange={(e) => { setAmount(e.target.value); clearAiField("amount"); }} type="number" step="0.01" min="0" placeholder="0.00" className="bg-white text-lg pl-8" data-testid="amount-input" />
           </div>
           {amount === "" && extracted?.amount == null && (
             <div className="text-xs mt-1 flex items-center gap-1" style={{ color: "var(--status-warning)" }} data-testid="missing-amount-warning">
@@ -207,12 +246,12 @@ export default function LogExpense() {
           )}
         </div>
         <div className="col-span-2">
-          <Label className="mb-1 block">Date</Label>
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="bg-white" data-testid="date-input" />
+          <Label className="mb-1 block flex items-center">Date<ConfBadge pct={fieldConf("expense_date")} testId="date-conf-badge" /></Label>
+          <Input type="date" value={date} onChange={(e) => { setDate(e.target.value); clearAiField("expense_date"); }} className="bg-white" data-testid="date-input" />
         </div>
         <div className="col-span-2">
-          <Label className="mb-1 block">Vendor (optional)</Label>
-          <Input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="e.g. Shell, Starbucks" className="bg-white" data-testid="vendor-input" />
+          <Label className="mb-1 block flex items-center">Vendor (optional)<ConfBadge pct={fieldConf("vendor")} testId="vendor-conf-badge" /></Label>
+          <Input value={vendor} onChange={(e) => { setVendor(e.target.value); clearAiField("vendor"); }} placeholder="e.g. Shell, Starbucks" className="bg-white" data-testid="vendor-input" />
         </div>
         <div className="col-span-2">
           <Label className="mb-1 block">Notes (optional)</Label>

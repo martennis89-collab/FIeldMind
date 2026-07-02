@@ -25,6 +25,12 @@ SYSTEM_PROMPT = """You are an AI receipt parser for a field-rep expense tracking
   "vendor": <string or null>,
   "category_hint": <"Petrol"|"Food"|"Hotel"|"Parking"|"Tolls"|"Other"|null>,
   "confidence": <number 0-1>,
+  "field_confidence": {
+    "amount": <number 0-1>,
+    "expense_date": <number 0-1>,
+    "vendor": <number 0-1>,
+    "category_hint": <number 0-1>
+  },
   "notes": <string or null>
 }
 
@@ -40,7 +46,9 @@ Rules:
     * "Tolls"  — highway toll booth, e-vignette, road toll, bridge toll.
     * "Other"  — anything else (office supplies, taxi, small repair, etc.).
     * null     — if the image is not clearly a receipt.
-- If the image is not a receipt or unreadable, return all nulls and confidence=0.
+- `confidence` is your overall confidence that the entire extraction is correct.
+- `field_confidence` gives a per-field 0-1 score: 1.0 = you clearly read it, 0.5 = you guessed / inferred, 0 = you could not read it. If a field is null, its confidence must be 0.
+- If the image is not a receipt or unreadable, return all nulls, confidence=0, and field_confidence all zeros.
 - Do NOT include any extra fields or commentary.
 - Output JSON ONLY.
 """
@@ -73,6 +81,7 @@ async def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> 
         "vendor": None,
         "category_hint": None,
         "confidence": 0,
+        "field_confidence": {"amount": 0, "expense_date": 0, "vendor": 0, "category_hint": 0},
         "notes": None,
     }
     if not EMERGENT_KEY:
@@ -122,6 +131,17 @@ async def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> 
         # Category hint to allowed set
         if out["category_hint"] not in ("Petrol", "Food", "Hotel", "Parking", "Tolls", "Other"):
             out["category_hint"] = None
+        # Per-field confidence — clamp to [0,1] and zero-out any field that is null.
+        fc = out.get("field_confidence") or {}
+        cleaned = {}
+        for k in ("amount", "expense_date", "vendor", "category_hint"):
+            try:
+                cleaned[k] = max(0.0, min(1.0, float(fc.get(k) or 0)))
+            except Exception:
+                cleaned[k] = 0.0
+            if out.get(k) in (None, ""):
+                cleaned[k] = 0.0
+        out["field_confidence"] = cleaned
         return out
     except Exception:
         logger.exception("Receipt OCR call failed")
