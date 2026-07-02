@@ -1121,3 +1121,46 @@ central upgrade because they don't use `require_roles`)
   behavioural invariant (email-only counter wiped, no leftover row above
   the lockout threshold).
 
+
+---
+
+## Phase O.3 — Monthly report auto-includes all month expenses (Feb 2026)
+
+**User request:** "Monthly report should also include the recorded
+expenses for that same month … total expenses recorded − actual recorded
+expense from visiting kilometres."
+
+**Backend** (`routers/reimbursement.py`)
+- `_load_expenses_for(report)` — was `{reimbursement_report_id: report.id}`,
+  now `{tm_user_id: report.tm_user_id, expense_date: within month}`. Any
+  expense the TM logs during the month now shows up in the report
+  automatically — no need to open the report drawer first to link it.
+- `_compute_totals()` — Petrol is now separated from `manual_expenses_total`
+  so we don't double-count it against the km-based `fuel_cost`. New fields
+  in the response:
+    * `petrol_receipts_total` — sum of Petrol receipts logged in the month
+    * `expenses_recorded_total` — petrol + non-fuel receipts (real spend)
+    * `variance_vs_km_fuel` — `expenses_recorded_total − fuel_cost` when
+      fuel_price is set, else `null`
+- `_validate_submittable()` — only enforces receipt-attachment on expenses
+  whose `reimbursement_report_id == report.id`. Loose month-level expenses
+  count toward the reconciliation totals but aren't gating submission.
+
+**Frontend** (`pages/Reimbursement.jsx`)
+- New `[data-testid=expense-reconciliation]` panel under the primary
+  totals grid with 4 stat cards:
+    * Petrol receipts logged
+    * Non-fuel expenses
+    * All recorded expenses
+    * Difference (Rec. − KM fuel) — colored **amber** if positive,
+      **brand-secondary** if negative, **success-green** if zero
+- Explanatory line under the grid interprets the variance in plain English.
+
+**Testing**
+- New `test_phase_o3_month_expenses.py` (2 tests): (a) 3 unlinked
+  Petrol/Food/Parking receipts appear in report + variance math correct;
+  (b) out-of-month expenses excluded.
+- Iter22 report: **47/47 tests pass** (2 new + 45 baseline regression
+  across M1, M2, O.1, O.2, dedupe, iterations 16-17).
+- Zero backend / frontend issues per testing agent.
+
