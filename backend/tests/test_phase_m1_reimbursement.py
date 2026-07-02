@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(_BACKEND_DIR / ".env")
+load_dotenv("/app/frontend/.env")
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
@@ -33,21 +34,35 @@ def actors():
     senior = login("snr.demo.1782126329@field.io", "senior123")
     owner = login("martennis89@gmail.com", "1234")
     # Ensure tm1 reports to the senior TM so scope tests pass.
-    requests.patch(
+    r_upd = requests.put(
         f"{API}/users/{tm['user']['id']}",
         headers=H(owner["token"]),
         json={"manager_user_id": senior["user"]["id"]},
         timeout=10,
     )
+    assert r_upd.status_code == 200, f"link TM→Senior failed: {r_upd.status_code} {r_upd.text}"
     return {"tm": tm, "senior": senior, "owner": owner}
 
 
 @pytest.fixture(scope="module")
-def month_str():
+def month_str(actors):
     # Use last month so ambient data doesn't collide with today's fixtures.
     from datetime import datetime, timezone, timedelta
     d = datetime.now(timezone.utc).replace(day=1) - timedelta(days=1)
-    return d.strftime("%Y-%m")
+    m = d.strftime("%Y-%m")
+    # Wipe any stale reimbursement report for this TM+month so tests are idempotent.
+    import asyncio
+    from motor.motor_asyncio import AsyncIOMotorClient
+    async def _cleanup():
+        client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        db = client[os.environ["DB_NAME"]]
+        await db.reimbursement_reports.delete_many({"tm_user_id": actors["tm"]["user"]["id"], "month": m})
+        client.close()
+    try:
+        asyncio.run(_cleanup())
+    except Exception:
+        pass
+    return m
 
 
 @pytest.fixture(scope="module")
@@ -66,6 +81,18 @@ def visited_doctors(actors, month_str):
     if not docs:
         pytest.skip("No doctors available for TM to visit")
     d1 = docs[0]
+    # Wipe any pre-existing KM row for this doctor so generate produces MissingKM.
+    import asyncio
+    from motor.motor_asyncio import AsyncIOMotorClient
+    async def _wipe_km():
+        client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        db = client[os.environ["DB_NAME"]]
+        await db.doctor_km.delete_many({"doctor_id": d1["id"]})
+        client.close()
+    try:
+        asyncio.run(_wipe_km())
+    except Exception:
+        pass
     # Seed a couple of visits inside the target month.
     for i in range(2):
         requests.post(

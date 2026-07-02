@@ -259,7 +259,7 @@ async def generate_reimbursement_report(body: dict = Body(...), user=Depends(get
         "tm_user_id": target_tm_id,
         "month": month,
         "status": {"$nin": ["Rejected", "Cancelled"]},
-    })
+    }, {"_id": 0})
     if dup:
         return await _hydrate(dup)
 
