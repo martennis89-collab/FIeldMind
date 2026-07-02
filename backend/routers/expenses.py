@@ -493,7 +493,7 @@ async def download_receipts_zip(
     import zipfile
     from bson import ObjectId
     from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-    from fastapi.responses import StreamingResponse
+    from fastapi.responses import Response
 
     q: dict = dict(_company_query_for(user))
     if user["role"] == "TM":
@@ -567,19 +567,14 @@ async def download_receipts_zip(
         new={"count": len(rows), "with_receipt_image": receipts_with_image, "month": month, "personal": bool(personal)},
     )
 
-    def _iter():
-        # Chunked so the client sees traffic quickly on large payloads.
-        chunk = 65536
-        for start in range(0, len(payload), chunk):
-            yield payload[start:start + chunk]
-
-    return StreamingResponse(
-        _iter(),
+    # Plain Response with Content-Length set implicitly by FastAPI. Fake
+    # streaming (yielding bytes after the ZIP is already built) confused
+    # some ingress proxies → Cloudflare "could not parse" errors. Since we
+    # already have the payload in memory, ship it in one shot.
+    return Response(
+        content=payload,
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{fname}"',
-            "Content-Length": str(len(payload)),
-        },
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
 

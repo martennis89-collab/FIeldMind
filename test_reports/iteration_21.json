@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 21 — verified 3 fixes (BUG1 SeniorTM canEdit KM save / PATCH; BUG2 receipts.zip valid ZIP for all roles; FEATURE3 DELETE /api/reimbursement/reports/{id}). Fixed one 500 caused by wrong _audit kwarg in the new delete endpoint. All 15 new backend tests + 34 regression tests pass. Frontend delete flow, delete button visibility, and KM save enablement verified via Playwright for SeniorTM/TM/Admin.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_21_reimbursement_delete_seniortm_edit.py",
+    "/app/backend/tests/test_phase_m1_reimbursement.py",
+    "/app/backend/tests/test_phase_m2_receipt_ocr.py",
+    "/app/backend/tests/test_phase_o_event_km.py",
+    "/app/backend/tests/test_iteration_17_expense_download_fixes.py",
+    "/app/backend/tests/test_expenses.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "delete_reimbursement_report initially called `_audit(..., old=...)` but the helper's signature is `prev=`. This caused every DELETE to 500. Fixed by renaming kwarg to `prev`. Recommend a lightweight unit-level smoke test that touches every new endpoint before shipping (this would have caught it).",
+    "The is_tm_scope path in update_reimbursement_report now allows SeniorTM to edit their own draft — verified 403 still raised when SeniorTM attempts to PATCH someone else's report and when status != Draft/Changes Requested.",
+    "Frontend Reimbursement.jsx crossed 600 lines — consider splitting the drawer body (MissingKMRow, EventKMRow, ManualExpense list) into its own module for maintainability."
+  ],
+  "updated_files": [
+    "/app/backend/routers/reimbursement.py (fixed _audit kwarg old → prev in DELETE endpoint)",
+    "/app/backend/tests/test_iteration_21_reimbursement_delete_seniortm_edit.py (new pytest suite)"
+  ],
+  "success_rate": {"backend": "100% (15/15 new + 34/34 regression)", "frontend": "100% (delete flow, delete-button visibility, KM save enablement verified)"},
+  "test_credentials": "TM tm1@field.io/tm123, SeniorTM snr.demo.1782126329@field.io/senior123, Admin admin@field.io/admin123, Owner martennis89@gmail.com/1234 (all working).",
+  "seed_data_creation": "TestBug2ReceiptsZip fixture seeds one Petrol expense for TM+SeniorTM in last_month to guarantee non-empty ZIP responses. Delete tests idempotently wipe (tm_user_id, month) reports before regenerating.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend DELETE endpoint at /api/reimbursement/reports/{id} — matrix: TM/SeniorTM own+Draft/ChangesRequested=200, TM/SeniorTM own+other-status=403, Admin/Owner=200 always, non-existent=404. Frontend uses window.confirm() — override with `page.evaluate('window.confirm=()=>true')` after page load before clicking delete-report-{id}. SeniorTM demo account (snr.demo.1782126329) has 0 visits in test months, so their auto-generated report has empty doctor_breakdown/event_breakdown — TM (tm1) is the account with real visit history for KM save UI tests. receipts.zip verified via `r.content[:4] == b'PK\\x03\\x04'`, Content-Type application/zip, and non-empty Content-Length.",
+  "rca of the issue": "Root cause of 500 on DELETE: shipped code called `_audit(user, 'delete', 'reimbursement_report', id, old={...})` but /app/backend/server.py::_audit uses the parameter name `prev`, not `old`. Python raises TypeError immediately — the endpoint returned 500 with 'unexpected keyword argument old'. Reproduction: DELETE any reimbursement report. Fix: replaced `old=` with `prev=` at line 599. Confirmed by re-running the full pytest suite (15/15 pass) and end-to-end via SeniorTM UI (toast + row removed)."
+}

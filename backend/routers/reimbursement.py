@@ -404,11 +404,13 @@ async def update_reimbursement_report(report_id: str, body: dict = Body(...), us
     SeniorTM/Admin may also edit fuel_consumption_l_per_100km.
     """
     report = await _load_report_scoped(report_id, user)
-    if user["role"] == "TM" and report["tm_user_id"] != user["id"]:
+    role = user["role"]
+    is_tm_scope = role in ("TM", "SeniorTM")  # SeniorTM acts as TM when editing their own report
+    if is_tm_scope and report["tm_user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     editable_statuses = ("Draft", "Changes Requested")
-    if user["role"] == "TM" and report["status"] not in editable_statuses:
-        raise HTTPException(status_code=403, detail=f"TM cannot edit a {report['status']} report")
+    if is_tm_scope and report["status"] not in editable_statuses:
+        raise HTTPException(status_code=403, detail=f"You cannot edit a {report['status']} report")
 
     updates: dict = {}
     if "fuel_price_per_l" in body and body["fuel_price_per_l"] is not None:
@@ -418,7 +420,7 @@ async def update_reimbursement_report(report_id: str, body: dict = Body(...), us
         updates["fuel_price_per_l"] = p
     if "already_reimbursed" in body and body["already_reimbursed"] is not None:
         updates["already_reimbursed"] = float(body["already_reimbursed"])
-    if user["role"] in ("SeniorTM", "Admin", "Owner") and "fuel_consumption_l_per_100km" in body:
+    if role in ("SeniorTM", "Admin", "Owner") and "fuel_consumption_l_per_100km" in body:
         updates["fuel_consumption_l_per_100km"] = float(body["fuel_consumption_l_per_100km"])
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided")
@@ -439,7 +441,7 @@ async def refresh_breakdown(report_id: str, user=Depends(get_current_user)):
     missing KM values so the doctor table shows Matched rows and the total_km
     updates."""
     report = await _load_report_scoped(report_id, user)
-    if user["role"] == "TM" and report["status"] not in ("Draft", "Changes Requested"):
+    if user["role"] in ("TM", "SeniorTM") and report["tm_user_id"] == user["id"] and report["status"] not in ("Draft", "Changes Requested"):
         raise HTTPException(status_code=403, detail=f"Cannot refresh a {report['status']} report")
     agg = await _build_breakdown(report["tm_user_id"], report["month"], report.get("company_id"))
     ev_agg = await _build_event_breakdown(report["tm_user_id"], report["month"], report.get("company_id"))
@@ -550,6 +552,53 @@ async def mark_paid(report_id: str, user=Depends(require_roles("SeniorTM", "Admi
     await _audit(user, "mark_paid", "reimbursement_report", report_id)
     report = await db.reimbursement_reports.find_one({"id": report_id}, {"_id": 0})
     return await _hydrate(report)
+
+
+# ============================================================
+# Delete
+# ============================================================
+@api.delete("/reimbursement/reports/{report_id}")
+async def delete_reimbursement_report(report_id: str, user=Depends(get_current_user)):
+    """Remove a reimbursement report.
+
+    - Owner / Admin: can delete a report in ANY status. Useful to purge
+      accidentally-generated reports.
+    - The report owner (TM or SeniorTM) can delete THEIR OWN report while
+      it's still in Draft or Changes Requested — i.e. before or during
+      revisions, but never once it's been Submitted / Approved / Paid.
+    - Any TM linked to the deleted report has their expenses' inverse
+      `reimbursement_report_id` link cleared so nothing dangles.
+    """
+    report = await _load_report_scoped(report_id, user)
+    role = user["role"]
+    is_owner = report.get("tm_user_id") == user["id"]
+    allowed_owner_statuses = ("Draft", "Changes Requested")
+
+    if role in ("Admin", "Owner"):
+        pass  # always allowed
+    elif role in ("TM", "SeniorTM") and is_owner and report.get("status") in allowed_owner_statuses:
+        pass
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"You cannot delete a {report.get('status')} report. Only Draft or Changes Requested reports can be deleted by their owner."
+                if is_owner else "Only Admin/Owner can delete another user's report."
+            ),
+        )
+
+    # Detach linked expenses so their `reimbursement_report_id` back-pointer
+    # doesn't reference a ghost. Their receipts / rows are preserved.
+    await db.expenses.update_many(
+        {"reimbursement_report_id": report_id},
+        {"$unset": {"reimbursement_report_id": ""}},
+    )
+
+    await db.reimbursement_reports.delete_one({"id": report_id})
+    await _audit(user, "delete", "reimbursement_report", report_id,
+                 prev={"tm_user_id": report.get("tm_user_id"), "month": report.get("month"), "status": report.get("status")})
+    return {"ok": True, "id": report_id}
+
 
 
 # ============================================================

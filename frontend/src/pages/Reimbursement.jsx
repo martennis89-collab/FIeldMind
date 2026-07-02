@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "../components/ui/button";
 import {
   FileText, Plus, Send, CheckCircle2, XCircle, MessageSquare, Wallet, Download,
-  AlertTriangle, RefreshCw, MapPin, Car, Receipt, CalendarDays,
+  AlertTriangle, RefreshCw, MapPin, Car, Receipt, CalendarDays, Trash2,
 } from "lucide-react";
 
 const fmtEUR = (v) => (v == null ? "—" : `€ ${Number(v).toFixed(2)}`);
@@ -32,6 +32,13 @@ function StatusPill({ status }) {
       {status}
     </span>
   );
+}
+
+const OWNER_DELETABLE_STATUSES = new Set(["Draft", "Changes Requested"]);
+function canDeleteReport(r, user) {
+  if (["Admin", "Owner"].includes(user.role)) return true;
+  if (["TM", "SeniorTM"].includes(user.role) && r.tm_user_id === user.id && OWNER_DELETABLE_STATUSES.has(r.status)) return true;
+  return false;
 }
 
 export default function Reimbursement() {
@@ -64,6 +71,17 @@ export default function Reimbursement() {
       toast.error(e?.response?.data?.detail || "Could not generate");
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const deleteReport = async (r) => {
+    if (!window.confirm(`Delete the ${r.month} report? This can't be undone. Linked receipts will keep, but the report totals will be lost — you can regenerate anytime.`)) return;
+    try {
+      await api.delete(`/reimbursement/reports/${r.id}`);
+      toast.success(`Report for ${r.month} deleted`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not delete report");
     }
   };
 
@@ -132,7 +150,21 @@ export default function Reimbursement() {
                   <td className="px-4 py-3">{r.totals?.receipt_invoice_count ?? 0}</td>
                   <td className="px-4 py-3"><StatusPill status={r.status} /></td>
                   <td className="px-4 py-3">
-                    <Button size="sm" variant="outline" onClick={() => setOpenId(r.id)} data-testid={`open-report-${r.id}`}>Open</Button>
+                    <div className="flex items-center gap-1.5">
+                      <Button size="sm" variant="outline" onClick={() => setOpenId(r.id)} data-testid={`open-report-${r.id}`}>Open</Button>
+                      {canDeleteReport(r, user) && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => deleteReport(r)}
+                          data-testid={`delete-report-${r.id}`}
+                          title="Delete this report"
+                          style={{ color: "var(--status-danger)" }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -168,7 +200,8 @@ function ReportDrawer({ id, onClose, onChange, user }) {
     );
   }
 
-  const canEdit = user.role === "TM" && report.tm_user_id === user.id && ["Draft", "Changes Requested"].includes(report.status);
+  // Phase O.2 — TM and SeniorTM (a TM+Manager hybrid) can both edit their own Draft/Changes-Requested reports.
+  const canEdit = ["TM", "SeniorTM"].includes(user.role) && report.tm_user_id === user.id && ["Draft", "Changes Requested"].includes(report.status);
   const canReview = ["SeniorTM", "Admin", "Owner"].includes(user.role) && ["Submitted", "Changes Requested"].includes(report.status);
   const canMarkPaid = ["SeniorTM", "Admin", "Owner"].includes(user.role) && report.status === "Approved";
   const missingKm = (report.doctor_breakdown || []).filter((d) => d.match_status === "MissingKM");
