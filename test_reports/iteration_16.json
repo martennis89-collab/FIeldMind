@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 16 — SeniorTM expense bug fixes verified end-to-end. All 3 bugs FIXED: (BUG1) SeniorTM now sees sub-team TM expenses in /api/expenses/team-summary + list; (BUG2) SeniorTM can POST /api/expenses (Draft) and POST /api/expenses/submit-month; (BUG3) /api/expenses/receipts.zip returns application/zip with Content-Disposition filename starting 'expense-report_', one PDF per expense, every entry starts with %PDF-1.x magic, and PDFs with embedded phone-camera images are materially larger than metadata-only PDFs (verified ~35KB vs ~2.5KB using an 800x800 JPEG). Frontend seniortm-expenses-view-toggle wired correctly: Team view hides add/submit buttons; My expenses shows add-expense-btn + submit-month-btn. Manager + plain TM regressions confirmed. Existing pytest suites (test_expenses.py + test_phase_l_senior_tm.py = 23 tests) still 100% green.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/expenses/receipts.zip", "issue": "Non-resilient PDF generation: if ANY single expense in the filtered set has a malformed/corrupt receipt image (or an image PIL/reportlab can't decode), the whole endpoint returns 500 and no ZIP is produced. Root cause: _build_expense_pdf() wraps the img.wrap() setup in try/except but the actual reportlab drawImage() call happens later inside doc.build(story) which is NOT in a try/except — so PIL 'broken data stream' OSError bubbles up. Fix: wrap doc.build() in try/except and fall back to a metadata-only PDF (or the '<i>Receipt image could not be embedded</i>' paragraph) when the image fails to render. Reproducer: POST /api/expenses with a truncated PNG payload, then call receipts.zip → 500."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_16_seniortm_expenses.py",
+    "/app/test_reports/pytest/iter16_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/HARDENING: Harden _build_expense_pdf so a single unreadable receipt image can't 500 the entire monthly ZIP export. Wrap doc.build(story) in try/except; if it fails and image_bytes was present, retry once without the Image flowable so the PDF still renders with just the metadata + a 'Receipt image could not be embedded' note. Alternative: pre-validate the image via PIL Image.open(io.BytesIO(image_bytes)).verify() inside the current try/except block and drop image_bytes to None if verify() raises. This was found because a corrupted test PNG persisted across a test rerun and reproducibly 500'd receipts.zip until manually purged."
+  ],
+  "critical_code_review_comments": [
+    "expenses.py _build_expense_pdf() — image resilience gap (see minor backend issue). Everything else looks clean: PDF layout is well-structured, metadata table complete, filename convention '<TM>/<YYYY-MM-DD>_<vendor>_<id[:8]>.pdf' is unambiguous, and ZIP-level naming 'expense-report_YYYY-MM[_<tmshort>].zip' matches spec.",
+    "expenses.py receipts.zip — a bad row in the middle of the loop leaves the zipfile.ZipFile open and unflushed; on 500 the client gets no partial ZIP. Combined with the resilience gap above, one bad image blocks the entire team's export.",
+    "expenses.py list_expenses SeniorTM branch — correct: default union of _managed_tm_ids_for + self; personal=true forces q['tm_user_id']=user['id']. Verified via test.",
+    "expenses.py team_summary — SeniorTM sub-team scoping via _managed_tm_ids_for is correct. by_tm bucket keys off r.get('tm_user_id') and skips rows without one (safe).",
+    "Expenses.jsx toggle — data-testids present as expected. Team view correctly hides Add/Submit and shows the 'Download all as PDFs (ZIP)' label per spec."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_16_seniortm_expenses.py (new)",
+    "/app/test_reports/pytest/iter16_results.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "8/8 iter16 tests pass (100%); 23/23 regression tests (test_expenses.py + test_phase_l_senior_tm.py) pass (100%)",
+    "frontend": "All UI acceptance criteria met (100%): toggle present, Team view hides add/submit, My expenses shows both buttons, page renders with no console errors"
+  },
+  "test_credentials": "Owner martennis89@gmail.com/1234 (not used this iter); SeniorTM snr.demo.1782126329@field.io/senior123 ✓; TM tm1@field.io/tm123 ✓; Admin admin@field.io/admin123 ✓; Manager manager@field.io/manager123 ✓",
+  "seed_data_creation": "Created one TM (iter16.subteamtm.*@iter16.example.com) with manager_user_id = SeniorTM.id so the BUG1 reproducer had a real sub-team member. Test uses `notes='iter16'` marker on every created expense and the tests clean up between runs (delete_many notes=iter16) — no lingering test data after run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 16 verified all three SeniorTM expense bug fixes (visibility of sub-team TM expenses to SeniorTM, SeniorTM own expense POST/submit-month, and ZIP-of-PDFs export with embedded phone-camera image). Only remaining polish item is _build_expense_pdf resilience against a single corrupt image killing the entire monthly ZIP (see backend minor). Tests live at /app/backend/tests/test_iteration_16_seniortm_expenses.py and pass green when REACT_APP_BACKEND_URL is available — the module now loads BOTH /app/backend/.env AND /app/frontend/.env with dotenv, so `pytest backend/tests/test_iteration_16_seniortm_expenses.py` works out of the box. Note: the pre-existing test_expenses.py and test_phase_l_senior_tm.py only load /app/backend/.env, so they need REACT_APP_BACKEND_URL exported into env before running.",
+  "rca of the issue": "BUG 1 root cause (pre-fix): /api/expenses/team-summary and /api/expenses/receipts.zip both used require_roles('Manager', 'Admin') so SeniorTM got 403; /api/expenses forced SeniorTM to their own tm_user_id like a plain TM. Post-fix: all four expense endpoints (list, summary, team-summary, receipts.zip) understand SeniorTM and use _managed_tm_ids_for(user) which returns {SeniorTM.id} ∪ {every user whose manager_user_id == SeniorTM.id}. Verified end-to-end. BUG 2 root cause: POST /api/expenses and POST /api/expenses/submit-month checked role == 'TM' only. Post-fix accepts ('TM', 'SeniorTM'). BUG 3 root cause: the export previously returned a flat ZIP of raw receipt image files without metadata; now it renders one reportlab-composed PDF per expense (with receipt image embedded) and ZIPs them under expense-report_YYYY-MM.zip. Verified all acceptance points from the request. Remaining hardening: single corrupt image in dataset breaks whole ZIP (see minor issue)."
+}

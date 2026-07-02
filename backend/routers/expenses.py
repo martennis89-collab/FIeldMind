@@ -58,6 +58,7 @@ from server import (
     _company_id_for,
     _company_query_for,
     _apply_company_scope,
+    _managed_tm_ids_for,
     _same_company,
     _assert_same_company,
     _stamp_company,
@@ -82,8 +83,12 @@ async def create_expense(
     receipt: Optional[UploadFile] = File(None),
     user=Depends(get_current_user),
 ):
-    """Create an expense. Optional receipt upload stored in GridFS. TM only."""
-    if user["role"] != "TM":
+    """Create an expense. Optional receipt upload stored in GridFS.
+
+    Allowed roles: TM and SeniorTM (Phase L — Senior TMs log their own
+    activity like a TM does, so they must also be able to file expenses).
+    """
+    if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="Only TMs can log expenses")
     if category not in ("Petrol", "Food"):
         raise HTTPException(status_code=400, detail="category must be 'Petrol' or 'Food'")
@@ -154,8 +159,11 @@ async def extract_expense_receipt(
     receipt: UploadFile = File(...),
     user=Depends(get_current_user),
 ):
-    """OCR a receipt (no DB write). Returns structured extraction + duplicate hint. TM only."""
-    if user["role"] != "TM":
+    """OCR a receipt (no DB write). Returns structured extraction + duplicate hint.
+
+    Allowed roles: TM and SeniorTM.
+    """
+    if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="Only TMs can extract receipts")
     raw = await receipt.read()
     if not raw:
@@ -176,22 +184,38 @@ async def list_expenses(
     month: Optional[str] = None,
     status: Optional[str] = None,
     tm_user_id: Optional[str] = None,
+    personal: bool = False,
     user=Depends(get_current_user),
 ):
     """List expenses scoped by role.
 
     - TM: own expenses (any status). `month` filters by expense_date YYYY-MM.
+    - SeniorTM: own + sub-team by default. Pass `?personal=true` to force only
+      the caller's own rows (used by the "My expenses" panel).
     - Manager: team expenses, optionally filtered by tm_user_id and/or status.
-    - Admin: all expenses.
+    - Admin/Owner: all expenses (company-scoped).
     """
     q: dict = dict(_company_query_for(user))
-    if user["role"] in ("TM", "SeniorTM"):
+    if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
+    elif user["role"] == "SeniorTM":
+        if personal:
+            q["tm_user_id"] = user["id"]
+        else:
+            ids = await _managed_tm_ids_for(user) or [user["id"]]
+            if tm_user_id:
+                # SeniorTM can only drill into their own sub-team + self.
+                if tm_user_id not in ids:
+                    raise HTTPException(status_code=403, detail="TM not in your sub-team")
+                q["tm_user_id"] = tm_user_id
+            else:
+                q["tm_user_id"] = {"$in": ids}
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
         if tm_user_id:
             q["tm_user_id"] = tm_user_id
-    # Admin: no scope
+    elif tm_user_id:
+        q["tm_user_id"] = tm_user_id
     if status:
         q["status"] = status
     if month:
@@ -203,17 +227,26 @@ async def list_expenses(
 async def expense_summary(
     month: Optional[str] = None,
     tm_user_id: Optional[str] = None,
+    personal: bool = False,
     user=Depends(get_current_user),
 ):
     """Monthly totals + counts. Defaults to current month for TM.
 
     Manager/Admin may pass tm_user_id to scope to a single TM.
+    SeniorTM: same as list_expenses — sub-team + own by default, `personal=true`
+    filters to only the caller's own rows for the personal panel header.
     """
     if not month:
         month = datetime.now(timezone.utc).strftime("%Y-%m")
     q: dict = {"expense_date": {"$gte": f"{month}-01", "$lte": f"{month}-31"}}
-    if user["role"] in ("TM", "SeniorTM"):
+    if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
+    elif user["role"] == "SeniorTM":
+        if personal:
+            q["tm_user_id"] = user["id"]
+        else:
+            ids = await _managed_tm_ids_for(user) or [user["id"]]
+            q["tm_user_id"] = tm_user_id if tm_user_id and tm_user_id in ids else {"$in": ids}
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
         if tm_user_id:
@@ -235,7 +268,10 @@ async def expense_summary(
         if st in by_status:
             by_status[st] += 1
     currency = "EUR"
-    submittable = sum(1 for r in rows if r.get("status") == "Draft")
+    # `submittable_drafts` counts only the caller's OWN drafts — that's what the
+    # "Submit month" button acts on for a SeniorTM's personal view.
+    caller_id = user["id"]
+    submittable = sum(1 for r in rows if r.get("status") == "Draft" and r.get("tm_user_id") == caller_id)
     return {
         "month": month,
         "count": len(rows),
@@ -332,7 +368,8 @@ async def get_expense_receipt(exp_id: str, user=Depends(get_current_user)):
 
 @api.post("/expenses/submit-month")
 async def submit_month(body: dict, user=Depends(get_current_user)):
-    if user["role"] != "TM":
+    # Phase L — SeniorTM also files personal expenses and needs to submit them.
+    if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="Only TMs submit months")
     month = (body or {}).get("month") or datetime.now(timezone.utc).strftime("%Y-%m")
     import re as _re
@@ -357,17 +394,24 @@ async def submit_month(body: dict, user=Depends(get_current_user)):
 @api.get("/expenses/team-summary")
 async def expense_team_summary(
     month: Optional[str] = None,
-    user=Depends(require_roles("Manager", "Admin")),
+    user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner")),
 ):
-    """Manager/Admin view: per-TM totals + grand total for a given month.
+    """Manager / SeniorTM / Admin view: per-TM totals + grand total for a
+    given month.
 
-    Manager is scoped to their team; Admin sees everything.
+    - Manager: scoped to their team_id.
+    - SeniorTM (Phase L): scoped to sub-team + self via _managed_tm_ids_for.
+    - Admin / Owner: everything (company-scoped for Admin, no scope for Owner).
     """
     if not month:
         month = datetime.now(timezone.utc).strftime("%Y-%m")
-    q: dict = {"expense_date": {"$gte": f"{month}-01", "$lte": f"{month}-31"}}
+    q: dict = dict(_company_query_for(user))
+    q["expense_date"] = {"$gte": f"{month}-01", "$lte": f"{month}-31"}
     if user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
+    elif user["role"] == "SeniorTM":
+        ids = await _managed_tm_ids_for(user) or [user["id"]]
+        q["tm_user_id"] = {"$in": ids}
     rows = await db.expenses.find(q, {"_id": 0}).to_list(5000)
 
     by_tm: dict = {}
@@ -424,9 +468,16 @@ async def download_receipts_zip(
     month: Optional[str] = None,
     tm_user_id: Optional[str] = None,
     status: Optional[str] = None,
-    user=Depends(require_roles("Manager", "Admin")),
+    user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner")),
 ):
-    """Manager/Admin: bundle all receipt images for a filtered set into a ZIP."""
+    """Manager / SeniorTM / Admin: download a ZIP of PDF reports — one PDF per
+    expense — for the filtered set.
+
+    Each PDF contains the expense metadata (date, category, vendor, amount,
+    status, TM name, notes) AND the original phone-camera receipt image
+    embedded on the first page. Expenses without a receipt image are still
+    included; their PDF just omits the image block.
+    """
     import io as _io
     import zipfile
     from bson import ObjectId
@@ -436,53 +487,169 @@ async def download_receipts_zip(
     q: dict = dict(_company_query_for(user))
     if user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
+    elif user["role"] == "SeniorTM":
+        ids = await _managed_tm_ids_for(user) or [user["id"]]
+        if tm_user_id and tm_user_id not in ids:
+            raise HTTPException(status_code=403, detail="TM not in your sub-team")
+        q["tm_user_id"] = {"$in": ids} if not tm_user_id else tm_user_id
     if month:
         q["expense_date"] = {"$gte": f"{month}-01", "$lte": f"{month}-31"}
-    if tm_user_id:
+    if tm_user_id and user["role"] != "SeniorTM":
         q["tm_user_id"] = tm_user_id
     if status:
         q["status"] = status
-    # only entries with a receipt
-    q["receipt_image_id"] = {"$ne": None}
 
     rows = await db.expenses.find(q, {"_id": 0}).sort([("tm_name", 1), ("expense_date", -1)]).to_list(5000)
     if not rows:
-        raise HTTPException(status_code=404, detail="No receipts to download")
+        raise HTTPException(status_code=404, detail="No expenses to export")
 
-    buf = _io.BytesIO()
     bucket = AsyncIOMotorGridFSBucket(db, bucket_name="receipts")
+    buf = _io.BytesIO()
     used = set()
+    receipts_with_image = 0
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for r in rows:
-            try:
-                stream = await bucket.open_download_stream(ObjectId(r["receipt_image_id"]))
-                data = await stream.read()
-            except Exception:
-                continue
-            mime = (r.get("receipt_mime") or "image/jpeg").lower()
-            ext = "jpg"
-            if "png" in mime:
-                ext = "png"
-            elif "webp" in mime:
-                ext = "webp"
+            # 1) Fetch the phone-camera receipt image from GridFS (if present).
+            image_bytes = None
+            image_mime = (r.get("receipt_mime") or "image/jpeg").lower()
+            if r.get("receipt_image_id"):
+                try:
+                    stream = await bucket.open_download_stream(ObjectId(r["receipt_image_id"]))
+                    image_bytes = await stream.read()
+                    receipts_with_image += 1
+                except Exception:
+                    image_bytes = None
+
+            # 2) Compose a one-expense PDF via reportlab, embedding the image.
+            pdf_bytes = _build_expense_pdf(r, image_bytes, image_mime)
+
+            # 3) Filename: TM/DATE_VENDOR_ID.pdf (uniqueness suffix if needed).
             tm = (r.get("tm_name") or "tm").replace(" ", "_").replace("/", "_")
-            base = f"{tm}/{r.get('expense_date','')}_{(r.get('vendor') or r.get('category') or 'receipt').replace(' ', '_').replace('/', '_')}_{r['id'][:8]}.{ext}"
+            vendor = (r.get("vendor") or r.get("category") or "expense").replace(" ", "_").replace("/", "_")
+            base = f"{tm}/{r.get('expense_date','')}_{vendor}_{r['id'][:8]}.pdf"
             name = base
             i = 2
             while name in used:
-                name = base.rsplit(".", 1)[0] + f"-{i}." + ext
+                name = base.rsplit(".", 1)[0] + f"-{i}.pdf"
                 i += 1
             used.add(name)
-            zf.writestr(name, data)
+            zf.writestr(name, pdf_bytes)
 
     payload = buf.getvalue()
     label = month or "all"
     if tm_user_id:
         label += f"_{tm_user_id[:8]}"
-    fname = f"receipts_{label}.zip"
-    await _audit(user, "export", "expense_receipts", label, new={"count": len(rows), "month": month})
+    fname = f"expense-report_{label}.zip"
+    await _audit(
+        user, "export", "expense_report", label,
+        new={"count": len(rows), "with_receipt_image": receipts_with_image, "month": month},
+    )
     return Response(
         content=payload,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+def _build_expense_pdf(exp: dict, image_bytes: Optional[bytes], image_mime: str) -> bytes:
+    """Render a single expense as a self-contained one-page PDF.
+
+    Layout:
+      - Header: "FieldMind — Expense Report"
+      - Metadata table: date, category, amount, vendor, status, TM, notes
+      - Original receipt image (from the TM's phone camera) if present.
+    """
+    import io as _io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=18, spaceAfter=6, textColor=colors.HexColor("#1a3d2f"))
+    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=9, textColor=colors.grey)
+    body = ParagraphStyle("body", parent=styles["Normal"], fontSize=10, leading=14)
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=15 * mm, bottomMargin=15 * mm,
+        title=f"Expense {exp.get('id','')[:8]}",
+    )
+
+    story = []
+    story.append(Paragraph("FieldMind — Expense Report", h1))
+    story.append(Paragraph(
+        f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · "
+        f"Expense id <b>{exp.get('id','')}</b>",
+        small,
+    ))
+    story.append(Spacer(1, 6 * mm))
+
+    def _fmt_money(amt, cur):
+        try:
+            return f"{float(amt or 0):,.2f} {cur or 'EUR'}"
+        except Exception:
+            return f"{amt} {cur or 'EUR'}"
+
+    meta_rows = [
+        ["Territory Manager", exp.get("tm_name") or "—"],
+        ["Expense date", exp.get("expense_date") or "—"],
+        ["Category", exp.get("category") or "—"],
+        ["Vendor", exp.get("vendor") or "—"],
+        ["Amount", _fmt_money(exp.get("amount"), exp.get("currency"))],
+        ["Status", exp.get("status") or "—"],
+        ["Submission month", exp.get("submission_month") or "—"],
+        ["Submitted at", (exp.get("submitted_at") or "—")[:19].replace("T", " ")],
+        ["Notes", exp.get("notes") or "—"],
+    ]
+    tbl = Table(meta_rows, colWidths=[45 * mm, 130 * mm])
+    tbl.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f4f2ee")),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1a3d2f")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#d9d6cf")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e6e2da")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 8 * mm))
+
+    # Embed the phone-camera receipt image if we have one.
+    if image_bytes:
+        try:
+            story.append(Paragraph("Receipt (original phone-camera image)", body))
+            story.append(Spacer(1, 3 * mm))
+            img_buf = _io.BytesIO(image_bytes)
+            # Cap width to page usable width, let reportlab scale height.
+            img = Image(img_buf)
+            page_w = A4[0] - 30 * mm  # left+right margin
+            page_h = A4[1] - 90 * mm  # top+bottom + header block
+            iw, ih = img.wrap(0, 0)
+            if iw <= 0 or ih <= 0:
+                raise ValueError("Bad image dimensions")
+            scale = min(page_w / iw, page_h / ih, 1.0)
+            img.drawWidth = iw * scale
+            img.drawHeight = ih * scale
+            story.append(img)
+        except Exception:
+            # Malformed / unsupported image — swallow and note it in the PDF
+            # so the report still renders for the rest of the batch.
+            story.append(Paragraph(
+                f"<i>Receipt image could not be embedded (mime: {image_mime}).</i>",
+                small,
+            ))
+    else:
+        story.append(Paragraph("<i>No receipt image on file for this expense.</i>", small))
+
+    doc.build(story)
+    return buf.getvalue()

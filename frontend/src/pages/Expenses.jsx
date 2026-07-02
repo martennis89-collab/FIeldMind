@@ -40,15 +40,55 @@ function shiftMonth(m, delta) {
 
 export default function Expenses() {
   const { user } = useAuth();
+  // Phase L — SeniorTM is a hybrid: they log their OWN expenses AND oversee
+  // their sub-team's expenses. Toggle between the two views (default = team,
+  // matching the Dashboard's SeniorTM toggle default).
+  const isSeniorTM = user.role === "SeniorTM";
+  const [seniorView, setSeniorView] = useState("team"); // "team" | "personal"
   return (
     <div data-testid="expenses-page">
       <div className="mb-6">
         <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Expenses</div>
         <h1 className="font-display text-3xl sm:text-4xl font-light tracking-tight" style={{ color: "var(--brand-primary)" }}>
-          {user.role === "TM" ? <>Your <span className="font-medium">monthly receipts.</span></> : <>Team <span className="font-medium">expenses.</span></>}
+          {user.role === "TM" || (isSeniorTM && seniorView === "personal")
+            ? <>Your <span className="font-medium">monthly receipts.</span></>
+            : <>Team <span className="font-medium">expenses.</span></>}
         </h1>
       </div>
-      {user.role === "TM" ? <TMExpenses /> : <ManagerExpenses />}
+      {isSeniorTM && (
+        <div
+          className="inline-flex rounded-md border p-0.5 mb-6"
+          data-testid="seniortm-expenses-view-toggle"
+          style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}
+        >
+          {[
+            { key: "team", label: "Team view" },
+            { key: "personal", label: "My expenses" },
+          ].map((opt) => {
+            const active = seniorView === opt.key;
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setSeniorView(opt.key)}
+                data-testid={`seniortm-expenses-view-${opt.key}`}
+                aria-pressed={active}
+                className="text-xs px-4 py-1.5 rounded font-medium transition-colors"
+                style={{
+                  background: active ? "var(--brand-primary)" : "transparent",
+                  color: active ? "white" : "var(--text-secondary)",
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {user.role === "TM" && <TMExpenses />}
+      {isSeniorTM && seniorView === "personal" && <TMExpenses personal />}
+      {isSeniorTM && seniorView === "team" && <ManagerExpenses />}
+      {!isSeniorTM && user.role !== "TM" && <ManagerExpenses />}
     </div>
   );
 }
@@ -292,7 +332,7 @@ function ManagerExpenses() {
             <button onClick={() => setMonth(shiftMonth(month, 1))} data-testid="manager-month-next" className="p-1.5 rounded hover:bg-[var(--bg-paper)]"><ChevronRight className="w-4 h-4" /></button>
           </div>
           <Button variant="outline" onClick={() => downloadAll()} disabled={downloading || !team?.count} data-testid="download-all-receipts-btn">
-            <Download className="w-4 h-4 mr-1" /> Download all receipts (ZIP)
+            <Download className="w-4 h-4 mr-1" /> Download all as PDFs (ZIP)
           </Button>
         </div>
         {team && (
