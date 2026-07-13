@@ -86,9 +86,13 @@ async def itero_pipeline(user=Depends(get_current_user)):
     q: dict = {"status": "Active"}
     if user["role"] == "TM":
         q["assigned_tm_id"] = user["id"]
+    elif user["role"] == "SeniorTM":
+        # Phase L hybrid: own doctors + doctors assigned to direct-report TMs.
+        sub = await db.users.find({"manager_user_id": user["id"], "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
+        q["assigned_tm_id"] = {"$in": [user["id"]] + [s["id"] for s in sub]}
     elif user["role"] == "Manager":
         team_id = user.get("team_id")
-        team_tms = await db.users.find({"team_id": team_id, "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
+        team_tms = await db.users.find({"team_id": team_id, "role": {"$in": ["TM", "SeniorTM"]}}, {"_id": 0, "id": 1}).to_list(500)
         q["assigned_tm_id"] = {"$in": [t["id"] for t in team_tms]}
     docs = await db.doctors.find(q, {"_id": 0}).to_list(5000)
 
@@ -159,9 +163,12 @@ async def itero_demos(user=Depends(get_current_user)):
     doctor_q = {"status": "Active"}
     if user["role"] == "TM":
         doctor_q["assigned_tm_id"] = user["id"]
+    elif user["role"] == "SeniorTM":
+        sub = await db.users.find({"manager_user_id": user["id"], "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
+        doctor_q["assigned_tm_id"] = {"$in": [user["id"]] + [s["id"] for s in sub]}
     elif user["role"] == "Manager":
         team_id = user.get("team_id")
-        team_tms = await db.users.find({"team_id": team_id, "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
+        team_tms = await db.users.find({"team_id": team_id, "role": {"$in": ["TM", "SeniorTM"]}}, {"_id": 0, "id": 1}).to_list(500)
         doctor_q["assigned_tm_id"] = {"$in": [t["id"] for t in team_tms]}
     docs = await db.doctors.find(doctor_q, {"_id": 0}).to_list(5000)
     if not docs:
@@ -323,6 +330,13 @@ async def itero_demo_breakdown(scope: str = "week", user=Depends(get_current_use
         visit_filter["tm_user_id"] = user["id"]
         meeting_filter["tm_user_id"] = user["id"]
         doctor_filter["assigned_tm_id"] = user["id"]
+    elif user["role"] == "SeniorTM":
+        # Phase L hybrid — own + direct-report TMs.
+        sub = await db.users.find({"manager_user_id": user["id"], "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
+        ids = [user["id"]] + [s["id"] for s in sub]
+        visit_filter["tm_user_id"] = {"$in": ids}
+        meeting_filter["tm_user_id"] = {"$in": ids}
+        doctor_filter["assigned_tm_id"] = {"$in": ids}
     elif user["role"] == "Manager":
         visit_filter["team_id"] = user.get("team_id")
         meeting_filter["team_id"] = user.get("team_id")

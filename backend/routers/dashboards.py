@@ -183,7 +183,7 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "SeniorTM", "A
     docs = await db.doctors.find(team_q, {"_id": 0}).to_list(1000)
     visits = await db.visits.find(team_q, {"_id": 0}).sort("visit_date", -1).to_list(2000)
     tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(2000)
-    users = await db.users.find({**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": "TM"}, {"_id": 0, "password_hash": 0}).to_list(200)
+    users = await db.users.find({**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": {"$in": ["TM", "SeniorTM"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
 
     today = datetime.now(timezone.utc).date().isoformat()
     now_iso = _now_iso()

@@ -136,7 +136,7 @@ async def create_doctor(body: DoctorCreate, user=Depends(require_roles("Admin", 
         # TM (and SeniorTM in their TM-hybrid capacity) creates a doctor for themselves
         doc["assigned_tm_id"] = user["id"]
         doc["team_id"] = user.get("team_id")
-    elif user["role"] == "Manager" and not doc.get("team_id"):
+    elif user["role"] in ("Manager", "SeniorTM") and not doc.get("team_id"):
         doc["team_id"] = user.get("team_id")
     _stamp_company(doc, user)
 

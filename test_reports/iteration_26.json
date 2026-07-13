@@ -1,0 +1,36 @@
+{
+  "summary": "Backend-only regression for Phase O.3 SeniorTM parity fixes (itero.py L85/L162/L325 scoping, dashboards.py L186 team roster, doctors.py L139 team_id stamp). Wrote 10 pytest cases covering iTero pipeline/demos/demo-breakdown scope, TM/Manager regression, SeniorTM doctor create, and manager dashboard team roster. All 10 tests passed against the preview URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "seed data / demo SeniorTM user", "issue": "The SeniorTM demo user snr.demo.1782126329@field.io has team_id=None. The doctors.py L139 fix DOES stamp team_id=user.team_id, but because it is None, the stamp is a no-op in this environment. The code path is correct; only the seed data prevents verifying a non-null team_id propagation. Recommend seeding SeniorTM with an actual team_id so parity with Manager is observable end-to-end."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_seniortm_access_parity.py",
+    "/app/test_reports/pytest/seniortm_parity.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Update seed to give the demo SeniorTM user a valid team_id so team_id stamping on POST /doctors can be positively asserted (currently both senior.team_id and stamped value are None, so equality holds trivially).",
+    "No other SeniorTM-vs-TM asymmetries detected in the tested surface area (itero pipeline/board/demos/demo-breakdown, doctor create, manager dashboards)."
+  ],
+  "critical_code_review_comments": [
+    "itero.py L79-96 / L162-175 / L325-345 — SeniorTM branch correctly mirrors TM own-scope plus direct-report TM ids (via manager_user_id). Query filter `role: 'TM'` on the sub-lookup means a SeniorTM cannot manage another SeniorTM; if that scenario is intended, broaden to `role: {$in: ['TM','SeniorTM']}` (currently only TM subordinates are pulled).",
+    "dashboards.py L186 / L296 / L525 / L672 — role $in [TM, SeniorTM] applied consistently. Good.",
+    "doctors.py L133-141 — SeniorTM in TM branch (assigned_tm_id + team_id both stamped). Manager/SeniorTM elif branch is unreachable for SeniorTM because SeniorTM was already handled above (dead code for SeniorTM); harmless but slightly confusing. Consider dropping SeniorTM from the second elif for clarity."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "SeniorTM snr.demo.1782126329@field.io/senior123, TM tm1@field.io/tm123, Manager manager@field.io/manager123, Admin admin@field.io/admin123 — all verified working",
+  "seed_data_creation": "Test creates+deletes a single TEST_SnrDoc_<uuid> doctor per run (auto-cleanup in finally block).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "SeniorTM scoping fixes validated. Senior sees 9 doctors on pipeline (matches TM1's 9), admin sees 326 — proving scope works. TM1 is confirmed as direct-report of Senior via visibility. If further regression needed, run: pytest /app/backend/tests/test_seniortm_access_parity.py -v.",
+  "measured_data": {
+    "itero_pipeline_totals": {"senior": 9, "admin": 326, "tm1": 9},
+    "itero_demos_counts_senior_vs_admin": "senior booked=1 completed=0 lost=0; admin booked=1 completed=0 lost=0 (demo activity only under this senior+tm1 subtree)",
+    "demo_breakdown_all_senior_vs_admin": "senior discussed=12 booked=33 completed=8; admin discussed=12 booked=33 completed=8 (same reason)",
+    "senior_team_id": null
+  }
+}
