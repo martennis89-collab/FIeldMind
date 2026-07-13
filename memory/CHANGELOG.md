@@ -1211,3 +1211,58 @@ expenses to whatever monthly report I am currently building."
 - Iter23 report: **50/50 pass** — 3 new + 47 baseline regression. Zero
   issues per testing agent.
 
+
+---
+
+## Phase O.5 — Monthly-report expense flow + Cyrillic PDF + SeniorTM audit (Feb 2026)
+
+**Iter22-26 across a single user request thread. Three combined tickets:**
+
+### Auto-include current-month + prior-month search
+- `_compute_totals` — non-Petrol expenses count if their date is in the
+  report's month (auto-include) OR they're linked via
+  `reimbursement_report_id` (opt-in from search). Petrol never counts.
+- `_load_expenses_for` — union query: month range OR linked to this
+  report. De-duped.
+- New `GET /reimbursement/reports/{id}/searchable-expenses?q=&month=` —
+  case-insensitive vendor/category/notes search across the same TM's
+  expenses OUTSIDE the report's month; supports optional month filter.
+- Frontend: expenses-panel table shows Auto-included / Fuel via KM /
+  Added from search / Not counted status pills; below the table is a
+  search widget (`expense-search-query`, `expense-search-month`,
+  `expense-search-run`) with per-result "Add" button. Prior-month rows
+  linked in show a "Remove" button.
+
+### PDF changes
+- Removed the per-doctor breakdown table.
+- Added `_weekly_km_summary(report)` — visits + events grouped by ISO
+  week, cumulative KM per week + Total row.
+- Reordered as: header → meta → totals → weekly-km → expenses →
+  comments.
+
+### Bulgarian text rendering
+- Fixed "black squares" on Cyrillic text by registering
+  `LiberationSans-Regular.ttf` / `LiberationSans-Bold.ttf` (DejaVu as
+  fallback) via `_register_pdf_font()`. Every ReportLab TableStyle and
+  ParagraphStyle now uses those fonts.
+- Fixed HTTP 500 on `/pdf` when tm_name contained Cyrillic — Starlette
+  encodes headers as latin-1. New Content-Disposition uses RFC 5987:
+  `filename="ASCII-fallback"; filename*=UTF-8''<percent-encoded>`.
+
+### SeniorTM audit
+Backend-wide grep for `role == "TM"` and `role == "Manager"` gates:
+most already handled correctly by Phase O.2's `require_roles` upgrade
++ explicit SeniorTM branches. Three genuine gaps patched:
+- `itero.py` — 3 scope blocks (pipeline / board / KPIs) silently gave
+  SeniorTM company-wide access. Now: SeniorTM = own + direct-report TMs.
+  Manager team-TM query broadened to include SeniorTM in the roster.
+- `dashboards.py:186` — team roster missed SeniorTM users.
+- `doctors.py:139` — create endpoint now stamps team_id for both
+  Manager AND SeniorTM.
+
+### Testing
+- Iter22-26: 6 new pytests + 50+ regression = all green.
+- Iter24 caught the Cyrillic Content-Disposition 500; iter25 confirmed
+  fix; iter26 wrote 10 new pytests specifically for SeniorTM parity
+  (iTero scope, doctor create team_id, dashboards roster) — all pass.
+
