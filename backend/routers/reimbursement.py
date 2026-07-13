@@ -787,13 +787,32 @@ async def delete_reimbursement_report(report_id: str, user=Depends(get_current_u
 @api.get("/reimbursement/reports/{report_id}/pdf")
 async def reimbursement_pdf(report_id: str, user=Depends(get_current_user)):
     from fastapi.responses import Response
+    from urllib.parse import quote
+    import unicodedata
     report = await _load_report_scoped(report_id, user)
     hydrated = await _hydrate(report)
     pdf_bytes = _render_reimbursement_pdf(hydrated, weekly=await _weekly_km_summary(report))
-    fname = f"reimbursement_{report['tm_name'].replace(' ', '_')}_{report['month']}.pdf"
+
+    tm_name = report.get("tm_name") or "tm"
+    month = report.get("month") or ""
+    # Build TWO filenames so Starlette can latin-1 encode the header even
+    # when tm_name contains Cyrillic / non-ASCII characters. The RFC-5987
+    # `filename*` variant carries the real UTF-8 name; the legacy
+    # `filename=` gets an ASCII fold so old clients still get something
+    # readable. Fixes iter24 HIGH: PDF 500 when tm_name is Bulgarian.
+    utf8_name = f"reimbursement_{tm_name.replace(' ', '_')}_{month}.pdf"
+    ascii_name = (
+        unicodedata.normalize("NFKD", utf8_name)
+        .encode("ascii", "ignore").decode("ascii")
+        or f"reimbursement_{month}.pdf"
+    )
+    content_disp = (
+        f"attachment; filename=\"{ascii_name}\"; "
+        f"filename*=UTF-8''{quote(utf8_name, safe='')}"
+    )
     await _audit(user, "export", "reimbursement_report", report_id, new={"format": "pdf"})
     return Response(pdf_bytes, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+                    headers={"Content-Disposition": content_disp})
 
 
 def _iso_week_bucket(date_iso: str) -> tuple[str, str]:

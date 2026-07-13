@@ -1,0 +1,23 @@
+{
+  "summary": "Iter25 focused retest of iter24 HIGH bug (PDF 500 on Cyrillic tm_name). Fix in /app/backend/routers/reimbursement.py reimbursement_pdf is correct: builds Content-Disposition with both ASCII `filename=\"...\"` (via unicodedata.NFKD + ascii ignore) and RFC-5987 `filename*=UTF-8''<urlencoded>` (urllib.parse.quote). New retest file test_iteration_25_pdf_cyrillic_header.py directly mutates a report's tm_name to 'Демо Пенчев' in Mongo and asserts: 200, application/pdf, %PDF- magic, >1500 bytes, header contains BOTH filename= and filename*=UTF-8'', percent-decoded star form contains 'Демо Пенчев', ASCII fallback contains only <128 codepoints. Also asserts ASCII regression path. Full sweep of the requested regression suites (m1, m2, o, o3, o4, iter16, iter17, doctor_dedupe, iter24, iter25) = 59/59 GREEN.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_25_pdf_cyrillic_header.py",
+    "/app/test_reports/pytest/iter25.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "reimbursement.py is now 1038 lines — the split-into-modules recommendation from iter23/iter24 still stands.",
+    "Nice: the fix uses NFKD fold + ascii ignore for the legacy filename= AND falls back to `reimbursement_{month}.pdf` if the fold produces empty string (e.g. pure-Cyrillic with no ASCII residue). Safe.",
+    "Minor: could log at debug when the ASCII fold discards characters, so operators can spot silent transliteration in server logs."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration_25_pdf_cyrillic_header.py"],
+  "success_rate": {"backend": "100% (59/59)", "frontend": "skipped per request"},
+  "test_credentials": "tm1@field.io/tm123 (from /app/memory/test_credentials.md path convention; login verified 200)",
+  "seed_data_creation": "None new; retest mutates an existing report's tm_name in Mongo then restores it in the finally block.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter24 HIGH-priority Cyrillic Content-Disposition bug is FIXED and covered by a dedicated regression test at /app/backend/tests/test_iteration_25_pdf_cyrillic_header.py. Header format: `attachment; filename=\"<asciifold>\"; filename*=UTF-8''<pct-encoded>`. All requested phase O.5 suites still green.",
+  "rca of the issue": "Root cause was header value passed to Starlette Response containing non-latin1 characters (tm_name). Fix at lines 788-815 of routers/reimbursement.py wraps the filename in RFC 5987 encoding (filename*=UTF-8''<quote>) and includes an ASCII-folded filename= as a legacy fallback. Reproduced 200 + correct header on Cyrillic 'Демо Пенчев'."
+}
