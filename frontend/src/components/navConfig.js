@@ -64,21 +64,22 @@ export const SENIORTM_TOP = [
 
 // Phase L.3 — Desktop top-nav split into primary slots (always visible) and
 // overflow (collapsed under a "More ▾" dropdown). Keeps the header focused
-// on high-traffic links and prevents wrap on 1024-1280px laptop screens.
+// on high-traffic links and prevents wrap/overflow at any screen size.
 //
-// Values are { default, lg, xl } counts so the Senior TM nav can expand on
-// wide desktops (1440px+) where there's room for the full union of TM +
-// Manager links inline. `default` is the minimum used at md (≥768px).
-//   - TM:        7 primary at every breakpoint
-//   - Manager:   5 primary at every breakpoint
-//   - SeniorTM:  6 at md, 8 at lg (≥1280px), 10 at xl (≥1440px) → ALL inline
-//   - Owner+Admin: all visible at every breakpoint (no overflow)
+// Values are { sm, default, lg, xl } counts. The "sm" tier (768-1023px —
+// tablet portrait and small tablet landscape, where the desktop nav already
+// takes over from the mobile bottom nav at Tailwind's md=768px) was measured
+// empirically: logo (~137px) + account/logout icons (~227px) leave only
+// ~390px for nav links + the "More" button, which fits 2 primary items at
+// most role's average link width. The old single "default" count (used from
+// 768px all the way up) assumed far more room than that and overflowed the
+// header by ~380px on a real 768px tablet.
 export const TOP_PRIMARY_COUNT = {
-  TM: { default: 7, lg: 7, xl: 8 },
-  Manager: { default: 5, lg: 5, xl: 5 },
-  SeniorTM: { default: 6, lg: 8, xl: 10 },
-  Admin: { default: 99, lg: 99, xl: 99 },
-  Owner: { default: 99, lg: 99, xl: 99 },
+  TM: { sm: 2, default: 4, lg: 7, xl: 8 },
+  Manager: { sm: 2, default: 4, lg: 5, xl: 5 },
+  SeniorTM: { sm: 2, default: 4, lg: 8, xl: 10 },
+  Admin: { sm: 2, default: 4, lg: 6, xl: 9 },
+  Owner: { sm: 2, default: 4, lg: 6, xl: 9 },
 };
 
 // ---------- Mobile bottom nav (max 5 slots) ----------

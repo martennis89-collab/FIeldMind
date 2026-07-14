@@ -45,6 +45,10 @@ export default function Layout({ children }) {
   const isSeniorTM = user?.role === "SeniorTM";
   const isTM = user?.role === "TM";
   const TOP = isSeniorTM ? SENIORTM_TOP : (isManager ? MANAGER_TOP : TM_TOP);
+  // The floating Log Visit button (below) only renders for TM/SeniorTM off the
+  // log-visit page — give main content enough bottom clearance to not sit
+  // under it at md+ widths (mobile already gets pb-28 from the bottom nav).
+  const hasFab = (isTM || isSeniorTM) && !location.pathname.startsWith("/log-visit");
   const [addOpen, setAddOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
@@ -94,7 +98,7 @@ export default function Layout({ children }) {
             <Link
               to="/account"
               data-testid="nav-account"
-              className="hidden sm:block text-right leading-tight px-2 py-1 rounded hover:bg-[var(--bg-paper)] transition-colors"
+              className="hidden lg:block text-right leading-tight px-2 py-1 rounded hover:bg-[var(--bg-paper)] transition-colors whitespace-nowrap"
               title="My account"
             >
               <div className="text-sm font-medium" data-testid="current-user-name">{user?.full_name}</div>
@@ -103,7 +107,7 @@ export default function Layout({ children }) {
             <Link
               to="/account"
               data-testid="nav-account-mobile"
-              className="sm:hidden p-2 rounded hover:bg-[var(--bg-paper)] transition-colors"
+              className="lg:hidden p-2 rounded hover:bg-[var(--bg-paper)] transition-colors"
               title="My account"
               aria-label="My account"
             >
@@ -123,7 +127,7 @@ export default function Layout({ children }) {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 pb-28 md:pb-10">
+      <main className={`flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 pb-28 ${hasFab ? "md:pb-28" : "md:pb-10"}`}>
         <ErrorBoundary
           key={location.pathname}
           label="This page hit an unexpected rendering error."
@@ -181,7 +185,7 @@ export default function Layout({ children }) {
       )}
 
       {/* Desktop FAB (TM + Senior TM) */}
-      {(isTM || isSeniorTM) && !location.pathname.startsWith("/log-visit") && (
+      {hasFab && (
         <button
           onClick={() => navigate("/log-visit")}
           data-testid="log-visit-fab"
@@ -337,9 +341,11 @@ function BottomTab({ t }) {
 }
 
 // Phase L.3 — Desktop top nav with viewport-aware primary count + "More ▾"
-// dropdown for overflow. The breakpoints mirror Tailwind (lg=1280, xl=1440).
+// dropdown for overflow. Buckets: sm=768-1023 (tablet, where the mobile
+// bottom nav has already handed off to this desktop nav at Tailwind's
+// md=768px), default=1024-1279 (small laptop), lg=1280-1439, xl=1440+.
 // This keeps the SeniorTM full union of links inline on 1440px+ screens
-// while preserving the focused 6-item nav on 1024-1280 laptop displays.
+// while keeping the header from overflowing on a tablet.
 function useTopPrimaryCount(role) {
   const counts = TOP_PRIMARY_COUNT[role] || TOP_PRIMARY_COUNT.TM;
   const computeBreakpoint = () => {
@@ -347,7 +353,8 @@ function useTopPrimaryCount(role) {
     const w = window.innerWidth;
     if (w >= 1440) return "xl";
     if (w >= 1280) return "lg";
-    return "default";
+    if (w >= 1024) return "default";
+    return "sm";
   };
   const [bp, setBp] = React.useState(computeBreakpoint);
   React.useEffect(() => {
