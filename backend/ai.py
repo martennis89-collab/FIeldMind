@@ -76,7 +76,7 @@ OPPORTUNITY_STATE (one of): "Blocked", "Stuck", "Advancing", "Unknown"
 PROMISES: actionable follow-ups the TM committed to (e.g., "send certification info", "book iTero demo", "arrange P2P", "send TPS info", "invite to event"). Each promise needs:
 - task_title (short imperative, e.g. "Send certification info")
 - task_description (1 sentence context)
-- suggested_due_date (ISO date YYYY-MM-DD; if not specified in the note, suggest 3 business days from today)
+- suggested_due_date (ISO date YYYY-MM-DD ONLY if the note itself specifies or implies a date, e.g. "next Monday" or "in two weeks" — you don't know today's date, so never guess one; otherwise return null and the caller will apply a sensible default)
 - priority: "Low" | "Medium" | "High"
 
 MARKET_SIGNALS: short string observations relevant to market intelligence (e.g., "Doctor cited competitor X in city Y", "Affordability concern raised by Active segment").

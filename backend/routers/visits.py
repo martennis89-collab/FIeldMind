@@ -62,7 +62,6 @@ from server import (
     _build_report_draft,
     _month_of,
     _expense_visible_to,
-    _add_business_days,
     _company_id_for,
     _company_query_for,
     _apply_company_scope,
@@ -212,12 +211,16 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
 
     # auto-create tasks from confirmed promises
     created_tasks = []
-    today = datetime.now(timezone.utc).date()
+    try:
+        vdate_date = datetime.fromisoformat(vdate.replace("Z", "+00:00")).date()
+    except (ValueError, AttributeError):
+        vdate_date = datetime.now(timezone.utc).date()
     for p in (body.promises or []):
         due = p.suggested_due_date
         if not due:
-            # Spec §3.6 default — +3 business days when AI didn't propose one
-            due = _add_business_days(today, 3).isoformat()
+            # Default follow-up due date: 2 weeks from the visit date (not "today"),
+            # so a voice memo logged a day or two late still gets a sensible due date.
+            due = (vdate_date + timedelta(days=14)).isoformat()
         task = {
             "id": str(uuid.uuid4()),
             "doctor_id": body.doctor_id,

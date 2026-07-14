@@ -113,9 +113,11 @@ async def list_tasks(
 
 @api.post("/tasks")
 async def create_task(body: TaskCreate, user=Depends(get_current_user)):
-    doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
-    if not doctor or not await _can_access_doctor(user, doctor):
-        raise HTTPException(status_code=404, detail="Doctor not found")
+    doctor = None
+    if body.doctor_id:
+        doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
+        if not doctor or not await _can_access_doctor(user, doctor):
+            raise HTTPException(status_code=404, detail="Doctor not found")
     today_d = datetime.now(timezone.utc).date()
     # Spec §3.6 + §30: If no due_date provided, default to +3 BUSINESS days.
     due_date = body.due_date or _add_business_days(today_d, 3).isoformat()
@@ -123,7 +125,7 @@ async def create_task(body: TaskCreate, user=Depends(get_current_user)):
         id=str(uuid.uuid4()),
         doctor_id=body.doctor_id,
         tm_user_id=user["id"],
-        team_id=user.get("team_id") or doctor.get("team_id"),
+        team_id=user.get("team_id") or (doctor.get("team_id") if doctor else None),
         visit_id=body.visit_id,
         task_title=body.task_title,
         task_description=body.task_description or "",

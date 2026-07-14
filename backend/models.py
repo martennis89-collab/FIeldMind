@@ -408,7 +408,7 @@ PromiseCategory = Literal[
 
 
 class TaskCreate(BaseModel):
-    doctor_id: str
+    doctor_id: Optional[str] = None  # None = personal/admin task, not tied to a doctor
     visit_id: Optional[str] = None
     task_title: str
     task_description: Optional[str] = ""
@@ -434,7 +434,7 @@ class Task(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
     company_id: Optional[str] = None  # Phase C — multi-tenant root
-    doctor_id: str
+    doctor_id: Optional[str] = None  # None = personal/admin task, not tied to a doctor
     tm_user_id: str
     team_id: Optional[str] = None
     visit_id: Optional[str] = None

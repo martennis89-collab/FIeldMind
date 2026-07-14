@@ -7,6 +7,10 @@ AI extraction + doctor-matching used by /visits/analyze, and saves it via the
 same logic as POST /visits — so a Telegram-logged visit is indistinguishable
 from one logged through the app.
 
+Notes that don't name any doctor at all (e.g. "call the bank about the
+marketing materials") are logged as a standalone personal/admin task instead
+of a doctor visit — see _log_standalone_task.
+
 Env vars:
   TELEGRAM_BOT_TOKEN     — from @BotFather
   TELEGRAM_CHAT_ID       — the single authorized chat; messages from any other
@@ -18,15 +22,18 @@ Env vars:
                            incoming request
 """
 from __future__ import annotations
+from datetime import datetime, timezone, timedelta
 import logging
 import os
 
 import httpx
 from fastapi import Request, HTTPException
 
+from ai import extract_task_from_text
 from server import api, db
 from routers.visits import _transcribe_audio_bytes, create_visit, analyze_visit_note
-from models import AnalyzeNoteRequest, VisitCreate, AIExtraction
+from routers.tasks import create_task
+from models import AnalyzeNoteRequest, VisitCreate, AIExtraction, TaskCreate
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +62,57 @@ async def _download_telegram_voice(file_id: str) -> bytes:
         audio = await client.get(f"https://api.telegram.org/file/bot{token}/{file_path}")
         audio.raise_for_status()
         return audio.content
+
+
+async def _log_standalone_task(note_text: str, user: dict, visit_analysis: dict) -> None:
+    """A Telegram note that doesn't name a doctor at all — e.g. "call Viktoria at
+    TBI Bank about the marketing materials" — isn't a visit. Log it as a personal/
+    admin task instead of erroring out asking for a doctor.
+    """
+    promises = [p for p in (visit_analysis.get("promises_detected") or []) if p.get("task_title")]
+    if not promises:
+        # The visit-analysis prompt is dental-context-heavy and may miss a
+        # generic task — retry with the task-focused extractor.
+        task_result = await extract_task_from_text(note_text)
+        if task_result.get("task_title"):
+            promises = [task_result]
+
+    if not promises:
+        await _telegram_send(
+            "Got it, but I couldn't find an actionable task in that note. "
+            "Try being more specific, e.g. \"Call Viktoria at TBI Bank about the marketing materials.\""
+        )
+        return
+
+    today = datetime.now(timezone.utc).date()
+    created_titles = []
+    for p in promises[:3]:
+        title = (p.get("task_title") or "").strip()
+        if not title:
+            continue
+        due = p.get("suggested_due_date") or (today + timedelta(days=14)).isoformat()
+        prio = p.get("priority") if p.get("priority") in ("Low", "Medium", "High") else "Medium"
+        task_body = TaskCreate(
+            doctor_id=None,
+            task_title=title,
+            task_description=p.get("task_description") or note_text[:400],
+            due_date=due,
+            priority=prio,
+            created_from_ai=True,
+            ai_confirmed=True,
+            category="other",
+        )
+        try:
+            await create_task(task_body, user=user)
+            created_titles.append(title)
+        except HTTPException as e:
+            logger.warning("Telegram standalone task creation failed: %s", e.detail)
+
+    if created_titles:
+        summary = "; ".join(created_titles)
+        await _telegram_send(f"Logged task: {summary}. ✓")
+    else:
+        await _telegram_send("Something went wrong saving that task — nothing was saved. Try again shortly.")
 
 
 @api.post("/telegram/webhook")
@@ -110,6 +168,12 @@ async def telegram_webhook(request: Request):
 
     doctor_id = result.get("doctor_id")
     newly_created_doctor_name = result.get("doctor_hint") if result.get("doctor_auto_created") else None
+
+    if not doctor_id and not result.get("doctor_name_heard"):
+        # No doctor named at all — this isn't a visit, it's a personal/admin task.
+        await _log_standalone_task(note_text, user, result)
+        return {"ok": True}
+
     if not doctor_id:
         await _telegram_send(
             "Couldn't find or add a doctor from that note. "
