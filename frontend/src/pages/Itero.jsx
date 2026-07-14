@@ -22,13 +22,19 @@ function FunnelRow({ label, value, max, color, testId }) {
 
 export default function Itero() {
   const { user } = useAuth();
-  const isManager = user.role === "Manager" || user.role === "Admin";
+  const isManagerOnly = user.role === "Manager" || user.role === "Admin";
+  const isSeniorTM = user.role === "SeniorTM";
+  // Phase L: SeniorTMs get both a team (sub-team oversight) and personal
+  // (their own doctors) view — default to team, same as the Dashboard.
+  const [seniorView, setSeniorView] = useState("team"); // "personal" | "team"
+  const showManagerView = isManagerOnly || (isSeniorTM && seniorView === "team");
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    const url = isManager ? "/dashboard/manager/itero" : "/dashboard/tm/itero";
+    setData(null);
+    const url = showManagerView ? "/dashboard/manager/itero" : "/dashboard/tm/itero";
     api.get(url).then((r) => setData(r.data));
-  }, [isManager]);
+  }, [showManagerView]);
 
   return (
     <div data-testid="itero-page">
@@ -37,7 +43,7 @@ export default function Itero() {
           <ScanLine className="w-6 h-6" />
         </div>
         <div>
-          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{isManager ? "iTero (manager view)" : "iTero (TM view)"}</div>
+          <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{showManagerView ? "iTero (manager view)" : "iTero (TM view)"}</div>
           <h1 className="font-display text-3xl sm:text-4xl font-light tracking-tight" style={{ color: "var(--brand-primary)" }}>
             Scanner <span className="font-medium">demo & engagement.</span>
           </h1>
@@ -57,9 +63,40 @@ export default function Itero() {
         </div>
       </div>
 
+      {isSeniorTM && (
+        <div
+          className="inline-flex rounded-md border p-0.5 mb-6"
+          data-testid="seniortm-itero-view-toggle"
+          style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}
+        >
+          {[
+            { key: "team", label: "Team view" },
+            { key: "personal", label: "Personal view" },
+          ].map((opt) => {
+            const active = seniorView === opt.key;
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setSeniorView(opt.key)}
+                data-testid={`seniortm-itero-view-${opt.key}`}
+                aria-pressed={active}
+                className="text-xs px-4 py-1.5 rounded font-medium transition-colors"
+                style={{
+                  background: active ? "var(--brand-primary)" : "transparent",
+                  color: active ? "white" : "var(--text-secondary)",
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {!data && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
       {data && <BookedDemosBlock />}
-      {data && (isManager ? <ManagerItero data={data} /> : <TMItero data={data} />)}
+      {data && (showManagerView ? <ManagerItero data={data} /> : <TMItero data={data} />)}
     </div>
   );
 }
