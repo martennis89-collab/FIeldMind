@@ -291,7 +291,19 @@ def _priority_label(score: int) -> str:
     return "Low"
 
 
+# Atlas free-tier (M0) clusters throttle hard under bursty concurrency — gathering
+# enrichment for hundreds of doctors unbounded (each doctor = ~5 queries) can be
+# SLOWER than sequential once the burst exceeds what the shared cluster can serve
+# concurrently. Cap how many doctors are enriched in parallel at once.
+_ENRICH_SEMAPHORE = asyncio.Semaphore(10)
+
+
 async def _enrich_doctor(doctor: dict) -> dict:
+    async with _ENRICH_SEMAPHORE:
+        return await _enrich_doctor_impl(doctor)
+
+
+async def _enrich_doctor_impl(doctor: dict) -> dict:
     """Add computed fields to a doctor dict."""
     doc_id = doctor["id"]
     # last visit
