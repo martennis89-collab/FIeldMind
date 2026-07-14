@@ -35,6 +35,7 @@ from server import (
     _strip_user,
     _doctor_query_for,
     _can_access_doctor,
+    _managed_tm_ids_for,
     _cadence_status,
     _priority_score,
     _priority_label,
@@ -419,8 +420,22 @@ async def update_doctor(doctor_id: str, body: DoctorUpdate, user=Depends(require
     existing = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     if not existing or not await _can_access_doctor(user, existing):
         raise HTTPException(status_code=404, detail="Doctor not found")
-    if user["role"] in ("TM", "SeniorTM"):
-        # TM/SeniorTM may only update general_notes / status / growth-programme flag
+    if user["role"] == "SeniorTM":
+        # SeniorTM may reassign a doctor to themselves or a direct-report TM,
+        # in addition to the fields every TM can touch.
+        allowed_fields = {"general_notes", "status", "in_growth_program"}
+        if body.assigned_tm_id is not None:
+            managed_ids = await _managed_tm_ids_for(user)
+            if body.assigned_tm_id not in (managed_ids or []):
+                raise HTTPException(status_code=403, detail="Can only reassign to yourself or your own direct reports")
+            allowed_fields.add("assigned_tm_id")
+        update = {k: v for k, v in body.model_dump(exclude_none=True).items() if k in allowed_fields}
+        if "assigned_tm_id" in update:
+            target_user = await db.users.find_one({"id": update["assigned_tm_id"]}, {"_id": 0, "team_id": 1})
+            if target_user and target_user.get("team_id"):
+                update["team_id"] = target_user["team_id"]
+    elif user["role"] == "TM":
+        # Plain TM may only update general_notes / status / growth-programme flag
         allowed = {k: v for k, v in body.model_dump(exclude_none=True).items() if k in ("general_notes", "status", "in_growth_program")}
         update = allowed
     else:

@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import api from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Button } from "../components/ui/button";
-import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2, Sprout, Trash2 } from "lucide-react";
+import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2, Sprout, Trash2, UserCog } from "lucide-react";
 import { toast } from "sonner";
 
 function formatDate(s) {
@@ -19,12 +21,15 @@ function formatDateTime(s) {
 export default function DoctorProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [doctor, setDoctor] = useState(null);
   const [visits, setVisits] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [meetings, setMeetings] = useState([]);
   const [prep, setPrep] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [reassigning, setReassigning] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -51,6 +56,14 @@ export default function DoctorProfile() {
 
   useEffect(() => { load(); }, [id]);
 
+  useEffect(() => {
+    if (user?.role !== "SeniorTM") return;
+    api.get("/users").then((r) => {
+      const list = (r.data || []).filter((u) => u.role === "TM" || u.id === user.id);
+      setTeamMembers(list);
+    }).catch(() => {});
+  }, [user]);
+
   const completeTask = async (task) => {
     await api.put(`/tasks/${task.id}`, { status: "Completed" });
     toast.success("Promise completed");
@@ -76,6 +89,21 @@ export default function DoctorProfile() {
       load();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to delete");
+    }
+  };
+
+  const reassignDoctor = async (targetTmId) => {
+    if (!targetTmId || targetTmId === doctor.assigned_tm_id) return;
+    setReassigning(true);
+    try {
+      await api.put(`/doctors/${doctor.id}`, { assigned_tm_id: targetTmId });
+      const target = teamMembers.find((m) => m.id === targetTmId);
+      toast.success(`Reassigned to ${target?.full_name || "team member"}`);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to reassign");
+    } finally {
+      setReassigning(false);
     }
   };
 
@@ -169,6 +197,25 @@ export default function DoctorProfile() {
             >
               <Sprout className="w-4 h-4 mr-2" /> {doctor.in_growth_program ? "In growth programme" : "Add to growth programme"}
             </Button>
+            {user?.role === "SeniorTM" && teamMembers.length > 0 && (
+              <Select value={doctor.assigned_tm_id || ""} onValueChange={reassignDoctor} disabled={reassigning}>
+                <SelectTrigger
+                  data-testid="reassign-doctor-select"
+                  className="w-auto bg-white font-medium"
+                  style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+                >
+                  <UserCog className="w-4 h-4 mr-2" />
+                  <SelectValue placeholder="Reassign to…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {teamMembers.map((m) => (
+                    <SelectItem key={m.id} value={m.id} data-testid={`reassign-option-${m.id}`}>
+                      {m.id === user.id ? `${m.full_name} (me)` : m.full_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
 
