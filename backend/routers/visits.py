@@ -6,7 +6,6 @@ its handlers on it. Behaviour is byte-for-byte identical to pre-refactor.
 from __future__ import annotations
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta, date
-import io
 import os
 import logging
 import uuid
@@ -85,14 +84,14 @@ async def analyze_visit_note(body: AnalyzeNoteRequest, user=Depends(get_current_
 
 @api.post("/visits/transcribe")
 async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get_current_user)):
-    """Transcribe an uploaded audio clip (TM voice memo) into text using OpenAI Whisper.
+    """Transcribe an uploaded audio clip (TM voice memo) into text using ElevenLabs Scribe.
 
     Accepts a multipart upload with field name 'audio'. Supported formats: webm, mp3, m4a, wav, mp4, mpga, mpeg.
-    Max 25 MB (Whisper limit). Returns {text: str}.
+    Max 25 MB. Returns {text: str}.
     """
-    from openai import AsyncOpenAI
+    import httpx
 
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not os.environ.get("ELEVENLABS_API_KEY"):
         raise HTTPException(status_code=503, detail="Transcription service not configured")
 
     # Read into memory and validate size
@@ -103,16 +102,20 @@ async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get
         raise HTTPException(status_code=413, detail="Audio file exceeds 25 MB limit")
 
     filename = audio.filename or "voice.webm"
-    # Wrap bytes so the SDK can read it as a file-like with a .name attribute
-    buf = io.BytesIO(raw)
-    buf.name = filename
 
     try:
-        client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        response = await client.audio.transcriptions.create(file=buf, model="whisper-1", response_format="json")
-        text = getattr(response, "text", "") or ""
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                "https://api.elevenlabs.io/v1/speech-to-text",
+                headers={"xi-api-key": os.environ["ELEVENLABS_API_KEY"]},
+                data={"model_id": "scribe_v1"},
+                files={"file": (filename, raw, audio.content_type or "audio/webm")},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        text = data.get("text", "") or ""
     except Exception:
-        logging.exception("Whisper transcription failed")
+        logging.exception("ElevenLabs transcription failed")
         raise HTTPException(status_code=502, detail="Transcription service unavailable")
 
     await _audit(user, "transcribe", "visit", "audio", new={"chars": len(text)})
