@@ -11,6 +11,7 @@ import logging
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone, timedelta, date
+from zoneinfo import ZoneInfo
 import uuid
 from typing import List, Optional, Literal
 from pydantic import BaseModel
@@ -1613,8 +1614,9 @@ from routers import (
     interventions,
     benchmark,
     reimbursement,
+    telegram,
 )
-_ = (auth, users, doctors, visits, track_signals, clinical_patterns, meetings, events, tasks, dashboards, itero, search, taxonomy, reports, audit_logs, expenses, ai_extract, root, companies, metrics, insights, interventions, benchmark, reimbursement)  # silence unused-import linters
+_ = (auth, users, doctors, visits, track_signals, clinical_patterns, meetings, events, tasks, dashboards, itero, search, taxonomy, reports, audit_logs, expenses, ai_extract, root, companies, metrics, insights, interventions, benchmark, reimbursement, telegram)  # silence unused-import linters
 
 app.include_router(api)
 
@@ -1631,6 +1633,36 @@ app.add_middleware(
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+# Timezone the daily Telegram check-in fires in — hardcoded since this is a
+# single-user personal automation, not a per-user preference.
+_CHECKIN_TZ = ZoneInfo("Europe/Sofia")
+
+
+async def _telegram_daily_checkin_loop():
+    """Fires once a day at ~18:00 Europe/Sofia via the linked Telegram chat.
+    Guards against double-sends with a persisted last-sent date (the loop
+    itself polls every 5 minutes, so without this it would fire ~2x inside
+    the 10-minute window below)."""
+    from routers.telegram import _telegram_send
+
+    while True:
+        try:
+            if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"):
+                now = datetime.now(_CHECKIN_TZ)
+                if now.hour == 18 and now.minute < 10:
+                    today_str = now.date().isoformat()
+                    state = await db.app_state.find_one({"key": "telegram_last_checkin"})
+                    if not state or state.get("value") != today_str:
+                        await _telegram_send("How did your day go? Send a voice note (or text) about who you visited.")
+                        await db.app_state.update_one(
+                            {"key": "telegram_last_checkin"},
+                            {"$set": {"value": today_str}},
+                            upsert=True,
+                        )
+        except Exception:
+            logger.exception("Telegram daily check-in loop failed")
+        await asyncio.sleep(300)
 
 
 @app.on_event("startup")
@@ -1733,6 +1765,8 @@ async def on_startup():
         logger.info(f"Phase B backfill: {backfilled} new track_signals materialized")
     except Exception as e:
         logger.error(f"Phase B init failed: {e}")
+
+    asyncio.create_task(_telegram_daily_checkin_loop())
 
     logger.info("Field Intelligence Platform started.")
 

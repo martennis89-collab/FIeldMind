@@ -82,26 +82,18 @@ async def analyze_visit_note(body: AnalyzeNoteRequest, user=Depends(get_current_
     result = await ai_analyze_note(body.note, session_id=f"analyze-{user['id']}", doctors=doctors)
     return result
 
-@api.post("/visits/transcribe")
-async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get_current_user)):
-    """Transcribe an uploaded audio clip (TM voice memo) into text using ElevenLabs Scribe.
-
-    Accepts a multipart upload with field name 'audio'. Supported formats: webm, mp3, m4a, wav, mp4, mpga, mpeg.
-    Max 25 MB. Returns {text: str}.
-    """
+async def _transcribe_audio_bytes(raw: bytes, filename: str, content_type: str) -> str:
+    """Shared ElevenLabs Scribe call — used by the HTTP upload endpoint below and
+    by the Telegram voice-note webhook (routers/telegram.py). Raises HTTPException
+    on failure so both callers get consistent error handling."""
     import httpx
 
     if not os.environ.get("ELEVENLABS_API_KEY"):
         raise HTTPException(status_code=503, detail="Transcription service not configured")
-
-    # Read into memory and validate size
-    raw = await audio.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty audio file")
     if len(raw) > 25 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Audio file exceeds 25 MB limit")
-
-    filename = audio.filename or "voice.webm"
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -109,17 +101,29 @@ async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get
                 "https://api.elevenlabs.io/v1/speech-to-text",
                 headers={"xi-api-key": os.environ["ELEVENLABS_API_KEY"]},
                 data={"model_id": "scribe_v1"},
-                files={"file": (filename, raw, audio.content_type or "audio/webm")},
+                files={"file": (filename, raw, content_type or "audio/webm")},
             )
             resp.raise_for_status()
             data = resp.json()
-        text = data.get("text", "") or ""
+        return (data.get("text", "") or "").strip()
+    except HTTPException:
+        raise
     except Exception:
         logging.exception("ElevenLabs transcription failed")
         raise HTTPException(status_code=502, detail="Transcription service unavailable")
 
+
+@api.post("/visits/transcribe")
+async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get_current_user)):
+    """Transcribe an uploaded audio clip (TM voice memo) into text using ElevenLabs Scribe.
+
+    Accepts a multipart upload with field name 'audio'. Supported formats: webm, mp3, m4a, wav, mp4, mpga, mpeg.
+    Max 25 MB. Returns {text: str}.
+    """
+    raw = await audio.read()
+    text = await _transcribe_audio_bytes(raw, audio.filename or "voice.webm", audio.content_type)
     await _audit(user, "transcribe", "visit", "audio", new={"chars": len(text)})
-    return {"text": text.strip()}
+    return {"text": text}
 
 @api.post("/visits")
 async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
