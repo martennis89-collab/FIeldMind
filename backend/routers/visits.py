@@ -76,7 +76,7 @@ from server import (
     seed_demo,
     seed_owner,
 )
-from models import AnalyzeNoteRequest, CommercialActions, InvisalignActions, IteroActions, VisitCreate
+from models import AnalyzeNoteRequest, CommercialActions, InvisalignActions, IteroActions, VisitCreate, VisitUpdate
 
 
 @api.post("/visits/analyze")
@@ -270,7 +270,47 @@ async def list_visits(
     if tm_user_id and user["role"] in ("Admin", "Manager", "SeniorTM"):
         q["tm_user_id"] = tm_user_id
     visits = await db.visits.find(q, {"_id": 0}).sort("visit_date", -1).to_list(500)
+    # Meetings already carry doctor_name/clinic_name/city on the document itself;
+    # visits never did, which left them showing as a generic "Visit" everywhere
+    # that renders a label from the raw list (the Calendar page in particular).
+    doc_ids = list({v["doctor_id"] for v in visits if v.get("doctor_id")})
+    if doc_ids:
+        docs = await db.doctors.find(
+            {"id": {"$in": doc_ids}}, {"_id": 0, "id": 1, "doctor_name": 1, "clinic_name": 1, "city": 1}
+        ).to_list(len(doc_ids))
+        by_id = {d["id"]: d for d in docs}
+        for v in visits:
+            d = by_id.get(v.get("doctor_id"))
+            if d:
+                v["doctor_name"] = d.get("doctor_name")
+                v["clinic_name"] = d.get("clinic_name")
+                v["city"] = d.get("city")
     return visits
+
+@api.put("/visits/{visit_id}")
+async def update_visit(visit_id: str, body: VisitUpdate, user=Depends(get_current_user)):
+    """Edit a logged visit's fields. TM/SeniorTM may edit their own; Manager
+    within their team; Admin any. Does not touch downstream effects (created
+    tasks, itero stage, track signals) — those were already materialized
+    from the original values when the visit was created.
+    """
+    v = await db.visits.find_one({"id": visit_id}, {"_id": 0})
+    if not v or v.get("deleted_at"):
+        raise HTTPException(status_code=404, detail="Visit not found")
+    if not _same_company(user, v):
+        raise HTTPException(status_code=404, detail="Visit not found")
+    if user["role"] in ("TM", "SeniorTM") and v.get("tm_user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "Manager" and v.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    update = body.model_dump(exclude_none=True)
+    if not update:
+        return v
+    update["updated_at"] = _now_iso()
+    await db.visits.update_one({"id": visit_id}, {"$set": update})
+    new = await db.visits.find_one({"id": visit_id}, {"_id": 0})
+    await _audit(user, "update", "visit", visit_id, prev=v, new=new)
+    return new
 
 @api.delete("/visits/{visit_id}")
 async def delete_visit(visit_id: str, user=Depends(get_current_user)):

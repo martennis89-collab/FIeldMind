@@ -6,8 +6,12 @@ import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } fr
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Button } from "../components/ui/button";
-import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2, Sprout, Trash2, UserCog } from "lucide-react";
+import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2, Sprout, Trash2, UserCog, Pencil } from "lucide-react";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Textarea } from "../components/ui/textarea";
 
 function formatDate(s) {
   if (!s) return "—";
@@ -30,6 +34,8 @@ export default function DoctorProfile() {
   const [loading, setLoading] = useState(true);
   const [teamMembers, setTeamMembers] = useState([]);
   const [reassigning, setReassigning] = useState(false);
+  const [editingVisit, setEditingVisit] = useState(null);
+  const [editingMeeting, setEditingMeeting] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -309,6 +315,14 @@ export default function DoctorProfile() {
                     {v.sentiment && <StatusPill kind={sentimentKind(v.sentiment)}>{v.sentiment}</StatusPill>}
                     {v.opportunity_state && <StatusPill kind="muted">{v.opportunity_state}</StatusPill>}
                     <button
+                      onClick={() => setEditingVisit(v)}
+                      data-testid={`edit-visit-${v.id}`}
+                      title="Edit visit"
+                      className="p-1.5 rounded hover:bg-[var(--bg-paper)]"
+                    >
+                      <Pencil className="w-4 h-4" style={{ color: "var(--text-muted)" }} />
+                    </button>
+                    <button
                       onClick={() => deleteVisit(v)}
                       data-testid={`delete-visit-${v.id}`}
                       title="Delete visit"
@@ -406,21 +420,231 @@ export default function DoctorProfile() {
                     {m.is_demo && <StatusPill kind="muted"><ScanLine className="w-3 h-3" />Demo</StatusPill>}
                   </div>
                 </div>
-                <button
-                  onClick={() => deleteMeeting(m)}
-                  data-testid={`delete-meeting-${m.id}`}
-                  title="Delete meeting"
-                  className="p-1.5 rounded hover:bg-[var(--bg-paper)] shrink-0"
-                >
-                  <Trash2 className="w-4 h-4" style={{ color: "var(--status-danger)" }} />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => setEditingMeeting(m)}
+                    data-testid={`edit-meeting-${m.id}`}
+                    title="Edit meeting"
+                    className="p-1.5 rounded hover:bg-[var(--bg-paper)]"
+                  >
+                    <Pencil className="w-4 h-4" style={{ color: "var(--text-muted)" }} />
+                  </button>
+                  <button
+                    onClick={() => deleteMeeting(m)}
+                    data-testid={`delete-meeting-${m.id}`}
+                    title="Delete meeting"
+                    className="p-1.5 rounded hover:bg-[var(--bg-paper)]"
+                  >
+                    <Trash2 className="w-4 h-4" style={{ color: "var(--status-danger)" }} />
+                  </button>
+                </div>
               </div>
             ))}
             {meetings.length === 0 && <div className="text-sm" style={{ color: "var(--text-muted)" }}>No meetings booked.</div>}
           </div>
         </TabsContent>
       </Tabs>
+
+      <EditVisitDialog visit={editingVisit} onClose={() => setEditingVisit(null)} onSaved={() => { setEditingVisit(null); load(); }} />
+      <EditMeetingDialog meeting={editingMeeting} onClose={() => setEditingMeeting(null)} onSaved={() => { setEditingMeeting(null); load(); }} />
     </div>
+  );
+}
+
+function toDateInputValue(iso) {
+  if (!iso) return "";
+  try { return new Date(iso).toISOString().slice(0, 10); } catch { return ""; }
+}
+function toDateTimeLocalValue(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch { return ""; }
+}
+
+function EditVisitDialog({ visit, onClose, onSaved }) {
+  const [visitDate, setVisitDate] = useState("");
+  const [visitType, setVisitType] = useState("In-person visit");
+  const [sentiment, setSentiment] = useState("Neutral");
+  const [opportunityState, setOpportunityState] = useState("Unknown");
+  const [freeTextNote, setFreeTextNote] = useState("");
+  const [nextStep, setNextStep] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!visit) return;
+    setVisitDate(toDateInputValue(visit.visit_date));
+    setVisitType(visit.visit_type || "In-person visit");
+    setSentiment(visit.sentiment || "Neutral");
+    setOpportunityState(visit.opportunity_state || "Unknown");
+    setFreeTextNote(visit.free_text_note || "");
+    setNextStep(visit.next_step || "");
+  }, [visit]);
+
+  if (!visit) return null;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/visits/${visit.id}`, {
+        visit_date: visitDate ? `${visitDate}T12:00:00+00:00` : undefined,
+        visit_type: visitType,
+        sentiment,
+        opportunity_state: opportunityState,
+        free_text_note: freeTextNote,
+        next_step: nextStep || null,
+      });
+      toast.success("Visit updated");
+      onSaved();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to update visit");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!visit} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent data-testid="edit-visit-dialog">
+        <DialogHeader><DialogTitle>Edit visit</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="mb-1 block text-xs">Date</Label>
+              <Input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} className="bg-white" data-testid="edit-visit-date" />
+            </div>
+            <div>
+              <Label className="mb-1 block text-xs">Type</Label>
+              <Select value={visitType} onValueChange={setVisitType}>
+                <SelectTrigger className="bg-white" data-testid="edit-visit-type"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["In-person visit", "Phone call", "Online meeting", "Event conversation", "Training/session", "Other"].map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div>
+            <Label className="mb-1 block text-xs">Note</Label>
+            <Textarea rows={4} value={freeTextNote} onChange={(e) => setFreeTextNote(e.target.value)} className="bg-white" data-testid="edit-visit-note" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="mb-1 block text-xs">Sentiment</Label>
+              <Select value={sentiment} onValueChange={setSentiment}>
+                <SelectTrigger className="bg-white" data-testid="edit-visit-sentiment"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["Very Negative", "Negative", "Neutral", "Positive", "Very Positive"].map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="mb-1 block text-xs">Opportunity state</Label>
+              <Select value={opportunityState} onValueChange={setOpportunityState}>
+                <SelectTrigger className="bg-white" data-testid="edit-visit-opportunity"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["Blocked", "Stuck", "Advancing", "Unknown"].map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div>
+            <Label className="mb-1 block text-xs">Next step</Label>
+            <Input value={nextStep} onChange={(e) => setNextStep(e.target.value)} className="bg-white" data-testid="edit-visit-next-step" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving} data-testid="edit-visit-save" style={{ background: "var(--brand-primary)", color: "white" }}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditMeetingDialog({ meeting, onClose, onSaved }) {
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [subject, setSubject] = useState("");
+  const [durationMinutes, setDurationMinutes] = useState(30);
+  const [status, setStatus] = useState("Scheduled");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!meeting) return;
+    setScheduledAt(toDateTimeLocalValue(meeting.scheduled_at));
+    setSubject(meeting.subject || "");
+    setDurationMinutes(meeting.duration_minutes || 30);
+    setStatus(meeting.status || "Scheduled");
+  }, [meeting]);
+
+  if (!meeting) return null;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/meetings/${meeting.id}`, {
+        scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
+        subject: subject || null,
+        duration_minutes: Number(durationMinutes) || 30,
+        status,
+      });
+      toast.success("Meeting updated");
+      onSaved();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to update meeting");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!meeting} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent data-testid="edit-meeting-dialog">
+        <DialogHeader><DialogTitle>Edit meeting</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label className="mb-1 block text-xs">Subject</Label>
+            <Input value={subject} onChange={(e) => setSubject(e.target.value)} className="bg-white" data-testid="edit-meeting-subject" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="mb-1 block text-xs">Date & time</Label>
+              <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} className="bg-white" data-testid="edit-meeting-datetime" />
+            </div>
+            <div>
+              <Label className="mb-1 block text-xs">Duration (min)</Label>
+              <Input type="number" min="5" step="5" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)} className="bg-white" data-testid="edit-meeting-duration" />
+            </div>
+          </div>
+          <div>
+            <Label className="mb-1 block text-xs">Status</Label>
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger className="bg-white" data-testid="edit-meeting-status"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {["Scheduled", "Completed", "Cancelled"].map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving} data-testid="edit-meeting-save" style={{ background: "var(--brand-primary)", color: "white" }}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -359,6 +359,18 @@ class VisitCreate(BaseModel):
     meeting_id: Optional[str] = None  # if logged from a booked meeting, marks it Completed
 
 
+class VisitUpdate(BaseModel):
+    visit_date: Optional[str] = None
+    visit_type: Optional[VisitType] = None
+    track_type: Optional[TrackType] = None
+    free_text_note: Optional[str] = None
+    confirmed_topics: Optional[List[str]] = None
+    confirmed_barriers: Optional[List[str]] = None
+    sentiment: Optional[Sentiment] = None
+    opportunity_state: Optional[OpportunityState] = None
+    next_step: Optional[str] = None
+
+
 class Visit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=_uuid)
