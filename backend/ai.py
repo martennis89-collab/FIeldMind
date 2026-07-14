@@ -87,6 +87,11 @@ mishearing), return that doctor's EXACT name string from the provided list in "d
 If no list is provided, no doctor is named, or you are not confident, return null. NEVER invent
 a name that isn't in the provided list.
 
+DOCTOR_NAME_HEARD — separately from doctor_match, always report the doctor's name as it was
+actually said/written in the note (your best-effort transcription of the name itself), even if
+it did NOT match anyone in the provided list — this lets the caller offer to add a new doctor.
+Null only if the note genuinely doesn't name any doctor at all.
+
 TRACK_TYPES — detect which product tracks the visit covered. Return a list with any of: "ITERO" (scanner/iTero/digital scan), "INVISALIGN" (aligners/clear aligners/Invisalign-specific). Empty list if neither — defaults to BOTH downstream.
 
 ITERO_ACTIONS — scanner-only execution signals from the note. Booleans default false; only flip true if explicitly mentioned. Dates ISO YYYY-MM-DD. Fields:
@@ -122,6 +127,7 @@ OUTPUT FORMAT — ALWAYS return ONLY a single JSON object, no prose, no markdown
   "market_signals": [],
   "privacy_warnings": [],
   "doctor_match": null,
+  "doctor_name_heard": null,
   "track_types": [],
   "itero_actions": {
     "demo_discussed": false, "demo_booked": false, "demo_booked_date": null,
@@ -198,6 +204,7 @@ def _empty_result(reason: str = "") -> dict:
         },
         "doctor_id": None,
         "doctor_hint": None,
+        "doctor_name_heard": None,
     }
 
 
@@ -308,6 +315,9 @@ async def analyze_note(note: str, session_id: str, doctors: Optional[list] = Non
             if match:
                 result["doctor_id"] = match["id"]
                 result["doctor_hint"] = match["doctor_name"]
+        # Raw name as heard, independent of whether it matched the roster — lets the
+        # caller offer to create a new doctor when it's a genuine non-match.
+        result["doctor_name_heard"] = (data.get("doctor_name_heard") or "").strip()[:120] or None
         return result
     except Exception as e:
         logger.exception("AI analyze_note failed: %s", e)
