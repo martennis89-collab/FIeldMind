@@ -189,8 +189,17 @@ async def telegram_webhook(request: Request):
     else:
         track_type = "BOTH"
 
+    mentioned_date = result.get("visit_date_mentioned")
     visit_body = VisitCreate(
         doctor_id=doctor_id,
+        # If the TM mentioned when the visit actually happened (e.g. "last week
+        # on the 9th of July"), use that instead of defaulting to right now —
+        # a Telegram check-in is often dictated after the fact. Every other
+        # visit_date in this codebase is a full timezone-aware ISO datetime
+        # (_now_iso(), the frontend's toISOString()), so a bare "YYYY-MM-DD"
+        # here would break naive/aware datetime math downstream — give it a
+        # noon-UTC time component to match.
+        visit_date=f"{mentioned_date}T12:00:00+00:00" if mentioned_date else None,
         visit_type="In-person visit",
         track_type=track_type,
         free_text_note=note_text,
@@ -216,5 +225,6 @@ async def telegram_webhook(request: Request):
     n_promises = len(saved.get("created_tasks") or [])
     promise_line = f" · {n_promises} follow-up{'s' if n_promises != 1 else ''} tracked" if n_promises else ""
     new_doctor_line = " (added as a new doctor)" if newly_created_doctor_name else ""
-    await _telegram_send(f"Logged: {doctor_name}{new_doctor_line} — {result.get('sentiment', 'Neutral')} sentiment{promise_line}. ✓")
+    date_line = f" · dated {mentioned_date}" if mentioned_date else ""
+    await _telegram_send(f"Logged: {doctor_name}{new_doctor_line} — {result.get('sentiment', 'Neutral')} sentiment{promise_line}{date_line}. ✓")
     return {"ok": True}

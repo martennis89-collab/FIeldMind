@@ -3,6 +3,7 @@ import os
 import json
 import re
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 import anthropic
 
@@ -76,8 +77,16 @@ OPPORTUNITY_STATE (one of): "Blocked", "Stuck", "Advancing", "Unknown"
 PROMISES: actionable follow-ups the TM committed to (e.g., "send certification info", "book iTero demo", "arrange P2P", "send TPS info", "invite to event"). Each promise needs:
 - task_title (short imperative, e.g. "Send certification info")
 - task_description (1 sentence context)
-- suggested_due_date (ISO date YYYY-MM-DD ONLY if the note itself specifies or implies a date, e.g. "next Monday" or "in two weeks" — you don't know today's date, so never guess one; otherwise return null and the caller will apply a sensible default)
+- suggested_due_date (ISO date YYYY-MM-DD ONLY if the note itself specifies or implies a date, e.g. "next Monday" or "in two weeks" — resolve relative to the reference date given below; otherwise return null and the caller will apply a sensible default)
 - priority: "Low" | "Medium" | "High"
+
+VISIT_DATE_MENTIONED — TMs sometimes dictate a note describing a visit that happened
+in the past, not right now (e.g. "Last week on the 9th of July I met with Dr. Ivanov...",
+"Yesterday I saw...", "This past Monday..."). If the note states or clearly implies WHEN
+THE VISIT ITSELF took place, resolve it to an ISO date (YYYY-MM-DD) using the reference
+date given below — never guess a date without that reference. If the note doesn't mention
+when the visit happened at all (most notes — assume it's about a visit happening now),
+return null. This is the visit date itself, not a promise due date.
 
 MARKET_SIGNALS: short string observations relevant to market intelligence (e.g., "Doctor cited competitor X in city Y", "Affordability concern raised by Active segment").
 
@@ -120,6 +129,7 @@ OUTPUT FORMAT — ALWAYS return ONLY a single JSON object, no prose, no markdown
   "barriers": ["..."],
   "sentiment": "Neutral",
   "opportunity_state": "Unknown",
+  "visit_date_mentioned": null,
   "promises_detected": [
     {"task_title": "", "task_description": "", "suggested_due_date": "YYYY-MM-DD", "priority": "Medium"}
   ],
@@ -180,6 +190,7 @@ def _empty_result(reason: str = "") -> dict:
         "barriers": [],
         "sentiment": "Neutral",
         "opportunity_state": "Unknown",
+        "visit_date_mentioned": None,
         "promises_detected": [],
         "suggested_next_action": "",
         "market_signals": [],
@@ -227,11 +238,12 @@ async def analyze_note(note: str, session_id: str, doctors: Optional[list] = Non
             names_block = "\n\nDoctors available (match one if the note clearly names them):\n- " + "\n- ".join(
                 d["doctor_name"] for d in doctors[:300] if d.get("doctor_name")
             )
+        today_str = datetime.now(timezone.utc).date().isoformat()
         response = await _client.messages.create(
             model=MODEL_NAME,
             max_tokens=4096,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": f"Visit note:\n\"\"\"\n{note}\n\"\"\"{names_block}\n\nReturn the JSON object now."}],
+            messages=[{"role": "user", "content": f"Reference date (today): {today_str}\n\nVisit note:\n\"\"\"\n{note}\n\"\"\"{names_block}\n\nReturn the JSON object now."}],
         )
         raw = response.content[0].text if response.content else ""
         data = _safe_json(raw)
@@ -253,6 +265,9 @@ async def analyze_note(note: str, session_id: str, doctors: Optional[list] = Non
         if op not in ["Blocked", "Stuck", "Advancing", "Unknown"]:
             op = "Unknown"
         result["opportunity_state"] = op
+        vdm = data.get("visit_date_mentioned")
+        if vdm and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(vdm)) and str(vdm) <= today_str:
+            result["visit_date_mentioned"] = str(vdm)
         promises = data.get("promises_detected") or []
         norm_promises = []
         for p in promises[:6]:

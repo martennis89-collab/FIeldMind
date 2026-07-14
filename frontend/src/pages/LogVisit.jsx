@@ -102,6 +102,12 @@ export default function LogVisit() {
         setDoctorAutoMatched(true);
         setDoctorAutoCreated(!!data.doctor_auto_created);
       }
+      // If the note mentions when the visit actually happened (e.g. "last week
+      // on the 9th of July"), use that instead of leaving today's default —
+      // matches the same detection used by the Telegram check-in.
+      if (data.visit_date_mentioned) {
+        setVisitDate(data.visit_date_mentioned);
+      }
       setTopics(data.topics || []);
       setBarriers(data.barriers || []);
       setSentiment(data.sentiment || "Neutral");
