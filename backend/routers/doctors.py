@@ -136,7 +136,13 @@ async def list_doctors(
     q: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    base = await _doctor_query_for(user)
+    if user["role"] == "SeniorTM" and not assigned_tm_id:
+        # A SeniorTM's own roster view defaults to just their personally-assigned
+        # doctors, not their whole sub-team's — pass ?assigned_tm_id=<report's id>
+        # to look at a specific direct report's roster instead.
+        base = _apply_company_scope({"assigned_tm_id": user["id"]}, user)
+    else:
+        base = await _doctor_query_for(user)
     if segment:
         base["segment"] = segment
     if city:
@@ -442,8 +448,25 @@ async def update_doctor(doctor_id: str, body: DoctorUpdate, user=Depends(require
         update = body.model_dump(exclude_none=True)
     update["updated_at"] = _now_iso()
     await db.doctors.update_one({"id": doctor_id}, {"$set": update})
+
+    reassign_counts = None
+    if "assigned_tm_id" in update and update["assigned_tm_id"] != existing.get("assigned_tm_id"):
+        # Reassigning the doctor should carry their whole history along —
+        # otherwise promises/meetings/visits stay orphaned under the old TM
+        # and never show up under the new one.
+        cascade = {"tm_user_id": update["assigned_tm_id"]}
+        if "team_id" in update:
+            cascade["team_id"] = update["team_id"]
+        results = await asyncio.gather(
+            db.tasks.update_many({"doctor_id": doctor_id}, {"$set": cascade}),
+            db.meetings.update_many({"doctor_id": doctor_id}, {"$set": cascade}),
+            db.visits.update_many({"doctor_id": doctor_id}, {"$set": cascade}),
+        )
+        reassign_counts = {"tasks": results[0].modified_count, "meetings": results[1].modified_count, "visits": results[2].modified_count}
+
     new = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
-    await _audit(user, "update", "doctor", doctor_id, prev=existing, new=new)
+    audit_new = dict(new, reassign_counts=reassign_counts) if reassign_counts else new
+    await _audit(user, "update", "doctor", doctor_id, prev=existing, new=audit_new)
     return await _enrich_doctor(new)
 
 @api.delete("/doctors/{doctor_id}")
