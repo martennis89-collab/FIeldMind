@@ -475,6 +475,14 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
     styles.add(ParagraphStyle(name="Body", parent=styles["Normal"], fontSize=10, leading=14))
     styles.add(ParagraphStyle(name="Muted", parent=styles["Normal"], fontSize=9,
                               textColor=colors.HexColor("#5A6B62"), leading=12))
+    styles.add(ParagraphStyle(name="TableCell", parent=styles["Normal"], fontSize=8.5,
+                              textColor=colors.HexColor("#274035"), leading=11))
+
+    def _pdf_safe(text: str) -> str:
+        """reportlab's default font can't render most emoji (shows as tofu boxes) —
+        swap the ones we actually generate for plain-text equivalents. Only used on
+        the PDF path; the same strings still render fine as real emoji in the app."""
+        return (text or "").replace("⚠️", "!").replace("⚠", "!")
 
     flow = []
     flow.append(Paragraph("FIELDMIND · WEEKLY FIELD REPORT", styles["Eyebrow"]))
@@ -529,16 +537,23 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
 
     if c.get("key_insights"):
         flow.append(Paragraph("Key insights", styles["H2"]))
-        items = [ListItem(Paragraph(line, styles["Body"]), leftIndent=8) for line in c["key_insights"]]
+        items = [ListItem(Paragraph(_pdf_safe(line), styles["Body"]), leftIndent=8) for line in c["key_insights"]]
         flow.append(ListFlowable(items, bulletType="bullet", start="•"))
 
     if c.get("doctors_needing_attention"):
         flow.append(Paragraph("Doctors needing attention next week", styles["H2"]))
         rows = [["Doctor", "Segment", "Reason", "Score"]]
         for d in c["doctors_needing_attention"]:
-            rows.append([d.get("doctor_name", ""), d.get("segment", ""),
-                         d.get("reason", ""), str(d.get("score", ""))])
-        att = Table(rows, colWidths=[45 * mm, 25 * mm, 70 * mm, 15 * mm])
+            # Plain strings in a reportlab Table never wrap — a long "Reason" just
+            # overflows and overlaps the Score column next to it. Wrap the
+            # free-text cells in Paragraphs so they wrap within the column instead.
+            rows.append([
+                Paragraph(d.get("doctor_name", ""), styles["TableCell"]),
+                Paragraph(d.get("segment", ""), styles["TableCell"]),
+                Paragraph(d.get("reason", ""), styles["TableCell"]),
+                str(d.get("score", "")),
+            ])
+        att = Table(rows, colWidths=[35 * mm, 22 * mm, 78 * mm, 15 * mm])
         att.setStyle(TableStyle([
             ("FONTSIZE", (0, 0), (-1, -1), 8.5),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#274035")),
@@ -560,8 +575,8 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
         rows = [["Doctor", "Clinic", "Scheduled", "Status"]]
         for dm in demos_booked_list:
             rows.append([
-                dm.get("doctor_name", ""),
-                dm.get("clinic_name", "") or "",
+                Paragraph(dm.get("doctor_name", ""), styles["TableCell"]),
+                Paragraph(dm.get("clinic_name", "") or "", styles["TableCell"]),
                 (dm.get("scheduled_at", "") or "")[:16].replace("T", " "),
                 "Completed" if dm.get("is_completed") else (dm.get("status") or "Scheduled"),
             ])
@@ -571,8 +586,8 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
             if dm.get("meeting_id") in booked_ids:
                 continue
             rows.append([
-                dm.get("doctor_name", ""),
-                dm.get("clinic_name", "") or "",
+                Paragraph(dm.get("doctor_name", ""), styles["TableCell"]),
+                Paragraph(dm.get("clinic_name", "") or "", styles["TableCell"]),
                 (dm.get("scheduled_at", "") or "")[:16].replace("T", " "),
                 "Completed",
             ])
@@ -638,14 +653,16 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
                 flow.append(elem)
             flow.append(Spacer(1, 6))
 
+    from xml.sax.saxutils import escape as _xml_escape
+
     notes = (c.get("notes_from_tm") or r.get("notes_from_tm") or "").strip()
     if notes:
         flow.append(Paragraph("TM notes", styles["H2"]))
-        flow.append(Paragraph(notes.replace("\n", "<br/>"), styles["Body"]))
+        flow.append(Paragraph(_xml_escape(notes).replace("\n", "<br/>"), styles["Body"]))
 
     if r.get("manager_comment"):
         flow.append(Paragraph("Manager comment", styles["H2"]))
-        flow.append(Paragraph(r["manager_comment"].replace("\n", "<br/>"), styles["Body"]))
+        flow.append(Paragraph(_xml_escape(r["manager_comment"]).replace("\n", "<br/>"), styles["Body"]))
 
     doc.build(flow)
     pdf_bytes = buf.getvalue()
