@@ -104,6 +104,7 @@ async def list_doctors(
     cadence: Optional[str] = None,
     sentiment: Optional[str] = None,
     assigned_tm_id: Optional[str] = None,
+    growth_program: Optional[bool] = None,
     q: Optional[str] = None,
     user=Depends(get_current_user),
 ):
@@ -114,6 +115,8 @@ async def list_doctors(
         base["city"] = city
     if assigned_tm_id and user["role"] in ("Admin", "Manager", "SeniorTM"):
         base["assigned_tm_id"] = assigned_tm_id
+    if growth_program is not None:
+        base["in_growth_program"] = growth_program
     if q:
         base["$or"] = [
             {"doctor_name": {"$regex": q, "$options": "i"}},
@@ -390,8 +393,8 @@ async def update_doctor(doctor_id: str, body: DoctorUpdate, user=Depends(require
     if not existing or not await _can_access_doctor(user, existing):
         raise HTTPException(status_code=404, detail="Doctor not found")
     if user["role"] in ("TM", "SeniorTM"):
-        # TM/SeniorTM may only update general_notes / status
-        allowed = {k: v for k, v in body.model_dump(exclude_none=True).items() if k in ("general_notes", "status")}
+        # TM/SeniorTM may only update general_notes / status / growth-programme flag
+        allowed = {k: v for k, v in body.model_dump(exclude_none=True).items() if k in ("general_notes", "status", "in_growth_program")}
         update = allowed
     else:
         update = body.model_dump(exclude_none=True)

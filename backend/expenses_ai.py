@@ -1,20 +1,19 @@
-"""Receipt OCR extraction using Claude Sonnet 4.5 vision via Emergent Universal Key."""
+"""Receipt OCR extraction using Claude Sonnet 4.5 vision via the Anthropic API directly."""
 import base64
 import json
 import logging
 import os
 import re
-import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+import anthropic
 
 logger = logging.getLogger(__name__)
 
-EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-MODEL_PROVIDER = "anthropic"
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MODEL_NAME = "claude-sonnet-4-5-20250929"
+_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
 SYSTEM_PROMPT = """You are an AI receipt parser for a field-rep expense tracking app. Given a photograph of a receipt, extract ONLY these fields and return STRICT JSON:
 
@@ -84,27 +83,27 @@ async def extract_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> 
         "field_confidence": {"amount": 0, "expense_date": 0, "vendor": 0, "category_hint": 0},
         "notes": None,
     }
-    if not EMERGENT_KEY:
-        logger.warning("EMERGENT_LLM_KEY missing; skipping receipt OCR")
+    if not _client:
+        logger.warning("ANTHROPIC_API_KEY missing; skipping receipt OCR")
         return default
     if not image_bytes:
         return default
 
     b64 = base64.b64encode(image_bytes).decode("ascii")
     try:
-        chat = (
-            LlmChat(
-                api_key=EMERGENT_KEY,
-                session_id=f"receipt-ocr-{uuid.uuid4()}",
-                system_message=SYSTEM_PROMPT,
-            )
-            .with_model(MODEL_PROVIDER, MODEL_NAME)
+        response = await _client.messages.create(
+            model=MODEL_NAME,
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extract the receipt fields and return JSON only."},
+                    {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": b64}},
+                ],
+            }],
         )
-        msg = UserMessage(
-            text="Extract the receipt fields and return JSON only.",
-            file_contents=[ImageContent(image_base64=b64)],
-        )
-        raw = await chat.send_message(msg)
+        raw = response.content[0].text if response.content else ""
         parsed = _safe_parse_json(raw)
         if not parsed:
             logger.warning("Receipt OCR: could not parse JSON response: %s", raw[:200] if raw else "<empty>")

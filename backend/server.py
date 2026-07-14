@@ -231,10 +231,14 @@ async def _ensure_default_company_and_backfill() -> dict:
             "enforce_isolation": ENFORCE_COMPANY_ISOLATION}
 
 
-def _cadence_status(days_since: Optional[int], segment: str) -> str:
+def _cadence_status(days_since: Optional[int], segment: str, in_growth_program: bool = False) -> str:
     if days_since is None:
         return "Critical"  # never visited
     target = DEFAULT_CADENCE.get(segment, 45)
+    if in_growth_program:
+        # Growth-programme doctors must be seen at least once a month, even if
+        # their segment's normal cadence would otherwise allow a longer gap.
+        target = min(target, 30)
     if days_since <= target:
         return "Good"
     if days_since <= target * 1.2:
@@ -251,6 +255,8 @@ def _priority_score(doctor, last_visit_date, days_since, open_promises, overdue_
     score += {"New": 8, "Lapsed": 12, "Occasional": 5, "Active": 15, "Engaged": 25, "Expert": 35}.get(seg, 10)
     # cadence
     target = DEFAULT_CADENCE.get(seg, 45)
+    if doctor.get("in_growth_program"):
+        target = min(target, 30)
     if days_since is None:
         score += 25
     else:
@@ -350,7 +356,7 @@ async def _enrich_doctor(doctor: dict) -> dict:
         elif recent_score < older_score - 0.4:
             sentiment_trend = "declining"
 
-    cadence = _cadence_status(days_since, doctor.get("segment", "Occasional"))
+    cadence = _cadence_status(days_since, doctor.get("segment", "Occasional"), doctor.get("in_growth_program", False))
     score = _priority_score(
         doctor, last_visit_date, days_since, open_promises, overdue_promises,
         current_sentiment, last_visit.get("opportunity_state") if last_visit else None,
@@ -376,7 +382,11 @@ async def _enrich_doctor(doctor: dict) -> dict:
         "top_topics": top_topics,
         "top_barriers": top_barriers,
         "cadence_status": cadence,
-        "cadence_target_days": DEFAULT_CADENCE.get(doctor.get("segment", "Occasional"), 45),
+        "cadence_target_days": (
+            min(DEFAULT_CADENCE.get(doctor.get("segment", "Occasional"), 45), 30)
+            if doctor.get("in_growth_program") else
+            DEFAULT_CADENCE.get(doctor.get("segment", "Occasional"), 45)
+        ),
         "visit_priority_score": score,
         "visit_priority_label": _priority_label(score),
         "suggested_next_action": last_visit.get("next_step") if last_visit else None,

@@ -1,0 +1,17 @@
+# Never let real secrets end up inside an image layer
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+tests/
+demo/
+.git/
+.gitignore
+*.md

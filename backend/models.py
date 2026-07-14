@@ -183,6 +183,7 @@ class DoctorCreate(BaseModel):
     team_id: Optional[str] = None
     status: DoctorStatus = "Active"
     general_notes: Optional[str] = None
+    in_growth_program: bool = False
 
 
 class DoctorUpdate(BaseModel):
@@ -196,6 +197,7 @@ class DoctorUpdate(BaseModel):
     team_id: Optional[str] = None
     status: Optional[DoctorStatus] = None
     general_notes: Optional[str] = None
+    in_growth_program: Optional[bool] = None
 
 
 IteroStage = Literal[
@@ -237,6 +239,7 @@ class Doctor(BaseModel):
     team_id: Optional[str] = None
     status: DoctorStatus = "Active"
     general_notes: Optional[str] = None
+    in_growth_program: bool = False
     itero_stage: IteroStage = "None"
     itero_stage_updated_at: Optional[str] = None
     itero_stage_updated_by: Optional[str] = None

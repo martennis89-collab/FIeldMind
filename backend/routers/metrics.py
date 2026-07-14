@@ -50,6 +50,8 @@ async def _resolve_target_tm(target_id: str, user) -> dict:
     role = user.get("role")
     if role == "TM" and target["id"] != user["id"]:
         raise HTTPException(status_code=403, detail="TM may only read own metrics")
+    if role == "SeniorTM" and target["id"] != user["id"] and target.get("manager_user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="SeniorTM limited to self + direct reports")
     if role == "Manager" and target.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Manager limited to team")
     return target
@@ -98,8 +100,8 @@ async def tm_fei(tm_id: str, window_days: Optional[int] = None, user=Depends(get
 # ---------- Persisted snapshots ----------
 @api.post("/metrics/snapshots/run")
 async def run_snapshots(
-    tm_id: Optional[str] = Query(None, description="If omitted: snapshot every TM in caller's company (Manager: only their team)."),
-    user=Depends(require_roles("Manager", "Admin", "Owner")),
+    tm_id: Optional[str] = Query(None, description="If omitted: snapshot every TM in caller's scope (Manager: their team; SeniorTM: self + direct reports)."),
+    user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner")),
 ):
     """Persist a fresh snapshot for each metric (per TM) into `db.metric_snapshots`.
     Idempotent within the same minute (idempotency key = slug:scope_id:period_end[:16]).
@@ -112,8 +114,12 @@ async def run_snapshots(
         q["role"] = "TM"
         if user.get("role") == "Manager":
             q["team_id"] = user.get("team_id")
+        elif user.get("role") == "SeniorTM":
+            q["manager_user_id"] = user["id"]
         async for u in db.users.find(q, {"_id": 0, "password_hash": 0}):
             targets.append(u)
+        if user.get("role") == "SeniorTM":
+            targets.append(await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0}))
 
     created = 0
     for t in targets:
@@ -144,6 +150,10 @@ async def list_snapshots(
         q["scope_id"] = tm_id
     elif user.get("role") == "TM":
         q["scope_id"] = user["id"]
+    elif user.get("role") == "SeniorTM":
+        # Self + direct-report TMs only (not the whole team).
+        tm_ids = await db.users.distinct("id", {"manager_user_id": user["id"], "role": "TM"})
+        q["scope_id"] = {"$in": [user["id"]] + tm_ids}
     elif user.get("role") == "Manager":
         # Only show snapshots for TMs in this manager's team
         tm_ids = await db.users.distinct("id", {"team_id": user.get("team_id"), "role": "TM"})

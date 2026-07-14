@@ -102,6 +102,8 @@ frontend/node_modules/.cache/default-development/21.pack
 .env
 .env.*
 *.env
+!.env.example
+!**/.env.example
 credentials.json
 *.key
 .credentials

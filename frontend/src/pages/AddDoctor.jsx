@@ -6,6 +6,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
+import { Switch } from "../components/ui/switch";
 import { toast } from "sonner";
 import { ChevronLeft, Save, Loader2, UserPlus } from "lucide-react";
 
@@ -22,6 +23,7 @@ export default function AddDoctor() {
   const [doctorType, setDoctorType] = useState("GP");
   const [segment, setSegment] = useState("Occasional");
   const [generalNotes, setGeneralNotes] = useState("");
+  const [inGrowthProgram, setInGrowthProgram] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const save = async (andLogVisit = false) => {
@@ -39,6 +41,7 @@ export default function AddDoctor() {
         doctor_type: doctorType,
         segment,
         general_notes: generalNotes.trim() || null,
+        in_growth_program: inGrowthProgram,
       });
       toast.success(`Added ${data.doctor_name}`);
       if (andLogVisit) {
@@ -122,6 +125,13 @@ export default function AddDoctor() {
               </SelectContent>
             </Select>
           </div>
+        </div>
+        <div className="flex items-center justify-between rounded-md border px-3 py-2.5" style={{ borderColor: "var(--border-default)" }}>
+          <div>
+            <Label className="block">Growth programme</Label>
+            <div className="text-xs" style={{ color: "var(--text-muted)" }}>Requires at least a monthly visit</div>
+          </div>
+          <Switch checked={inGrowthProgram} onCheckedChange={setInGrowthProgram} data-testid="doctor-growth-program-switch" />
         </div>
         <div>
           <Label className="mb-1 block">General notes</Label>

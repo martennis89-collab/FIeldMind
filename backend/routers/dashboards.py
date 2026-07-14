@@ -107,6 +107,24 @@ def _users_scope_query(user, sr_ids: Optional[list[str]] = None) -> dict:
     return {"role": {"$in": ["TM", "SeniorTM"]}}
 
 
+# Team standard: every TM should see at least this many distinct doctors per working day.
+DAILY_DOCTOR_TARGET = 2
+
+
+def _count_working_days(start_date: date, end_date: date) -> int:
+    """Count Mon-Fri days in [start_date, end_date], inclusive."""
+    days = (end_date - start_date).days + 1
+    if days <= 0:
+        return 0
+    full_weeks, remainder = divmod(days, 7)
+    count = full_weeks * 5
+    for i in range(remainder):
+        d = start_date + timedelta(days=full_weeks * 7 + i)
+        if d.weekday() < 5:
+            count += 1
+    return count
+
+
 @api.get("/dashboard/tm")
 async def tm_dashboard(user=Depends(get_current_user)):
     if user["role"] not in ("TM", "Admin", "Manager", "SeniorTM"):
@@ -144,6 +162,12 @@ async def tm_dashboard(user=Depends(get_current_user)):
         **visit_q,
         "visit_date": {"$gte": week_start, "$lte": week_end_inclusive + "T23:59:59"},
     })
+    # Distinct doctors visited today, vs the team's daily target.
+    tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+    doctors_visited_today = await db.visits.distinct("doctor_id", {
+        **visit_q,
+        "visit_date": {"$gte": today, "$lt": tomorrow},
+    })
     # Meetings — open (scheduled, not yet completed) and completed this week
     open_meetings = await db.meetings.count_documents({
         **meeting_q,
@@ -171,6 +195,8 @@ async def tm_dashboard(user=Depends(get_current_user)):
             "doctors_total": len(enriched),
             "open_meetings": open_meetings,
             "completed_meetings_this_week": completed_meetings_week,
+            "doctors_visited_today": len(doctors_visited_today),
+            "daily_doctor_target": DAILY_DOCTOR_TARGET,
         },
         "top_priorities": priorities,
         "overdue_doctors": overdue_doctors,
@@ -180,7 +206,10 @@ async def tm_dashboard(user=Depends(get_current_user)):
 async def manager_dashboard(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
-    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(1000)
+    # NOTE: doctors are scoped by `assigned_tm_id`/`team_id`, not `tm_user_id` like
+    # visits/tasks/meetings — team_q (built by _apply_role_scope) doesn't apply here.
+    docs_q = await _doctor_query_for(user)
+    docs = await db.doctors.find(docs_q, {"_id": 0}).to_list(1000)
     visits = await db.visits.find(team_q, {"_id": 0}).sort("visit_date", -1).to_list(2000)
     tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(2000)
     users = await db.users.find({**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": {"$in": ["TM", "SeniorTM"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
@@ -295,7 +324,7 @@ async def manager_performance(user=Depends(require_roles("Manager", "SeniorTM", 
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
-    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
     visits = await db.visits.find(team_q, {"_id": 0}).to_list(5000)
     tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(5000)
 
@@ -305,6 +334,9 @@ async def manager_performance(user=Depends(require_roles("Manager", "SeniorTM", 
     prev_month_start = (now - timedelta(days=60)).isoformat()
 
     sentiment_score = {"Very Negative": 1, "Negative": 2, "Neutral": 3, "Positive": 4, "Very Positive": 5}
+    # Team standard: DAILY_DOCTOR_TARGET distinct doctors per working day, over the
+    # same 30-day lookback window used for visits_month.
+    working_days_30 = _count_working_days(now.date() - timedelta(days=30), now.date())
 
     rows = []
     for tm in tms:
@@ -315,11 +347,8 @@ async def manager_performance(user=Depends(require_roles("Manager", "SeniorTM", 
         my_tasks = [t for t in tasks if t.get("tm_user_id") == tm["id"]]
         my_tasks_30 = [t for t in my_tasks if t.get("created_at", "") >= month_start]
 
-        # target ≈ Σ 30/cadence(seg) over assigned doctors
-        target = 0.0
-        for d in my_docs:
-            target += 30.0 / max(DEFAULT_CADENCE.get(d.get("segment", "Occasional"), 45), 1)
-        target_int = max(int(round(target)), 1)
+        # Team standard: DAILY_DOCTOR_TARGET distinct doctors per working day.
+        target_int = max(working_days_30 * DAILY_DOCTOR_TARGET, 1)
 
         avg_per_day = round(len(my_visits_30) / 30.0, 2)
         overdue_count = sum(1 for t in my_tasks if t.get("status") in ("Open", "Overdue") and t.get("due_date") and t["due_date"] < today)
@@ -424,7 +453,7 @@ async def manager_performance(user=Depends(require_roles("Manager", "SeniorTM", 
 async def manager_commercial(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
-    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
     enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
     total = len(enriched) or 1
 
@@ -520,7 +549,7 @@ async def manager_commercial(user=Depends(require_roles("Manager", "SeniorTM", "
 async def manager_interventions(stale_proposal_days: int = 7, user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
-    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
     enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
     user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
@@ -623,7 +652,7 @@ async def manager_interventions(stale_proposal_days: int = 7, user=Depends(requi
 async def manager_itero(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
-    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
     enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
 
     discussed = sum(1 for d in enriched if d["itero_state"]["demo_discussed"])
@@ -689,7 +718,7 @@ async def manager_itero(user=Depends(require_roles("Manager", "SeniorTM", "Admin
 async def manager_invisalign(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
-    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
     enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
     total = len(enriched) or 1
 
@@ -767,7 +796,7 @@ async def manager_invisalign(user=Depends(require_roles("Manager", "SeniorTM", "
 async def manager_cross_sell(user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
-    docs = await db.doctors.find(team_q, {"_id": 0}).to_list(2000)
+    docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
     enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
 
     inv_strong_no_itero = []

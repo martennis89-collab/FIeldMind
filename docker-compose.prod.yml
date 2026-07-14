@@ -1,0 +1,59 @@
+# Production/self-hosted deploy. Run with:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# This assumes you're deploying everything (mongo + backend + frontend)
+# together on one Docker host (a VPS/VM). If you'd rather split the
+# frontend onto Vercel and the backend onto Render/Railway/Fly instead,
+# only the "backend" and "mongo" services here are relevant to you —
+# skip the "frontend" service and see the Vercel notes separately.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: fieldmind-mongo
+    restart: always
+    volumes:
+      - mongo_data:/data/db
+    # Not published to the host on purpose — only the backend container
+    # needs to reach it, over the internal Docker network.
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fieldmind-backend
+    restart: always
+    env_file:
+      - ./backend/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      # Lock this down to your real frontend origin in production —
+      # do not leave this as "*" once this is internet-facing.
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://your-domain.example}
+    depends_on:
+      - mongo
+    ports:
+      - "${BACKEND_PORT:-8001}:8001"
+    # No source volume mount, no --reload — runs the image as built.
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        # Baked into the JS bundle at build time. Must be the PUBLIC URL
+        # your backend will be reachable at once deployed — set this
+        # before building, e.g.:
+        #   REACT_APP_BACKEND_URL=https://api.your-domain.example \
+        #     docker compose -f docker-compose.prod.yml build frontend
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:?set REACT_APP_BACKEND_URL before building}
+    container_name: fieldmind-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+
+volumes:
+  mongo_data:

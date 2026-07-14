@@ -4,7 +4,7 @@ import api from "../lib/api";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
-import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2, Sprout } from "lucide-react";
 import { toast } from "sonner";
 
 function formatDate(s) {
@@ -54,6 +54,17 @@ export default function DoctorProfile() {
     load();
   };
 
+  const toggleGrowthProgram = async () => {
+    const next = !doctor.in_growth_program;
+    try {
+      await api.put(`/doctors/${doctor.id}`, { in_growth_program: next });
+      setDoctor((prev) => ({ ...prev, in_growth_program: next }));
+      toast.success(next ? "Added to growth programme — monthly visit target applied" : "Removed from growth programme");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to update");
+    }
+  };
+
   if (loading || !doctor) return <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>;
 
   const openTasks = tasks.filter((t) => t.status === "Open" || t.status === "Overdue");
@@ -87,6 +98,11 @@ export default function DoctorProfile() {
                   </span>
                 </Link>
               )}
+              {doctor.in_growth_program && (
+                <span className="pill pill-success" data-testid="growth-program-pill">
+                  <Sprout className="w-3 h-3" /> Growth programme
+                </span>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -116,6 +132,18 @@ export default function DoctorProfile() {
             >
               <ScanLine className="w-4 h-4 mr-2" /> Book demo
             </Button>
+            <Button
+              onClick={toggleGrowthProgram}
+              data-testid="toggle-growth-program-btn"
+              variant="outline"
+              className="font-medium"
+              style={{
+                borderColor: doctor.in_growth_program ? "var(--status-success)" : "var(--border-default)",
+                color: doctor.in_growth_program ? "var(--status-success)" : "var(--text-secondary)",
+              }}
+            >
+              <Sprout className="w-4 h-4 mr-2" /> {doctor.in_growth_program ? "In growth programme" : "Add to growth programme"}
+            </Button>
           </div>
         </div>
 
@@ -124,7 +152,7 @@ export default function DoctorProfile() {
           <Stat label="Q visits" value={doctor.visits_this_quarter} sub="last 90 days" />
           <Stat label="Open promises" value={doctor.open_promises} />
           <Stat label="Overdue" value={doctor.overdue_promises} kind={doctor.overdue_promises > 0 ? "danger" : "muted"} />
-          <Stat label="Cadence target" value={`${doctor.cadence_target_days}d`} sub={doctor.segment} />
+          <Stat label="Cadence target" value={`${doctor.cadence_target_days}d`} sub={doctor.in_growth_program ? `${doctor.segment} · growth programme` : doctor.segment} />
         </div>
       </div>
 

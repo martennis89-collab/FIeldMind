@@ -2,14 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Defensive: hide Emergent badge if anything tries to inject it later. */
-#emergent-badge,
-a[href*="emergent.sh"][id*="badge"] {
-  display: none !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
 
 :root {

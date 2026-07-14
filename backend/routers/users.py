@@ -180,7 +180,7 @@ async def list_users(user=Depends(require_roles("Admin", "Manager", "SeniorTM"))
     return users
 
 @api.post("/users", response_model=UserPublic)
-async def create_user(body: UserCreate, request: Request, user=Depends(require_roles("Admin", "Manager"))):
+async def create_user(body: UserCreate, request: Request, user=Depends(require_roles("Admin", "Manager", "SeniorTM"))):
     existing = await db.users.find_one({"email": body.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
@@ -194,6 +194,15 @@ async def create_user(body: UserCreate, request: Request, user=Depends(require_r
         if body.team_id and body.team_id != user.get("team_id"):
             raise HTTPException(status_code=403, detail="Managers can only assign users to their own team")
         body.team_id = user.get("team_id")
+    # SeniorTM can only create TM accounts as their own direct reports (a SeniorTM
+    # must report to a Manager, per _validate_reports_to_chain — they can't supervise a peer SeniorTM).
+    elif user.get("role") == "SeniorTM":
+        if body.role != "TM":
+            raise HTTPException(status_code=403, detail="SeniorTMs can only create TM accounts")
+        if body.team_id and body.team_id != user.get("team_id"):
+            raise HTTPException(status_code=403, detail="SeniorTMs can only assign users to their own team")
+        body.team_id = user.get("team_id")
+        body.manager_user_id = user["id"]
     # Phase L: validate manager_user_id chain — must be in same company and a valid manager-style role.
     if body.manager_user_id:
         await _validate_reports_to_chain(body.manager_user_id, body.role, user)
@@ -217,7 +226,7 @@ async def create_user(body: UserCreate, request: Request, user=Depends(require_r
     return doc
 
 @api.put("/users/{user_id}", response_model=UserPublic)
-async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles("Admin", "Manager"))):
+async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles("Admin", "Manager", "SeniorTM"))):
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
@@ -240,6 +249,18 @@ async def update_user(user_id: str, body: UserUpdate, user=Depends(require_roles
         bad = set(body.model_dump(exclude_unset=True).keys()) - allowed - {"password"}
         if bad:
             raise HTTPException(status_code=403, detail=f"Managers cannot modify: {sorted(bad)}")
+    # SeniorTM can only edit their own direct-report TMs, and only a narrower
+    # set of fields — no role changes (they can't promote a TM to SeniorTM/Manager)
+    # and no reassigning a report away from themselves.
+    elif user.get("role") == "SeniorTM":
+        if existing.get("id") != user["id"] and (existing.get("role") != "TM" or existing.get("manager_user_id") != user["id"]):
+            raise HTTPException(status_code=403, detail="SeniorTMs can only edit themselves or their direct-report TMs")
+        if body.role:
+            raise HTTPException(status_code=403, detail="SeniorTMs cannot change a user's role")
+        allowed = {"full_name", "active_status", "region"}
+        bad = set(body.model_dump(exclude_unset=True).keys()) - allowed - {"password"}
+        if bad:
+            raise HTTPException(status_code=403, detail=f"SeniorTMs cannot modify: {sorted(bad)}")
 
     # Owner protection: only an Owner can edit / disable / change role of an Owner.
     if existing.get("role") == "Owner" and user.get("role") != "Owner":

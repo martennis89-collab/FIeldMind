@@ -6,7 +6,7 @@ import { Input } from "../components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { Button } from "../components/ui/button";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
-import { Search as SearchIcon, MapPin, Plus, Upload, LayoutGrid, List as ListIcon, Trash2 } from "lucide-react";
+import { Search as SearchIcon, MapPin, Plus, Upload, LayoutGrid, List as ListIcon, Trash2, Sprout } from "lucide-react";
 import { toast } from "sonner";
 
 const ALL = "__ALL__";
@@ -19,6 +19,7 @@ export default function Doctors() {
   const [segment, setSegment] = useState(ALL);
   const [cadence, setCadence] = useState(ALL);
   const [city, setCity] = useState(ALL);
+  const [growthProgram, setGrowthProgram] = useState(ALL);
   const [loading, setLoading] = useState(true);
   const [taxonomy, setTaxonomy] = useState(null);
   const [view, setView] = useState(() => localStorage.getItem("doctors_view") || "list");
@@ -39,6 +40,7 @@ export default function Doctors() {
       if (segment !== ALL) params.segment = segment;
       if (cadence !== ALL) params.cadence = cadence;
       if (city !== ALL) params.city = city;
+      if (growthProgram !== ALL) params.growth_program = growthProgram === "yes";
       const { data } = await api.get("/doctors", { params });
       setDocs(data);
       // Drop selections for doctors no longer in list
@@ -50,7 +52,7 @@ export default function Doctors() {
 
   useEffect(() => {
     load();
-  }, [segment, cadence, city]);
+  }, [segment, cadence, city, growthProgram]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), 300);
@@ -161,7 +163,7 @@ export default function Doctors() {
       </div>
 
       <div className="rounded-md border p-4 mb-5 grid grid-cols-1 md:grid-cols-12 gap-3" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}>
-        <div className="md:col-span-5 relative">
+        <div className="md:col-span-4 relative">
           <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "var(--text-muted)" }} />
           <Input
             value={q}
@@ -189,12 +191,22 @@ export default function Doctors() {
             </SelectContent>
           </Select>
         </div>
-        <div className="md:col-span-3">
+        <div className="md:col-span-2">
           <Select value={city} onValueChange={setCity}>
             <SelectTrigger className="h-10 bg-white" data-testid="filter-city"><SelectValue placeholder="City" /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>All cities</SelectItem>
               {cities.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="md:col-span-2">
+          <Select value={growthProgram} onValueChange={setGrowthProgram}>
+            <SelectTrigger className="h-10 bg-white" data-testid="filter-growth-program"><SelectValue placeholder="Growth programme" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All doctors</SelectItem>
+              <SelectItem value="yes">Growth programme</SelectItem>
+              <SelectItem value="no">Not in programme</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -288,7 +300,12 @@ export default function Doctors() {
                   onClick={() => navigate(`/doctors/${d.id}`)}
                   data-testid={`doctor-row-name-${d.id}`}
                 >
-                  <div className="font-medium truncate" style={{ color: "var(--brand-primary)" }}>{d.doctor_name}</div>
+                  <div className="font-medium truncate flex items-center gap-1.5" style={{ color: "var(--brand-primary)" }}>
+                    {d.doctor_name}
+                    {d.in_growth_program && (
+                      <Sprout className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--status-success)" }} data-testid={`growth-program-badge-${d.id}`} aria-label="Growth programme" />
+                    )}
+                  </div>
                   <div className="text-xs flex items-center gap-1 sm:hidden truncate" style={{ color: "var(--text-secondary)" }}>
                     <MapPin className="w-3 h-3" /> {d.clinic_name || "—"} · {d.city || "—"}
                   </div>
@@ -366,7 +383,12 @@ export default function Doctors() {
                 <Link to={`/doctors/${d.id}`} className="block" style={{ paddingLeft: canDelete ? 22 : 0, paddingRight: canDelete ? 24 : 0 }}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-display text-lg font-semibold truncate" style={{ color: "var(--brand-primary)" }}>{d.doctor_name}</div>
+                      <div className="font-display text-lg font-semibold truncate flex items-center gap-1.5" style={{ color: "var(--brand-primary)" }}>
+                        {d.doctor_name}
+                        {d.in_growth_program && (
+                          <Sprout className="w-4 h-4 shrink-0" style={{ color: "var(--status-success)" }} data-testid={`growth-program-badge-${d.id}`} aria-label="Growth programme" />
+                        )}
+                      </div>
                       <div className="text-sm flex items-center gap-1 truncate" style={{ color: "var(--text-secondary)" }}>
                         <MapPin className="w-3 h-3" /> {d.clinic_name || "—"} · {d.city || "—"}
                       </div>

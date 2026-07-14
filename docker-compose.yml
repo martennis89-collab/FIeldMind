@@ -1,0 +1,55 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: fieldmind-mongo
+    restart: unless-stopped
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fieldmind-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Always talk to the "mongo" service on the internal Docker network,
+      # regardless of what's in backend/.env.
+      MONGO_URL: mongodb://mongo:27017
+    depends_on:
+      - mongo
+    ports:
+      - "${BACKEND_PORT:-8001}:8001"
+    volumes:
+      - ./backend:/app
+    command: uvicorn server:app --host 0.0.0.0 --port 8001 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: fieldmind-frontend
+    restart: unless-stopped
+    env_file:
+      - ./frontend/.env
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-3001}:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      # CRA's dev server file-watcher is unreliable on some setups when the
+      # source is a bind-mounted volume (esp. Docker Desktop on Mac/Windows).
+      # Polling fixes hot-reload at the cost of slightly higher CPU use.
+      WATCHPACK_POLLING: "true"
+    stdin_open: true
+
+volumes:
+  mongo_data:

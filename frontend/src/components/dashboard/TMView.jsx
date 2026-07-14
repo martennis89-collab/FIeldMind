@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 import api from "../../lib/api";
 import {
   Activity, AlertTriangle, Calendar, CalendarClock, CheckCircle2, ClipboardList,
-  Flame, MapPin, Sun,
+  Flame, MapPin, Sun, Users, Sprout, Mic, X,
 } from "lucide-react";
 
+import { Button } from "../ui/button";
 import StatCard from "./StatCard";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../StatusPill";
 import AdvisoryPanel from "../AdvisoryPanel";
@@ -24,7 +25,12 @@ function PriorityCard({ d, idx }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-display text-base font-semibold truncate" style={{ color: "var(--brand-primary)" }}>{d.doctor_name}</div>
+          <div className="font-display text-base font-semibold truncate flex items-center gap-1.5" style={{ color: "var(--brand-primary)" }}>
+            {d.doctor_name}
+            {d.in_growth_program && (
+              <Sprout className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--status-success)" }} data-testid={`growth-program-badge-${d.id}`} aria-label="Growth programme" />
+            )}
+          </div>
           <div className="text-sm truncate flex items-center gap-1" style={{ color: "var(--text-secondary)" }}>
             <MapPin className="w-3 h-3" /> {d.clinic_name || "—"} · {d.city || "—"}
           </div>
@@ -131,6 +137,46 @@ function UpcomingDemosWidget() {
   );
 }
 
+// Afternoon nudge if the TM is still short of the daily doctor-visit target.
+// Dismissible per page-load (not persisted) — a gentle reminder, not a nag.
+function DailyTargetNudge({ stats }) {
+  const [dismissed, setDismissed] = useState(false);
+  const visited = stats?.doctors_visited_today ?? 0;
+  const target = stats?.daily_doctor_target ?? 2;
+  const hour = new Date().getHours();
+  if (dismissed || hour < 15 || visited >= target) return null;
+  const remaining = target - visited;
+  return (
+    <div
+      className="rounded-md border p-4 mb-4 flex items-center justify-between gap-3 fade-up flex-wrap"
+      style={{ background: "var(--status-warning-bg)", borderColor: "var(--status-warning)" }}
+      data-testid="daily-target-nudge"
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <Mic className="w-5 h-5 shrink-0" style={{ color: "var(--status-warning)" }} />
+        <div className="min-w-0">
+          <div className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+            {visited === 0 ? "No doctors logged yet today" : `${visited}/${target} doctors today`}
+          </div>
+          <div className="text-xs" style={{ color: "var(--text-secondary)" }}>
+            {remaining} more to hit today's target — got a minute to log one now?
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <Link to="/log-visit">
+          <Button size="sm" style={{ background: "var(--status-warning)", color: "white" }} data-testid="nudge-log-visit-btn">
+            <Mic className="w-3.5 h-3.5 mr-1.5" /> Log a visit
+          </Button>
+        </Link>
+        <button onClick={() => setDismissed(true)} className="p-1.5 rounded hover:bg-black/5" style={{ color: "var(--text-muted)" }} data-testid="nudge-dismiss-btn" aria-label="Dismiss">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function TMView({ data }) {
   if (!data) {
     return (
@@ -153,6 +199,7 @@ export default function TMView({ data }) {
   return (
     <>
       <FEIBadge />
+      <DailyTargetNudge stats={data.stats} />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
         <StatCard label="Visits this week" value={data.stats?.visits_this_week ?? 0} icon={Activity} kind="info" testId="stat-visits-week" />
         <StatCard label="Open promises" value={data.stats?.open_promises ?? 0} icon={ClipboardList} kind="muted" testId="stat-open-promises" />
@@ -162,6 +209,14 @@ export default function TMView({ data }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard label="Open meetings" value={data.stats?.open_meetings ?? 0} icon={Calendar} kind="muted" testId="stat-open-meetings" />
         <StatCard label="Meetings done this week" value={data.stats?.completed_meetings_this_week ?? 0} icon={CheckCircle2} kind="success" testId="stat-completed-meetings-week" />
+        <StatCard
+          label="Doctors today"
+          value={`${data.stats?.doctors_visited_today ?? 0}/${data.stats?.daily_doctor_target ?? 2}`}
+          sub={(data.stats?.doctors_visited_today ?? 0) >= (data.stats?.daily_doctor_target ?? 2) ? "Target met" : "Daily target"}
+          icon={Users}
+          kind={(data.stats?.doctors_visited_today ?? 0) >= (data.stats?.daily_doctor_target ?? 2) ? "success" : "warning"}
+          testId="stat-doctors-today"
+        />
       </div>
 
       <UpcomingDemosWidget />

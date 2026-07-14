@@ -74,7 +74,7 @@ from models import ITERO_STAGE_RANK, Meeting, MeetingCreate, MeetingUpdate
 
 @api.post("/meetings", response_model=Meeting)
 async def create_meeting(body: MeetingCreate, user=Depends(get_current_user)):
-    if user["role"] != "TM":
+    if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="Only TMs can book meetings")
     doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
     if not doctor or not await _can_access_doctor(user, doctor):
@@ -130,8 +130,12 @@ async def list_meetings(
     user=Depends(get_current_user),
 ):
     q: dict = dict(_company_query_for(user))
-    if user["role"] in ("TM", "SeniorTM"):
+    if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
+    elif user["role"] == "SeniorTM":
+        # Phase L — self + direct-report TMs (not the whole team).
+        sub = await db.users.find({"manager_user_id": user["id"], "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
+        q["tm_user_id"] = {"$in": [user["id"]] + [s["id"] for s in sub]}
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
     # Admin/Owner sees all
@@ -151,8 +155,12 @@ async def get_meeting(meeting_id: str, user=Depends(get_current_user)):
     m = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
     if not m or m.get("deleted_at"):
         raise HTTPException(status_code=404, detail="Meeting not found")
-    if user["role"] in ("TM", "SeniorTM") and m["tm_user_id"] != user["id"]:
+    if user["role"] == "TM" and m["tm_user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "SeniorTM" and m["tm_user_id"] != user["id"]:
+        tm = await db.users.find_one({"id": m["tm_user_id"]}, {"_id": 0, "manager_user_id": 1})
+        if not tm or tm.get("manager_user_id") != user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and m.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")
     return m

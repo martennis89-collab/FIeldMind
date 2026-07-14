@@ -133,17 +133,17 @@ class TestAiErrorSanitisation:
 
     def test_sanitiser_redacts_known_patterns(self):
         from ai import _sanitise_ai_error
-        e = RuntimeError("AuthenticationError api_key=sk-emergent-1234567890abcdef")
+        e = RuntimeError("AuthenticationError api_key=sk-ant-1234567890abcdef")
         out = _sanitise_ai_error(e)
-        assert "sk-emergent-1234567890abcdef" not in out
+        assert "sk-ant-1234567890abcdef" not in out
         assert "<redacted>" in out
         assert out.startswith("RuntimeError")
 
-    def test_sanitiser_redacts_emergent_key_value(self, monkeypatch):
+    def test_sanitiser_redacts_anthropic_key_value(self, monkeypatch):
         # Pretend the key is a specific string and confirm it gets nuked even
         # when it doesn't match the generic patterns.
         import ai
-        monkeypatch.setattr(ai, "EMERGENT_KEY", "super-secret-key-payload")
+        monkeypatch.setattr(ai, "ANTHROPIC_KEY", "super-secret-key-payload")
         e = RuntimeError("call failed with key super-secret-key-payload")
         out = ai._sanitise_ai_error(e)
         assert "super-secret-key-payload" not in out

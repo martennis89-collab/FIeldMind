@@ -74,7 +74,13 @@ from models import AnalyzeNoteRequest, CommercialActions, InvisalignActions, Ite
 
 @api.post("/visits/analyze")
 async def analyze_visit_note(body: AnalyzeNoteRequest, user=Depends(get_current_user)):
-    result = await ai_analyze_note(body.note, session_id=f"analyze-{user['id']}")
+    doctors = None
+    if not body.doctor_id:
+        # No doctor picked yet (e.g. voice-first capture) — let the AI try to match
+        # one from the note against the caller's own scoped roster.
+        doc_q = await _doctor_query_for(user)
+        doctors = await db.doctors.find(doc_q, {"_id": 0, "id": 1, "doctor_name": 1}).to_list(2000)
+    result = await ai_analyze_note(body.note, session_id=f"analyze-{user['id']}", doctors=doctors)
     return result
 
 @api.post("/visits/transcribe")
@@ -84,9 +90,9 @@ async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get
     Accepts a multipart upload with field name 'audio'. Supported formats: webm, mp3, m4a, wav, mp4, mpga, mpeg.
     Max 25 MB (Whisper limit). Returns {text: str}.
     """
-    from emergentintegrations.llm.openai import OpenAISpeechToText
+    from openai import AsyncOpenAI
 
-    if not os.environ.get("EMERGENT_LLM_KEY"):
+    if not os.environ.get("OPENAI_API_KEY"):
         raise HTTPException(status_code=503, detail="Transcription service not configured")
 
     # Read into memory and validate size
@@ -102,8 +108,8 @@ async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get
     buf.name = filename
 
     try:
-        stt = OpenAISpeechToText(api_key=os.environ["EMERGENT_LLM_KEY"])
-        response = await stt.transcribe(file=buf, model="whisper-1", response_format="json")
+        client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        response = await client.audio.transcriptions.create(file=buf, model="whisper-1", response_format="json")
         text = getattr(response, "text", "") or ""
     except Exception:
         logging.exception("Whisper transcription failed")

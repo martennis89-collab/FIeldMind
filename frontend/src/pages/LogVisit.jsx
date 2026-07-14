@@ -23,7 +23,8 @@ export default function LogVisit() {
   const initialDoctorId = params.get("doctor") || params.get("doctor_id");
   const meetingId = params.get("meeting_id");
 
-  const [step, setStep] = useState(1); // 1 doctor, 2 note, 3 review
+  const [step, setStep] = useState(1); // 1 note (voice-first), 2 review (doctor + tags + save)
+  const [doctorAutoMatched, setDoctorAutoMatched] = useState(false);
   const [doctors, setDoctors] = useState([]);
   const [taxonomy, setTaxonomy] = useState(null);
   const [doctorId, setDoctorId] = useState(initialDoctorId || "");
@@ -88,12 +89,17 @@ export default function LogVisit() {
 
   const doctor = useMemo(() => doctors.find((d) => d.id === doctorId), [doctors, doctorId]);
 
-  const runAi = async () => {
-    if (!note.trim()) { toast.error("Add a note first"); return; }
+  const runAi = async (noteOverride) => {
+    const text = (noteOverride ?? note).trim();
+    if (!text) { toast.error("Add a note first"); return; }
     setAnalyzing(true);
     try {
-      const { data } = await api.post("/visits/analyze", { note, doctor_id: doctorId });
+      const { data } = await api.post("/visits/analyze", { note: text, doctor_id: doctorId || undefined });
       setAi(data);
+      if (data.doctor_id && !doctorId) {
+        setDoctorId(data.doctor_id);
+        setDoctorAutoMatched(true);
+      }
       setTopics(data.topics || []);
       setBarriers(data.barriers || []);
       setSentiment(data.sentiment || "Neutral");
@@ -121,10 +127,10 @@ export default function LogVisit() {
         else if (ts.includes("ITERO")) setTrackType("ITERO");
         else if (ts.includes("INVISALIGN")) setTrackType("INVISALIGN");
       }
-      setStep(3);
+      setStep(2);
     } catch (err) {
       toast.error("AI analysis failed — you can still save manually");
-      setStep(3);
+      setStep(2);
     } finally {
       setAnalyzing(false);
     }
@@ -133,7 +139,7 @@ export default function LogVisit() {
   const skipToReview = () => {
     setAi(null);
     setSkipAi(true);
-    setStep(3);
+    setStep(2);
   };
 
   const togglePromise = (i) => {
@@ -174,8 +180,13 @@ export default function LogVisit() {
           const { data } = await api.post("/visits/transcribe", fd);
           const text = (data?.text || "").trim();
           if (!text) { toast.error("Couldn't pick up any speech — try again"); return; }
-          setNote((prev) => (prev ? `${prev.trim()} ${text}` : text));
+          const fullText = note ? `${note.trim()} ${text}` : text;
+          setNote(fullText);
           toast.success(`Transcribed · ${text.length} chars`);
+          // Voice is the fast path — go straight to AI analysis instead of requiring
+          // a separate "Analyze" tap. Typed notes still need an explicit tap (the
+          // TM may still be composing).
+          runAi(fullText);
         } catch (err) {
           toast.error("Transcription failed — please type or try again");
         } finally {
@@ -265,104 +276,19 @@ export default function LogVisit() {
           Log a <span className="font-medium">visit</span>
         </h1>
         <div className="mt-3 flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
-          {[1, 2, 3].map((n) => (
+          {[1, 2].map((n) => (
             <React.Fragment key={n}>
               <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${step >= n ? "" : ""}`}
                 style={{ background: step >= n ? "var(--brand-primary)" : "var(--bg-muted)", color: step >= n ? "white" : "var(--text-muted)" }}>{n}</div>
-              {n < 3 && <div className="flex-1 h-px" style={{ background: step > n ? "var(--brand-primary)" : "var(--border-default)" }} />}
+              {n < 2 && <div className="flex-1 h-px" style={{ background: step > n ? "var(--brand-primary)" : "var(--border-default)" }} />}
             </React.Fragment>
           ))}
         </div>
       </div>
 
-      {/* Step 1: pick doctor + type */}
+      {/* Step 1: note — voice-first. No doctor needed yet; AI will try to detect
+          who it was from what you say, and you'll confirm on the next screen. */}
       {step === 1 && (
-        <div className="rounded-md border p-6 space-y-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
-          <div>
-            <Label className="mb-2 block">Doctor</Label>
-            <Popover open={docPickerOpen} onOpenChange={setDocPickerOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full justify-between h-11 bg-white" data-testid="doctor-picker-btn">
-                  {doctor ? (
-                    <span className="flex items-center gap-2">
-                      <span className="font-medium">{doctor.doctor_name}</span>
-                      <span className="text-xs" style={{ color: "var(--text-muted)" }}>· {doctor.clinic_name}</span>
-                    </span>
-                  ) : (
-                    <span style={{ color: "var(--text-muted)" }}>Select a doctor…</span>
-                  )}
-                  <ChevronRight className="w-4 h-4 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
-                <Command>
-                  <CommandInput
-                    placeholder="Search doctor…"
-                    data-testid="doctor-picker-input"
-                    value={docPickerQuery}
-                    onValueChange={setDocPickerQuery}
-                  />
-                  <CommandList className="max-h-72">
-                    <CommandEmpty>No doctors</CommandEmpty>
-                    {doctors.map((d) => (
-                      <CommandItem key={d.id} onSelect={() => { setDoctorId(d.id); setDocPickerOpen(false); }} data-testid={`doctor-option-${d.id}`}>
-                        <div className="flex flex-col">
-                          <span className="font-medium">{d.doctor_name}</span>
-                          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{d.clinic_name} · {d.city} · {d.segment}</span>
-                        </div>
-                      </CommandItem>
-                    ))}
-                  </CommandList>
-                  <div className="border-t p-2" style={{ borderColor: "var(--border-default)" }}>
-                    <button
-                      type="button"
-                      onClick={() => { setDocPickerOpen(false); setAddingDoctor(true); }}
-                      data-testid="log-visit-add-doctor"
-                      className="w-full text-xs flex items-center gap-1 px-2 py-1.5 rounded hover:bg-[var(--bg-paper)] transition-colors"
-                      style={{ color: "var(--brand-primary)" }}
-                    >
-                      <UserPlus className="w-3.5 h-3.5" />
-                      <span>Can&apos;t find them? Add new doctor{docPickerQuery ? ` "${docPickerQuery}"` : ""}</span>
-                    </button>
-                  </div>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          </div>
-
-          <div>
-            <Label className="mb-2 block">Visit type</Label>
-            <Select value={visitType} onValueChange={setVisitType}>
-              <SelectTrigger className="h-11 bg-white" data-testid="visit-type-select"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {VISIT_TYPES.map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label className="mb-2 block">Visit date</Label>
-            <Input
-              type="date"
-              value={visitDate}
-              onChange={(e) => setVisitDate(e.target.value)}
-              max={(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })()}
-              className="h-11 bg-white"
-              data-testid="visit-date-input"
-            />
-            <div className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>Defaults to today. Pick a past date for visits you forgot to log.</div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button onClick={() => setStep(2)} disabled={!doctorId} data-testid="step1-next-btn" style={{ background: "var(--brand-primary)", color: "white" }}>
-              Next <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Step 2: note */}
-      {step === 2 && (
         <div className="rounded-md border p-6 space-y-4" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
           <div className="flex items-start gap-2 px-3 py-2 rounded text-xs" style={{ background: "var(--status-warning-bg)", color: "var(--status-warning)" }}>
             <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -370,7 +296,7 @@ export default function LogVisit() {
           </div>
           <div>
             <div className="flex items-center justify-between mb-2">
-              <Label className="block">What did you discuss?</Label>
+              <Label className="block">What did you discuss? Mention the doctor's name and we'll find them for you.</Label>
               <button
                 type="button"
                 onClick={recording ? stopRec : startRec}
@@ -395,31 +321,110 @@ export default function LogVisit() {
             <Textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Free text — write naturally, or tap Voice note to dictate. AI will extract topics, barriers, sentiment, and promises in the next step."
+              placeholder="Free text — write naturally, or tap Voice note to dictate. e.g. 'Just met with Dr. Ivanov, he's excited about the iTero demo…'"
               rows={9}
               className="bg-white"
               data-testid="visit-note-textarea"
             />
             <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{note.length} chars</div>
           </div>
-          <div className="flex justify-between items-center gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setStep(1)} data-testid="step2-back-btn">
-              <ChevronLeft className="w-4 h-4 mr-1" /> Back
+          <div className="flex justify-end items-center gap-2 pt-2">
+            <Button variant="outline" onClick={skipToReview} data-testid="step2-skip-ai-btn">Skip AI</Button>
+            <Button onClick={() => runAi()} disabled={analyzing || !note.trim()} data-testid="step2-analyze-btn" style={{ background: "var(--brand-primary)", color: "white" }}>
+              <Sparkles className="w-4 h-4 mr-1" />
+              {analyzing ? "Analyzing…" : "Analyze with AI"}
             </Button>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={skipToReview} data-testid="step2-skip-ai-btn">Skip AI</Button>
-              <Button onClick={runAi} disabled={analyzing || !note.trim()} data-testid="step2-analyze-btn" style={{ background: "var(--brand-primary)", color: "white" }}>
-                <Sparkles className="w-4 h-4 mr-1" />
-                {analyzing ? "Analyzing…" : "Analyze with AI"}
-              </Button>
-            </div>
           </div>
         </div>
       )}
 
-      {/* Step 3: review + save */}
-      {step === 3 && (
+      {/* Step 2: doctor confirm + review + save */}
+      {step === 2 && (
         <div className="space-y-5" data-testid="review-step">
+          <div className="rounded-md border p-6 space-y-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label className="block">Doctor</Label>
+                {doctorAutoMatched && doctorId && (
+                  <span className="text-xs flex items-center gap-1" style={{ color: "var(--status-success)" }} data-testid="doctor-auto-matched-badge">
+                    <Check className="w-3.5 h-3.5" /> Detected from your note
+                  </span>
+                )}
+              </div>
+              <Popover open={docPickerOpen} onOpenChange={setDocPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-between h-11 bg-white" data-testid="doctor-picker-btn">
+                    {doctor ? (
+                      <span className="flex items-center gap-2">
+                        <span className="font-medium">{doctor.doctor_name}</span>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>· {doctor.clinic_name}</span>
+                      </span>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)" }}>Select a doctor…</span>
+                    )}
+                    <ChevronRight className="w-4 h-4 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                  <Command>
+                    <CommandInput
+                      placeholder="Search doctor…"
+                      data-testid="doctor-picker-input"
+                      value={docPickerQuery}
+                      onValueChange={setDocPickerQuery}
+                    />
+                    <CommandList className="max-h-72">
+                      <CommandEmpty>No doctors</CommandEmpty>
+                      {doctors.map((d) => (
+                        <CommandItem key={d.id} onSelect={() => { setDoctorId(d.id); setDoctorAutoMatched(false); setDocPickerOpen(false); }} data-testid={`doctor-option-${d.id}`}>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{d.doctor_name}</span>
+                            <span className="text-xs" style={{ color: "var(--text-muted)" }}>{d.clinic_name} · {d.city} · {d.segment}</span>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandList>
+                    <div className="border-t p-2" style={{ borderColor: "var(--border-default)" }}>
+                      <button
+                        type="button"
+                        onClick={() => { setDocPickerOpen(false); setAddingDoctor(true); }}
+                        data-testid="log-visit-add-doctor"
+                        className="w-full text-xs flex items-center gap-1 px-2 py-1.5 rounded hover:bg-[var(--bg-paper)] transition-colors"
+                        style={{ color: "var(--brand-primary)" }}
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>Can&apos;t find them? Add new doctor{docPickerQuery ? ` "${docPickerQuery}"` : ""}</span>
+                      </button>
+                    </div>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <Label className="mb-2 block">Visit type</Label>
+                <Select value={visitType} onValueChange={setVisitType}>
+                  <SelectTrigger className="h-11 bg-white" data-testid="visit-type-select"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {VISIT_TYPES.map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="mb-2 block">Visit date</Label>
+                <Input
+                  type="date"
+                  value={visitDate}
+                  onChange={(e) => setVisitDate(e.target.value)}
+                  max={(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })()}
+                  className="h-11 bg-white"
+                  data-testid="visit-date-input"
+                />
+              </div>
+            </div>
+          </div>
+
           {ai?.ai_error && (
             <div
               className="rounded-md border p-4"
@@ -650,7 +655,7 @@ export default function LogVisit() {
           </div>
 
           <div className="flex justify-between items-center gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setStep(2)} data-testid="step3-back-btn">
+            <Button variant="ghost" onClick={() => setStep(1)} data-testid="step3-back-btn">
               <ChevronLeft className="w-4 h-4 mr-1" /> Back to note
             </Button>
             <Button onClick={save} disabled={saving} data-testid="save-visit-btn" className="font-medium" style={{ background: "var(--brand-secondary)", color: "white" }}>
