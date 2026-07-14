@@ -260,6 +260,7 @@ async def list_visits(
     user=Depends(get_current_user),
 ):
     q = dict(_company_query_for(user))
+    q["deleted_at"] = None
     if user["role"] in ("TM", "SeniorTM"):
         q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
@@ -270,3 +271,25 @@ async def list_visits(
         q["tm_user_id"] = tm_user_id
     visits = await db.visits.find(q, {"_id": 0}).sort("visit_date", -1).to_list(500)
     return visits
+
+@api.delete("/visits/{visit_id}")
+async def delete_visit(visit_id: str, user=Depends(get_current_user)):
+    """Soft-delete: marks the visit with deleted_at. Audit logged.
+
+    TM/SeniorTM may delete their own; Manager within their team; Admin any.
+    Does not reverse downstream effects (created tasks, itero stage advances,
+    track signals) — same as delete_meeting/delete_task in this codebase.
+    """
+    v = await db.visits.find_one({"id": visit_id}, {"_id": 0})
+    if not v or v.get("deleted_at"):
+        raise HTTPException(status_code=404, detail="Visit not found")
+    if not _same_company(user, v):
+        raise HTTPException(status_code=404, detail="Visit not found")
+    if user["role"] in ("TM", "SeniorTM") and v.get("tm_user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "Manager" and v.get("team_id") != user.get("team_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    now = _now_iso()
+    await db.visits.update_one({"id": visit_id}, {"$set": {"deleted_at": now, "updated_at": now}})
+    await _audit(user, "delete", "visit", visit_id, prev=v, event_type="visit_deleted")
+    return {"ok": True, "id": visit_id}

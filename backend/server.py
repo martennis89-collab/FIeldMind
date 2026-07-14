@@ -314,15 +314,15 @@ async def _enrich_doctor_impl(doctor: dict) -> dict:
     # concurrently rather than one round-trip at a time (matters a lot once
     # the DB is a real network hop away instead of local Docker).
     last_visit, visit_count_q, open_promises, overdue_promises, recent = await asyncio.gather(
-        db.visits.find_one({"doctor_id": doc_id}, {"_id": 0}, sort=[("visit_date", -1)]),
-        db.visits.count_documents({"doctor_id": doc_id, "visit_date": {"$gte": quarter_start.isoformat()}}),
+        db.visits.find_one({"doctor_id": doc_id, "deleted_at": None}, {"_id": 0}, sort=[("visit_date", -1)]),
+        db.visits.count_documents({"doctor_id": doc_id, "deleted_at": None, "visit_date": {"$gte": quarter_start.isoformat()}}),
         db.tasks.count_documents({"doctor_id": doc_id, "status": {"$in": ["Open", "Overdue"]}}),
         db.tasks.count_documents({
             "doctor_id": doc_id,
             "status": {"$in": ["Open", "Overdue"]},
             "due_date": {"$lt": today},
         }),
-        db.visits.find({"doctor_id": doc_id}, {"_id": 0}).sort("visit_date", -1).to_list(10),
+        db.visits.find({"doctor_id": doc_id, "deleted_at": None}, {"_id": 0}).sort("visit_date", -1).to_list(10),
     )
 
     last_visit_date = last_visit["visit_date"] if last_visit else None

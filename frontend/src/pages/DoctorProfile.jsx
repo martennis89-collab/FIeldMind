@@ -81,6 +81,17 @@ export default function DoctorProfile() {
     }
   };
 
+  const deleteVisit = async (visit) => {
+    if (!window.confirm(`Delete this visit${visit.visit_date ? ` from ${formatDate(visit.visit_date)}` : ""}?\n\nThis does not undo any promises or pipeline changes it created.`)) return;
+    try {
+      await api.delete(`/visits/${visit.id}`);
+      toast.success("Visit deleted");
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to delete");
+    }
+  };
+
   const deleteMeeting = async (meeting) => {
     if (!window.confirm(`Delete this meeting${meeting.subject ? `\n\n"${meeting.subject}"` : ""}?`)) return;
     try {
@@ -291,12 +302,20 @@ export default function DoctorProfile() {
         <TabsContent value="timeline">
           <div className="space-y-3" data-testid="visits-timeline">
             {visits.map((v) => (
-              <div key={v.id} className="rounded-md border p-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}>
+              <div key={v.id} className="rounded-md border p-5" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid={`visit-${v.id}`}>
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{formatDateTime(v.visit_date)} · {v.visit_type}</div>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2">
                     {v.sentiment && <StatusPill kind={sentimentKind(v.sentiment)}>{v.sentiment}</StatusPill>}
                     {v.opportunity_state && <StatusPill kind="muted">{v.opportunity_state}</StatusPill>}
+                    <button
+                      onClick={() => deleteVisit(v)}
+                      data-testid={`delete-visit-${v.id}`}
+                      title="Delete visit"
+                      className="p-1.5 rounded hover:bg-[var(--bg-paper)]"
+                    >
+                      <Trash2 className="w-4 h-4" style={{ color: "var(--status-danger)" }} />
+                    </button>
                   </div>
                 </div>
                 <div className="mt-2 text-sm whitespace-pre-wrap" style={{ color: "var(--text-primary)" }}>{v.free_text_note || "(no note)"}</div>
