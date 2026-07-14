@@ -13,6 +13,15 @@ import uuid
 from fastapi import Depends, HTTPException, Request, Query, UploadFile, File, Form
 from pydantic import BaseModel
 
+# Domain vocabulary to bias ElevenLabs Scribe toward — acronyms/product names it
+# otherwise tends to mishear (e.g. "TPS" -> "GPS"). Extend this list as more
+# mis-transcriptions turn up in real Telegram/in-app voice notes.
+_DOMAIN_KEYTERMS = [
+    "TPS", "Treatment Planning Services",
+    "iTero", "iTero Element", "iTero Lens",
+    "Invisalign", "ClinCheck", "SmartTrack", "Vivera",
+]
+
 # Pull every shared symbol the handlers reference. The router file is imported AFTER
 # server.py finishes initialising all of these so the names are guaranteed to exist.
 from server import (
@@ -113,7 +122,13 @@ async def _transcribe_audio_bytes(raw: bytes, filename: str, content_type: str) 
             resp = await client.post(
                 "https://api.elevenlabs.io/v1/speech-to-text",
                 headers={"xi-api-key": os.environ["ELEVENLABS_API_KEY"]},
-                data={"model_id": "scribe_v1"},
+                # keyterms (vocabulary biasing) is only supported on scribe_v2 —
+                # confirmed against the live API, since the public docs incorrectly
+                # implied v1 support.
+                data={
+                    "model_id": "scribe_v2",
+                    "keyterms": _DOMAIN_KEYTERMS,
+                },
                 files={"file": (filename, raw, content_type or "audio/webm")},
             )
             resp.raise_for_status()
