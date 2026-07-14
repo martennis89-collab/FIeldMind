@@ -306,10 +306,24 @@ async def _enrich_doctor(doctor: dict) -> dict:
 async def _enrich_doctor_impl(doctor: dict) -> dict:
     """Add computed fields to a doctor dict."""
     doc_id = doctor["id"]
-    # last visit
-    last_visit = await db.visits.find_one(
-        {"doctor_id": doc_id}, {"_id": 0}, sort=[("visit_date", -1)]
+    quarter_start = datetime.now(timezone.utc) - timedelta(days=90)
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    # These 5 queries are independent of each other's results — fire them
+    # concurrently rather than one round-trip at a time (matters a lot once
+    # the DB is a real network hop away instead of local Docker).
+    last_visit, visit_count_q, open_promises, overdue_promises, recent = await asyncio.gather(
+        db.visits.find_one({"doctor_id": doc_id}, {"_id": 0}, sort=[("visit_date", -1)]),
+        db.visits.count_documents({"doctor_id": doc_id, "visit_date": {"$gte": quarter_start.isoformat()}}),
+        db.tasks.count_documents({"doctor_id": doc_id, "status": {"$in": ["Open", "Overdue"]}}),
+        db.tasks.count_documents({
+            "doctor_id": doc_id,
+            "status": {"$in": ["Open", "Overdue"]},
+            "due_date": {"$lt": today},
+        }),
+        db.visits.find({"doctor_id": doc_id}, {"_id": 0}).sort("visit_date", -1).to_list(10),
     )
+
     last_visit_date = last_visit["visit_date"] if last_visit else None
     days_since = None
     if last_visit_date:
@@ -318,30 +332,6 @@ async def _enrich_doctor_impl(doctor: dict) -> dict:
             days_since = (datetime.now(timezone.utc) - d).days
         except Exception:
             days_since = None
-
-    # quarter visit count
-    quarter_start = datetime.now(timezone.utc) - timedelta(days=90)
-    visit_count_q = await db.visits.count_documents(
-        {"doctor_id": doc_id, "visit_date": {"$gte": quarter_start.isoformat()}}
-    )
-
-    # tasks
-    open_promises = await db.tasks.count_documents(
-        {"doctor_id": doc_id, "status": {"$in": ["Open", "Overdue"]}}
-    )
-    today = datetime.now(timezone.utc).date().isoformat()
-    overdue_promises = await db.tasks.count_documents(
-        {
-            "doctor_id": doc_id,
-            "status": {"$in": ["Open", "Overdue"]},
-            "due_date": {"$lt": today},
-        }
-    )
-
-    # last 5 visits for top topics/barriers/sentiment trend
-    recent = await db.visits.find(
-        {"doctor_id": doc_id}, {"_id": 0}
-    ).sort("visit_date", -1).to_list(10)
 
     topic_counts: dict = {}
     barrier_counts: dict = {}
