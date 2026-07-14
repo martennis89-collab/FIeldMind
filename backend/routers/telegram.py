@@ -24,10 +24,9 @@ import os
 import httpx
 from fastapi import Request, HTTPException
 
-from server import api, db, ai_analyze_note, _doctor_query_for
-from routers.visits import _transcribe_audio_bytes, create_visit
-from routers.doctors import _find_duplicate_doctor, create_doctor
-from models import VisitCreate, DoctorCreate, AIExtraction
+from server import api, db
+from routers.visits import _transcribe_audio_bytes, create_visit, analyze_visit_note
+from models import AnalyzeNoteRequest, VisitCreate, AIExtraction
 
 logger = logging.getLogger(__name__)
 
@@ -97,43 +96,26 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
 
     try:
-        doc_q = await _doctor_query_for(user)
-        doctors = await db.doctors.find(doc_q, {"_id": 0, "id": 1, "doctor_name": 1}).to_list(2000)
-        result = await ai_analyze_note(note_text, session_id=f"telegram-{user['id']}", doctors=doctors)
+        # Same function the app's own LogVisit screen calls (POST /visits/analyze) —
+        # AI extraction, doctor matching, AND auto-create-if-unmatched all happen
+        # inside it, so this is the single source of truth for that logic.
+        result = await analyze_visit_note(AnalyzeNoteRequest(note=note_text), user=user)
+    except HTTPException as e:
+        await _telegram_send(f"Couldn't process that note: {e.detail}")
+        return {"ok": True}
     except Exception:
         logger.exception("Telegram check-in AI analysis failed")
         await _telegram_send("Something went wrong analyzing that note — nothing was saved. Try again shortly.")
         return {"ok": True}
 
     doctor_id = result.get("doctor_id")
-    newly_created_doctor_name = None
+    newly_created_doctor_name = result.get("doctor_hint") if result.get("doctor_auto_created") else None
     if not doctor_id:
-        heard_name = result.get("doctor_name_heard")
-        if not heard_name:
-            await _telegram_send(
-                "Couldn't find a doctor mentioned in that note. "
-                "Please resend mentioning who you visited."
-            )
-            return {"ok": True}
-
-        # Defensive re-check: the AI already declined to match this against the
-        # roster it was given, but re-run the app's own fuzzy/normalized duplicate
-        # check (same one POST /doctors uses) in case of a near-miss it wasn't
-        # confident enough to call — avoids creating a duplicate on a mishear.
-        dup = await _find_duplicate_doctor(user.get("company_id"), heard_name, None)
-        if dup:
-            doctor_id = dup["id"]
-        else:
-            try:
-                new_doc = await create_doctor(
-                    DoctorCreate(doctor_name=heard_name),
-                    user=user,
-                )
-                doctor_id = new_doc["id"]
-                newly_created_doctor_name = new_doc["doctor_name"]
-            except HTTPException as e:
-                await _telegram_send(f"Couldn't add \"{heard_name}\" as a new doctor: {e.detail}")
-                return {"ok": True}
+        await _telegram_send(
+            "Couldn't find or add a doctor from that note. "
+            "Please resend mentioning who you visited."
+        )
+        return {"ok": True}
 
     track_types = result.get("track_types") or []
     if "ITERO" in track_types and "INVISALIGN" not in track_types:

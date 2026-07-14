@@ -25,6 +25,7 @@ export default function LogVisit() {
 
   const [step, setStep] = useState(1); // 1 note (voice-first), 2 review (doctor + tags + save)
   const [doctorAutoMatched, setDoctorAutoMatched] = useState(false);
+  const [doctorAutoCreated, setDoctorAutoCreated] = useState(false);
   const [doctors, setDoctors] = useState([]);
   const [taxonomy, setTaxonomy] = useState(null);
   const [doctorId, setDoctorId] = useState(initialDoctorId || "");
@@ -99,6 +100,7 @@ export default function LogVisit() {
       if (data.doctor_id && !doctorId) {
         setDoctorId(data.doctor_id);
         setDoctorAutoMatched(true);
+        setDoctorAutoCreated(!!data.doctor_auto_created);
       }
       setTopics(data.topics || []);
       setBarriers(data.barriers || []);
@@ -345,7 +347,12 @@ export default function LogVisit() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <Label className="block">Doctor</Label>
-                {doctorAutoMatched && doctorId && (
+                {doctorAutoMatched && doctorId && doctorAutoCreated && (
+                  <span className="text-xs flex items-center gap-1" style={{ color: "var(--status-warning, #b45309)" }} data-testid="doctor-auto-created-badge">
+                    <Check className="w-3.5 h-3.5" /> Added as new doctor
+                  </span>
+                )}
+                {doctorAutoMatched && doctorId && !doctorAutoCreated && (
                   <span className="text-xs flex items-center gap-1" style={{ color: "var(--status-success)" }} data-testid="doctor-auto-matched-badge">
                     <Check className="w-3.5 h-3.5" /> Detected from your note
                   </span>
@@ -376,7 +383,7 @@ export default function LogVisit() {
                     <CommandList className="max-h-72">
                       <CommandEmpty>No doctors</CommandEmpty>
                       {doctors.map((d) => (
-                        <CommandItem key={d.id} onSelect={() => { setDoctorId(d.id); setDoctorAutoMatched(false); setDocPickerOpen(false); }} data-testid={`doctor-option-${d.id}`}>
+                        <CommandItem key={d.id} onSelect={() => { setDoctorId(d.id); setDoctorAutoMatched(false); setDoctorAutoCreated(false); setDocPickerOpen(false); }} data-testid={`doctor-option-${d.id}`}>
                           <div className="flex flex-col">
                             <span className="font-medium">{d.doctor_name}</span>
                             <span className="text-xs" style={{ color: "var(--text-muted)" }}>{d.clinic_name} · {d.city} · {d.segment}</span>

@@ -98,6 +98,32 @@ async def _find_duplicate_doctor(company_id: str, name: str, city: str | None) -
     return None
 
 
+async def _resolve_or_create_doctor(user: dict, doctor_name_heard: str) -> Optional[dict]:
+    """Shared by the app's own voice/text visit logging (POST /visits/analyze) and
+    the Telegram check-in — same behavior everywhere a doctor is named but didn't
+    match anyone in the caller's roster.
+
+    Re-checks the app's own fuzzy/normalized duplicate detection (the same check
+    POST /doctors uses) before creating anything, so a mishear or spelling variant
+    of an EXISTING doctor still resolves to that doctor rather than duplicating
+    them. Only creates a new doctor record when it's genuinely not a near-match.
+
+    Returns the resolved doctor dict with an extra `_was_created` bool, or None
+    if `doctor_name_heard` was empty.
+    """
+    name = (doctor_name_heard or "").strip()
+    if not name:
+        return None
+    company_id = user.get("company_id")
+    dup = await _find_duplicate_doctor(company_id, name, None)
+    if dup:
+        dup["_was_created"] = False
+        return dup
+    new_doc = await create_doctor(DoctorCreate(doctor_name=name), user=user)
+    new_doc["_was_created"] = True
+    return new_doc
+
+
 @api.get("/doctors")
 async def list_doctors(
     segment: Optional[str] = None,

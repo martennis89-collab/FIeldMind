@@ -73,6 +73,8 @@ from models import AnalyzeNoteRequest, CommercialActions, InvisalignActions, Ite
 
 @api.post("/visits/analyze")
 async def analyze_visit_note(body: AnalyzeNoteRequest, user=Depends(get_current_user)):
+    from routers.doctors import _resolve_or_create_doctor
+
     doctors = None
     if not body.doctor_id:
         # No doctor picked yet (e.g. voice-first capture) — let the AI try to match
@@ -80,6 +82,17 @@ async def analyze_visit_note(body: AnalyzeNoteRequest, user=Depends(get_current_
         doc_q = await _doctor_query_for(user)
         doctors = await db.doctors.find(doc_q, {"_id": 0, "id": 1, "doctor_name": 1}).to_list(2000)
     result = await ai_analyze_note(body.note, session_id=f"analyze-{user['id']}", doctors=doctors)
+
+    # Nothing on the roster matched, but a name was heard — auto-create/resolve
+    # so logging a visit is just as friction-free in the app as via Telegram,
+    # for reps who never touch the bot. Same duplicate-safe logic either way.
+    if not result.get("doctor_id") and result.get("doctor_name_heard"):
+        resolved = await _resolve_or_create_doctor(user, result["doctor_name_heard"])
+        if resolved:
+            result["doctor_id"] = resolved["id"]
+            result["doctor_hint"] = resolved["doctor_name"]
+            result["doctor_auto_created"] = resolved.get("_was_created", False)
+
     return result
 
 async def _transcribe_audio_bytes(raw: bytes, filename: str, content_type: str) -> str:
