@@ -369,7 +369,7 @@ async def extract_task_from_text(text: str, doctor_names: Optional[list] = None)
                 "You convert a TM's short note into ONE actionable task or promise.\n"
                 "Output STRICT JSON with these keys ONLY: task_title (string, short imperative <=160 chars), "
                 "task_description (string, one sentence, <=400 chars), is_promise (bool — true if the TM said they'd do it), "
-                "suggested_due_date (YYYY-MM-DD or null; if no date specified, suggest 3 business days from today), "
+                "suggested_due_date (YYYY-MM-DD ONLY if the note itself specifies or implies a date — you don't know today's date, so never guess one; otherwise null), "
                 "priority ('Low'|'Medium'|'High'), doctor_hint (string|null — only echo a name from the provided list if you find a clear match in the note).\n"
                 "Never invent details. If the note isn't actionable, return task_title as empty string."
             ),

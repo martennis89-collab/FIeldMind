@@ -32,6 +32,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
   const [doctors, setDoctors] = useState([]);
   const [doctorSearch, setDoctorSearch] = useState("");
   const [addingDoctor, setAddingDoctor] = useState(false);
+  const [noDoctor, setNoDoctor] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -39,6 +40,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
     setNote("");
     setSuggestion(null);
     setDoctorSearch("");
+    setNoDoctor(false);
     api.get("/doctors").then((r) => setDoctors(r.data || [])).catch(() => setDoctors([]));
   }, [open]);
 
@@ -113,6 +115,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
         toast.warning("AI couldn't find an action — please edit manually.");
         sug.task_title = note.trim().slice(0, 120);
       }
+      const resolvedDoctorId = sug.doctor_id || defaultDoctorId || "";
       setSuggestion({
         task_title: sug.task_title || "",
         task_description: sug.task_description || "",
@@ -120,9 +123,12 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
         // Default to today if AI didn't suggest a date — the TM is capturing right now.
         suggested_due_date: sug.suggested_due_date || todayISO(),
         priority: sug.priority || "Medium",
-        doctor_id: sug.doctor_id || defaultDoctorId || "",
+        doctor_id: resolvedDoctorId,
         doctor_hint: sug.doctor_hint || "",
       });
+      // AI found no doctor at all in the note — start in "personal task" mode
+      // instead of forcing the user to pick one.
+      setNoDoctor(!resolvedDoctorId && !sug.doctor_hint);
       setStep(STEP_REVIEW);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "AI extraction failed");
@@ -135,14 +141,14 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
       toast.error("Task title is required");
       return;
     }
-    if (!suggestion.doctor_id) {
-      toast.error("Pick a doctor for this task");
+    if (!suggestion.doctor_id && !noDoctor) {
+      toast.error("Pick a doctor, or mark this as a personal task");
       return;
     }
     setStep(STEP_SAVING);
     try {
       await api.post("/tasks", {
-        doctor_id: suggestion.doctor_id,
+        doctor_id: noDoctor ? null : suggestion.doctor_id,
         task_title: suggestion.task_title.trim(),
         task_description: suggestion.task_description.trim() || null,
         due_date: suggestion.suggested_due_date || null,
@@ -291,50 +297,70 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
             </div>
             <div>
               <Label>Doctor</Label>
-              <Input
-                value={doctorSearch}
-                onChange={(e) => setDoctorSearch(e.target.value)}
-                placeholder="Search…"
-                className="mt-1 mb-1"
-                data-testid="quick-capture-doctor-search"
-              />
-              <div className="max-h-32 overflow-y-auto rounded border" style={{ borderColor: "var(--border-default)" }}>
-                {filteredDoctors.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => setSuggestion({ ...suggestion, doctor_id: d.id, doctor_hint: d.doctor_name })}
-                    data-testid={`quick-capture-pick-${d.id}`}
-                    className="w-full text-left px-2 py-1.5 text-sm border-b last:border-b-0 transition-colors hover:bg-[var(--bg-paper)]"
-                    style={{
-                      borderColor: "var(--border-default)",
-                      background: suggestion.doctor_id === d.id ? "var(--bg-paper)" : "transparent",
-                      color: suggestion.doctor_id === d.id ? "var(--brand-primary)" : "var(--text-primary)",
-                      fontWeight: suggestion.doctor_id === d.id ? 600 : 400,
-                    }}
-                  >
-                    {d.doctor_name}
-                    <span className="text-[11px] ml-1" style={{ color: "var(--text-muted)" }}>
-                      {[d.clinic_name, d.city].filter(Boolean).join(" · ")}
-                    </span>
-                  </button>
-                ))}
-                {filteredDoctors.length === 0 && (
-                  <div className="px-2 py-3 text-center text-xs space-y-2" style={{ color: "var(--text-muted)" }}>
-                    <div>No doctors match{doctorSearch ? ` "${doctorSearch}"` : ""}.</div>
+              {noDoctor ? (
+                <div className="rounded-md border bg-white p-3 mt-1 flex items-center justify-between gap-3" style={{ borderColor: "var(--border-default)" }}>
+                  <div className="text-sm" style={{ color: "var(--text-secondary)" }}>Personal / admin task — not linked to a doctor</div>
+                  <Button variant="outline" size="sm" onClick={() => setNoDoctor(false)} data-testid="quick-capture-pick-doctor-instead">Pick a doctor instead</Button>
+                </div>
+              ) : (
+                <>
+                  <Input
+                    value={doctorSearch}
+                    onChange={(e) => setDoctorSearch(e.target.value)}
+                    placeholder="Search…"
+                    className="mt-1 mb-1"
+                    data-testid="quick-capture-doctor-search"
+                  />
+                  <div className="max-h-32 overflow-y-auto rounded border" style={{ borderColor: "var(--border-default)" }}>
+                    {filteredDoctors.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => setSuggestion({ ...suggestion, doctor_id: d.id, doctor_hint: d.doctor_name })}
+                        data-testid={`quick-capture-pick-${d.id}`}
+                        className="w-full text-left px-2 py-1.5 text-sm border-b last:border-b-0 transition-colors hover:bg-[var(--bg-paper)]"
+                        style={{
+                          borderColor: "var(--border-default)",
+                          background: suggestion.doctor_id === d.id ? "var(--bg-paper)" : "transparent",
+                          color: suggestion.doctor_id === d.id ? "var(--brand-primary)" : "var(--text-primary)",
+                          fontWeight: suggestion.doctor_id === d.id ? 600 : 400,
+                        }}
+                      >
+                        {d.doctor_name}
+                        <span className="text-[11px] ml-1" style={{ color: "var(--text-muted)" }}>
+                          {[d.clinic_name, d.city].filter(Boolean).join(" · ")}
+                        </span>
+                      </button>
+                    ))}
+                    {filteredDoctors.length === 0 && (
+                      <div className="px-2 py-3 text-center text-xs space-y-2" style={{ color: "var(--text-muted)" }}>
+                        <div>No doctors match{doctorSearch ? ` "${doctorSearch}"` : ""}.</div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setAddingDoctor(true)}
-                data-testid="quick-capture-add-doctor"
-                className="mt-1.5 text-xs flex items-center gap-1 hover:underline"
-                style={{ color: "var(--brand-primary)" }}
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                Can&apos;t find them? Add new doctor{doctorSearch ? ` "${doctorSearch}"` : ""}
-              </button>
+                  <div className="mt-1.5 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setAddingDoctor(true)}
+                      data-testid="quick-capture-add-doctor"
+                      className="text-xs flex items-center gap-1 hover:underline"
+                      style={{ color: "var(--brand-primary)" }}
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      Can&apos;t find them? Add new doctor{doctorSearch ? ` "${doctorSearch}"` : ""}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNoDoctor(true)}
+                      data-testid="quick-capture-mark-personal"
+                      className="text-xs hover:underline"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      This isn&apos;t about a doctor
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "var(--text-secondary)" }}>
               <input
@@ -343,7 +369,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
                 onChange={(e) => setSuggestion({ ...suggestion, is_promise: e.target.checked })}
                 data-testid="quick-capture-is-promise"
               />
-              Mark as a promise to the doctor
+              {noDoctor ? "Mark as a promise" : "Mark as a promise to the doctor"}
             </label>
             <DialogFooter>
               <Button variant="outline" onClick={() => setStep(STEP_RECORD)}>Back</Button>

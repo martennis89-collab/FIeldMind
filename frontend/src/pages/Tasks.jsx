@@ -438,6 +438,7 @@ function EditTaskDialog({ open, task, onClose, onSaved }) {
 function NewTaskDialog({ open, doctors, onClose, onCreated, onDoctorAdded }) {
   const [doctorId, setDoctorId] = useState("");
   const [docQuery, setDocQuery] = useState("");
+  const [personalTask, setPersonalTask] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState(todayISO());
@@ -448,7 +449,7 @@ function NewTaskDialog({ open, doctors, onClose, onCreated, onDoctorAdded }) {
   // Reset form whenever dialog opens
   useEffect(() => {
     if (open) {
-      setDoctorId(""); setDocQuery(""); setTitle(""); setDescription("");
+      setDoctorId(""); setDocQuery(""); setPersonalTask(false); setTitle(""); setDescription("");
       setDueDate(todayISO()); setPriority("Medium"); setAddingDoctor(false);
     }
   }, [open]);
@@ -466,12 +467,12 @@ function NewTaskDialog({ open, doctors, onClose, onCreated, onDoctorAdded }) {
   const selectedDoctor = doctors.find((d) => d.id === doctorId);
 
   const save = async () => {
-    if (!doctorId) { toast.error("Pick a doctor"); return; }
+    if (!doctorId && !personalTask) { toast.error("Pick a doctor, or mark this as a personal task"); return; }
     if (!title.trim()) { toast.error("Add a task title"); return; }
     setSaving(true);
     try {
       const { data } = await api.post("/tasks", {
-        doctor_id: doctorId,
+        doctor_id: personalTask ? null : doctorId,
         task_title: title.trim(),
         task_description: description.trim() || "",
         due_date: dueDate || null,
@@ -496,7 +497,12 @@ function NewTaskDialog({ open, doctors, onClose, onCreated, onDoctorAdded }) {
         <div className="space-y-4">
           <div>
             <Label className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Doctor</Label>
-            {selectedDoctor ? (
+            {personalTask ? (
+              <div className="rounded-md border bg-white p-3 mt-1 flex items-start justify-between gap-3" style={{ borderColor: "var(--border-default)" }}>
+                <div className="text-sm" style={{ color: "var(--text-secondary)" }}>Personal / admin task — not linked to a doctor</div>
+                <Button variant="outline" size="sm" onClick={() => setPersonalTask(false)} data-testid="new-task-pick-doctor-instead">Pick a doctor instead</Button>
+              </div>
+            ) : selectedDoctor ? (
               <div className="rounded-md border bg-white p-3 mt-1 flex items-start justify-between gap-3" style={{ borderColor: "var(--border-default)" }}>
                 <div>
                   <div className="font-medium" style={{ color: "var(--brand-primary)" }}>{selectedDoctor.doctor_name}</div>
@@ -539,16 +545,27 @@ function NewTaskDialog({ open, doctors, onClose, onCreated, onDoctorAdded }) {
                     ))
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setAddingDoctor(true)}
-                  data-testid="new-task-add-doctor"
-                  className="mt-2 text-xs flex items-center gap-1 hover:underline"
-                  style={{ color: "var(--brand-primary)" }}
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  Can&apos;t find them? Add new doctor{docQuery ? ` "${docQuery}"` : ""}
-                </button>
+                <div className="mt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setAddingDoctor(true)}
+                    data-testid="new-task-add-doctor"
+                    className="text-xs flex items-center gap-1 hover:underline"
+                    style={{ color: "var(--brand-primary)" }}
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    Can&apos;t find them? Add new doctor{docQuery ? ` "${docQuery}"` : ""}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPersonalTask(true)}
+                    data-testid="new-task-mark-personal"
+                    className="text-xs hover:underline"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    This isn&apos;t about a doctor
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -601,7 +618,7 @@ function NewTaskDialog({ open, doctors, onClose, onCreated, onDoctorAdded }) {
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={save} disabled={saving || !doctorId || !title.trim()} data-testid="new-task-save" style={{ background: "var(--brand-secondary)", color: "white" }}>
+          <Button onClick={save} disabled={saving || (!doctorId && !personalTask) || !title.trim()} data-testid="new-task-save" style={{ background: "var(--brand-secondary)", color: "white" }}>
             {saving ? "Saving…" : "Create task"}
           </Button>
         </DialogFooter>
