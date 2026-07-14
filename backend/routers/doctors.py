@@ -494,6 +494,17 @@ async def get_doctor_tasks(doctor_id: str, user=Depends(get_current_user)):
     }, {"_id": 0}).sort("due_date", 1).to_list(200)
     return tasks
 
+@api.get("/doctors/{doctor_id}/meetings")
+async def get_doctor_meetings(doctor_id: str, user=Depends(get_current_user)):
+    doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
+    if not doc or not await _can_access_doctor(user, doc):
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    meetings = await db.meetings.find({
+        "doctor_id": doctor_id,
+        "deleted_at": None,
+    }, {"_id": 0}).sort("scheduled_at", -1).to_list(200)
+    return meetings
+
 @api.get("/doctors/{doctor_id}/prepare")
 async def prepare_visit(doctor_id: str, user=Depends(get_current_user)):
     doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})

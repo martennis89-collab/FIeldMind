@@ -4,7 +4,7 @@ import api from "../lib/api";
 import { StatusPill, sentimentKind, cadenceKind, priorityKind, SegmentBadge } from "../components/StatusPill";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
-import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2, Sprout } from "lucide-react";
+import { ArrowLeft, ClipboardList, CalendarClock, CalendarPlus, ScanLine, Brain, MessageSquare, AlertTriangle, MapPin, CheckCircle2, Sprout, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 function formatDate(s) {
@@ -22,21 +22,24 @@ export default function DoctorProfile() {
   const [doctor, setDoctor] = useState(null);
   const [visits, setVisits] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [meetings, setMeetings] = useState([]);
   const [prep, setPrep] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [d, v, t, p] = await Promise.all([
+      const [d, v, t, m, p] = await Promise.all([
         api.get(`/doctors/${id}`),
         api.get(`/doctors/${id}/visits`),
         api.get(`/doctors/${id}/tasks`),
+        api.get(`/doctors/${id}/meetings`),
         api.get(`/doctors/${id}/prepare`),
       ]);
       setDoctor(d.data);
       setVisits(v.data);
       setTasks(t.data);
+      setMeetings(m.data);
       setPrep(p.data);
     } catch (err) {
       toast.error("Doctor not accessible");
@@ -52,6 +55,28 @@ export default function DoctorProfile() {
     await api.put(`/tasks/${task.id}`, { status: "Completed" });
     toast.success("Promise completed");
     load();
+  };
+
+  const deleteTask = async (task) => {
+    if (!window.confirm(`Delete this promise?\n\n"${task.task_title}"`)) return;
+    try {
+      await api.delete(`/tasks/${task.id}`);
+      toast.success("Promise deleted");
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to delete");
+    }
+  };
+
+  const deleteMeeting = async (meeting) => {
+    if (!window.confirm(`Delete this meeting${meeting.subject ? `\n\n"${meeting.subject}"` : ""}?`)) return;
+    try {
+      await api.delete(`/meetings/${meeting.id}`);
+      toast.success("Meeting deleted");
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to delete");
+    }
   };
 
   const toggleGrowthProgram = async () => {
@@ -161,6 +186,7 @@ export default function DoctorProfile() {
           <TabsTrigger value="prepare" data-testid="tab-prepare"><Brain className="w-4 h-4 mr-1" />Prepare</TabsTrigger>
           <TabsTrigger value="timeline" data-testid="tab-timeline"><MessageSquare className="w-4 h-4 mr-1" />Timeline</TabsTrigger>
           <TabsTrigger value="promises" data-testid="tab-promises"><ClipboardList className="w-4 h-4 mr-1" />Promises ({openTasks.length})</TabsTrigger>
+          <TabsTrigger value="meetings" data-testid="tab-meetings"><CalendarPlus className="w-4 h-4 mr-1" />Meetings ({meetings.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="prepare">
@@ -259,9 +285,19 @@ export default function DoctorProfile() {
                       {t.created_from_ai && <StatusPill kind="muted"><Brain className="w-3 h-3" />AI</StatusPill>}
                     </div>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => completeTask(t)} data-testid={`complete-task-${t.id}`}>
-                    <CheckCircle2 className="w-4 h-4 mr-1" /> Complete
-                  </Button>
+                  <div className="flex flex-col gap-2 items-end shrink-0">
+                    <Button size="sm" variant="outline" onClick={() => completeTask(t)} data-testid={`complete-task-${t.id}`}>
+                      <CheckCircle2 className="w-4 h-4 mr-1" /> Complete
+                    </Button>
+                    <button
+                      onClick={() => deleteTask(t)}
+                      data-testid={`delete-task-${t.id}`}
+                      title="Delete promise"
+                      className="p-1.5 rounded hover:bg-[var(--bg-paper)]"
+                    >
+                      <Trash2 className="w-4 h-4" style={{ color: "var(--status-danger)" }} />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -277,10 +313,44 @@ export default function DoctorProfile() {
                       <div className="text-sm line-through" style={{ color: "var(--text-muted)" }}>{t.task_title}</div>
                     </div>
                     <div className="text-xs" style={{ color: "var(--text-muted)" }}>{formatDate(t.completed_at)}</div>
+                    <button
+                      onClick={() => deleteTask(t)}
+                      data-testid={`delete-task-${t.id}`}
+                      title="Delete promise"
+                      className="p-1.5 rounded hover:bg-white"
+                    >
+                      <Trash2 className="w-4 h-4" style={{ color: "var(--status-danger)" }} />
+                    </button>
                   </div>
                 ))}
               </>
             )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="meetings">
+          <div className="space-y-3" data-testid="meetings-list">
+            {meetings.map((m) => (
+              <div key={m.id} className="rounded-md border p-4 flex items-start justify-between gap-3" style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }} data-testid={`meeting-${m.id}`}>
+                <div className="min-w-0">
+                  <div className="font-medium" style={{ color: "var(--text-primary)" }}>{m.subject || (m.is_demo ? "iTero demo" : "Meeting")}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <StatusPill kind="info"><CalendarClock className="w-3 h-3" />{formatDateTime(m.scheduled_at)}</StatusPill>
+                    <StatusPill kind={m.status === "Completed" ? "success" : m.status === "Cancelled" ? "muted" : "info"}>{m.status}</StatusPill>
+                    {m.is_demo && <StatusPill kind="muted"><ScanLine className="w-3 h-3" />Demo</StatusPill>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => deleteMeeting(m)}
+                  data-testid={`delete-meeting-${m.id}`}
+                  title="Delete meeting"
+                  className="p-1.5 rounded hover:bg-[var(--bg-paper)] shrink-0"
+                >
+                  <Trash2 className="w-4 h-4" style={{ color: "var(--status-danger)" }} />
+                </button>
+              </div>
+            ))}
+            {meetings.length === 0 && <div className="text-sm" style={{ color: "var(--text-muted)" }}>No meetings booked.</div>}
           </div>
         </TabsContent>
       </Tabs>
