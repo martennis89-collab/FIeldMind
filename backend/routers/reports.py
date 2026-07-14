@@ -141,7 +141,7 @@ async def generate_report(week_start: Optional[str] = None, user=Depends(get_cur
 
 @api.post("/reports")
 async def create_report(body: ReportCreate, user=Depends(get_current_user)):
-    if user["role"] != "TM":
+    if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="Only TMs create reports")
     # Reuse existing draft for the same week if any
     existing = await db.reports.find_one({
