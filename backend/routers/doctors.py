@@ -6,6 +6,7 @@ its handlers on it. Behaviour is byte-for-byte identical to pre-refactor.
 from __future__ import annotations
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta, date
+import asyncio
 import io
 import os
 import logging
@@ -124,7 +125,7 @@ async def list_doctors(
             {"city": {"$regex": q, "$options": "i"}},
         ]
     docs = await db.doctors.find(base, {"_id": 0}).to_list(500)
-    enriched = [await _enrich_doctor(d) for d in docs]
+    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
     if cadence:
         enriched = [d for d in enriched if d["cadence_status"] == cadence]
     if sentiment:
