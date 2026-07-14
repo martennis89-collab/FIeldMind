@@ -839,7 +839,7 @@ async def manager_cross_sell(user=Depends(require_roles("Manager", "SeniorTM", "
 
 @api.get("/dashboard/tm/itero")
 async def tm_itero(user=Depends(get_current_user)):
-    if user["role"] != "TM":
+    if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="TM only")
     docs = await db.doctors.find({"assigned_tm_id": user["id"]}, {"_id": 0}).to_list(500)
     enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
@@ -879,7 +879,7 @@ async def tm_itero(user=Depends(get_current_user)):
 
 @api.get("/dashboard/tm/invisalign")
 async def tm_invisalign(user=Depends(get_current_user)):
-    if user["role"] != "TM":
+    if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="TM only")
     docs = await db.doctors.find({"assigned_tm_id": user["id"]}, {"_id": 0}).to_list(500)
     enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
