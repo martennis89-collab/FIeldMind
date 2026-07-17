@@ -5,6 +5,7 @@ All routes are prefixed with /api.
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, UploadFile, File, Form
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
@@ -1703,6 +1704,10 @@ app.add_middleware(
     # streamed exports (receipts.zip, report PDFs, etc.).
     expose_headers=["Content-Disposition"],
 )
+# No compression was enabled at all — a 93-doctor enriched list is ~165KB
+# raw but ~9KB gzipped (95% smaller). Every JSON response in the app was
+# going over the wire uncompressed until now.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
