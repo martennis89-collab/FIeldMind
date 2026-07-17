@@ -38,7 +38,7 @@ from server import (
     _cadence_status,
     _priority_score,
     _priority_label,
-    _enrich_doctor,
+    _enrich_doctors_batch,
     _aggregate_itero,
     _aggregate_invisalign,
     _aggregate_commercial,
@@ -131,7 +131,7 @@ async def tm_dashboard(user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Forbidden")
     doc_q = await _doctor_query_for(user)
     docs = await db.doctors.find(doc_q, {"_id": 0}).to_list(500)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
     enriched.sort(key=lambda d: d["visit_priority_score"], reverse=True)
 
     today = datetime.now(timezone.utc).date().isoformat()
@@ -288,9 +288,7 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "SeniorTM", "A
     # cheaply (already in the doctor row) before paying the per-doc enrich
     # cost — only ~5% of doctors typically match Engaged/Expert.
     high_seg_candidates = [d for d in docs if d.get("segment") in ("Engaged", "Expert")]
-    enriched_candidates = await asyncio.gather(
-        *[_enrich_doctor(d) for d in high_seg_candidates]
-    ) if high_seg_candidates else []
+    enriched_candidates = await _enrich_doctors_batch(high_seg_candidates)
     under_visited = [
         d for d in enriched_candidates
         if d["cadence_status"] in ("Overdue", "Critical")
@@ -372,7 +370,7 @@ async def manager_performance(user=Depends(require_roles("Manager", "SeniorTM", 
 
         # high-priority unvisited (priority>=55, not visited in 30d)
         recently_visited_ids = {v["doctor_id"] for v in my_visits_30}
-        enriched_my = list(await asyncio.gather(*[_enrich_doctor(d) for d in my_docs])) if my_docs else []
+        enriched_my = await _enrich_doctors_batch(my_docs)
         high_pri_unvisited = [d for d in enriched_my if d["visit_priority_score"] >= 55 and d["id"] not in recently_visited_ids]
 
         # over-visit low-value (Occasional segment) ratio
@@ -454,7 +452,7 @@ async def manager_commercial(user=Depends(require_roles("Manager", "SeniorTM", "
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
     total = len(enriched) or 1
 
     demo_discussed = sum(1 for d in enriched if d["commercial_state"]["demo_discussed"])
@@ -550,7 +548,7 @@ async def manager_interventions(stale_proposal_days: int = 7, user=Depends(requi
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
     user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
     tm_name = {t["id"]: t["full_name"] for t in tms}
@@ -653,7 +651,7 @@ async def manager_itero(user=Depends(require_roles("Manager", "SeniorTM", "Admin
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
 
     discussed = sum(1 for d in enriched if d["itero_state"]["demo_discussed"])
     booked = sum(1 for d in enriched if d["itero_state"]["demo_booked"])
@@ -719,7 +717,7 @@ async def manager_invisalign(user=Depends(require_roles("Manager", "SeniorTM", "
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
     total = len(enriched) or 1
 
     counts = {
@@ -797,7 +795,7 @@ async def manager_cross_sell(user=Depends(require_roles("Manager", "SeniorTM", "
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
 
     inv_strong_no_itero = []
     itero_low_invisalign = []
@@ -842,7 +840,7 @@ async def tm_itero(user=Depends(get_current_user)):
     if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="TM only")
     docs = await db.doctors.find({"assigned_tm_id": user["id"]}, {"_id": 0}).to_list(500)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
     # demos awaiting follow-up
     follow_ups = []
     for d in enriched:
@@ -882,7 +880,7 @@ async def tm_invisalign(user=Depends(get_current_user)):
     if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="TM only")
     docs = await db.doctors.find({"assigned_tm_id": user["id"]}, {"_id": 0}).to_list(500)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
     cert_interest = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"]}
                      for d in enriched if d["invisalign_state"]["certification_interest"]][:15]
     needs_tps_p2p = [{"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],

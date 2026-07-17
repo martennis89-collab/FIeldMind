@@ -324,7 +324,80 @@ async def _enrich_doctor_impl(doctor: dict) -> dict:
         }),
         db.visits.find({"doctor_id": doc_id, "deleted_at": None}, {"_id": 0}).sort("visit_date", -1).to_list(10),
     )
+    return _compute_enriched_fields(doctor, last_visit, visit_count_q, open_promises, overdue_promises, recent)
 
+
+async def _enrich_doctors_batch(docs: list) -> list:
+    """Same output as calling _enrich_doctor on every doctor in `docs`, but
+    fetches the per-doctor data with a constant number of aggregation queries
+    instead of 5 round trips PER DOCTOR.
+
+    Why this exists: _enrich_doctor's 5-queries-per-doctor pattern is fine
+    against a local DB (sub-millisecond round trips) but every one of those
+    round trips pays the full network latency to a remote MongoDB — for 80+
+    doctors that's 400+ round trips for a single page load. No amount of
+    Atlas tier upgrade fixes that; dedicated hardware doesn't reduce
+    speed-of-light latency. Batching cuts it to 3 round trips total,
+    regardless of how many doctors are being enriched.
+    """
+    if not docs:
+        return []
+    doc_ids = [d["id"] for d in docs]
+    quarter_start = datetime.now(timezone.utc) - timedelta(days=90)
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    tasks_agg, visits_q_agg, recent_agg = await asyncio.gather(
+        db.tasks.aggregate([
+            {"$match": {"doctor_id": {"$in": doc_ids}, "status": {"$in": ["Open", "Overdue"]}}},
+            {"$group": {
+                "_id": "$doctor_id",
+                "open_promises": {"$sum": 1},
+                "overdue_promises": {"$sum": {"$cond": [{"$lt": ["$due_date", today]}, 1, 0]}},
+            }},
+        ]).to_list(None),
+        db.visits.aggregate([
+            {"$match": {"doctor_id": {"$in": doc_ids}, "deleted_at": None, "visit_date": {"$gte": quarter_start.isoformat()}}},
+            {"$group": {"_id": "$doctor_id", "count": {"$sum": 1}}},
+        ]).to_list(None),
+        # Per-doctor top-10-most-recent visits in one pass: sort globally first
+        # (index-backed on {doctor_id, visit_date}), then group + cap to 10 —
+        # $group preserves the pre-sorted order within each group's $push.
+        db.visits.aggregate([
+            {"$match": {"doctor_id": {"$in": doc_ids}, "deleted_at": None}},
+            {"$sort": {"visit_date": -1}},
+            {"$group": {"_id": "$doctor_id", "visits": {"$push": "$$ROOT"}}},
+            {"$project": {"visits": {"$slice": ["$visits", 10]}}},
+        ]).to_list(None),
+    )
+
+    tasks_by_doc = {r["_id"]: r for r in tasks_agg}
+    visit_count_by_doc = {r["_id"]: r["count"] for r in visits_q_agg}
+    recent_by_doc = {}
+    for r in recent_agg:
+        vs = r.get("visits") or []
+        for v in vs:
+            v.pop("_id", None)  # $$ROOT includes _id; strip for parity with the {"_id": 0} projection elsewhere
+        recent_by_doc[r["_id"]] = vs
+
+    out = []
+    for doctor in docs:
+        doc_id = doctor["id"]
+        recent = recent_by_doc.get(doc_id, [])
+        last_visit = recent[0] if recent else None
+        visit_count_q = visit_count_by_doc.get(doc_id, 0)
+        tinfo = tasks_by_doc.get(doc_id) or {}
+        out.append(_compute_enriched_fields(
+            doctor, last_visit, visit_count_q,
+            tinfo.get("open_promises", 0), tinfo.get("overdue_promises", 0), recent,
+        ))
+    return out
+
+
+def _compute_enriched_fields(doctor: dict, last_visit, visit_count_q, open_promises, overdue_promises, recent) -> dict:
+    """Pure computation half of doctor enrichment — no DB access. Shared by
+    the single-doctor path (_enrich_doctor_impl) and the batched list path
+    (_enrich_doctors_batch) so both produce byte-for-byte identical output.
+    """
     last_visit_date = last_visit["visit_date"] if last_visit else None
     days_since = None
     if last_visit_date:
@@ -1256,7 +1329,7 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
 
     # doctors needing attention next week
     my_docs = await db.doctors.find({"assigned_tm_id": tm_id}, {"_id": 0}).to_list(500)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in my_docs])) if my_docs else []
+    enriched = await _enrich_doctors_batch(my_docs)
     enriched.sort(key=lambda d: d["visit_priority_score"], reverse=True)
     needing = [
         {"id": d["id"], "doctor_name": d["doctor_name"], "segment": d["segment"],

@@ -40,6 +40,7 @@ from server import (
     _priority_score,
     _priority_label,
     _enrich_doctor,
+    _enrich_doctors_batch,
     _aggregate_itero,
     _aggregate_invisalign,
     _aggregate_commercial,
@@ -158,7 +159,7 @@ async def list_doctors(
             {"city": {"$regex": q, "$options": "i"}},
         ]
     docs = await db.doctors.find(base, {"_id": 0}).to_list(500)
-    enriched = list(await asyncio.gather(*[_enrich_doctor(d) for d in docs])) if docs else []
+    enriched = await _enrich_doctors_batch(docs)
     if cadence:
         enriched = [d for d in enriched if d["cadence_status"] == cadence]
     if sentiment:
