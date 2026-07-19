@@ -1289,9 +1289,14 @@ def _track_filter_visits(track: str):
 # ====================================================
 async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -> dict:
     tm_id = tm_user["id"]
+    # Deleting a visit/task only sets deleted_at — it stays in the collection.
+    # None of these queries excluded soft-deleted rows, so a visit or promise
+    # you deleted (e.g. fixing a mis-dated Telegram log) still counted here.
+    not_deleted = {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
     visits = await db.visits.find({
         "tm_user_id": tm_id,
-        "visit_date": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
+        "visit_date": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+        **not_deleted,
     }, {"_id": 0}).to_list(2000)
     events_this_week = await db.events.find({
         "tm_user_id": tm_id,
@@ -1300,18 +1305,21 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
     }, {"_id": 0}).sort([("scheduled_at", 1)]).to_list(500)
     tasks_created = await db.tasks.find({
         "tm_user_id": tm_id,
-        "created_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
+        "created_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+        **not_deleted,
     }, {"_id": 0}).to_list(2000)
     tasks_completed = await db.tasks.find({
         "tm_user_id": tm_id,
         "status": "Completed",
-        "completed_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"}
+        "completed_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+        **not_deleted,
     }, {"_id": 0}).to_list(2000)
     today = datetime.now(timezone.utc).date().isoformat()
     overdue = await db.tasks.count_documents({
         "tm_user_id": tm_id,
         "status": {"$in": ["Open", "Overdue"]},
         "due_date": {"$lt": today},
+        **not_deleted,
     })
 
     doctor_ids = {v["doctor_id"] for v in visits}
@@ -1373,12 +1381,14 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "tm_user_id": tm_id,
         "is_demo": True,
         "created_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+        **not_deleted,
     }, {"_id": 0}).to_list(2000)
     demo_meetings_completed = await db.meetings.find({
         "tm_user_id": tm_id,
         "is_demo": True,
         "status": "Completed",
         "updated_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+        **not_deleted,
     }, {"_id": 0}).to_list(2000)
 
     # Legacy fallback: count demos flagged directly on visits that don't have a linked meeting
