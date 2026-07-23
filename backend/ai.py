@@ -3,11 +3,19 @@ import os
 import json
 import re
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional
 import anthropic
 
 logger = logging.getLogger(__name__)
+
+# TMs using this app are in Bulgaria — "today" for date-resolution purposes
+# (visit_date_mentioned, meeting_scheduled_for) needs to be THEIR calendar
+# day, not UTC's. Sofia is UTC+2/+3; anyone dictating a note between
+# midnight and ~3am local time would otherwise get "today" resolved to
+# UTC's still-yesterday date, silently misdating whatever they said.
+_LOCAL_TZ = ZoneInfo("Europe/Sofia")
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MODEL_NAME = "claude-sonnet-4-5-20250929"
@@ -265,7 +273,7 @@ async def analyze_note(note: str, session_id: str, doctors: Optional[list] = Non
             names_block = "\n\nDoctors available (match one if the note clearly names them):\n- " + "\n- ".join(
                 d["doctor_name"] for d in doctors[:300] if d.get("doctor_name")
             )
-        today_str = datetime.now(timezone.utc).date().isoformat()
+        today_str = datetime.now(_LOCAL_TZ).date().isoformat()
         response = await _client.messages.create(
             model=MODEL_NAME,
             max_tokens=4096,
