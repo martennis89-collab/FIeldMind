@@ -1698,9 +1698,10 @@ from routers import (
     interventions,
     benchmark,
     reimbursement,
+    assistant,
     telegram,
 )
-_ = (auth, users, doctors, visits, track_signals, clinical_patterns, meetings, events, tasks, dashboards, itero, search, taxonomy, reports, audit_logs, expenses, ai_extract, root, companies, metrics, insights, interventions, benchmark, reimbursement, telegram)  # silence unused-import linters
+_ = (auth, users, doctors, visits, track_signals, clinical_patterns, meetings, events, tasks, dashboards, itero, search, taxonomy, reports, audit_logs, expenses, ai_extract, root, companies, metrics, insights, interventions, benchmark, reimbursement, assistant, telegram)  # silence unused-import linters
 
 app.include_router(api)
 

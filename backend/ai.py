@@ -88,6 +88,29 @@ date given below — never guess a date without that reference. If the note does
 when the visit happened at all (most notes — assume it's about a visit happening now),
 return null. This is the visit date itself, not a promise due date.
 
+INTENT — classify what the TM actually wants done, one of:
+- "log_visit": reporting on a conversation/visit that already happened, or just happened.
+  This is the default for almost every note — a TM describing what was discussed.
+- "book_meeting": explicitly asking to SCHEDULE A FUTURE meeting with a doctor
+  (e.g. "Book a meeting with Dr. Ivanov next Tuesday at 2pm", "Set up a call with
+  Dr. X on the 20th"). The note is a scheduling REQUEST, not a report of something
+  that already happened.
+- "book_demo": explicitly asking to schedule a FUTURE iTero scanner demo
+  (e.g. "Book an iTero demo with Dr. X on Friday morning"). Same as book_meeting but
+  specifically a scanner demo.
+- "task": a personal/admin reminder that has NOTHING to do with a doctor visit
+  (e.g. "Remind me to call the bank about the loan"). Not a scheduling request, not
+  a visit report.
+Default to "log_visit" whenever genuinely ambiguous — never lose a real field report by
+misclassifying it as something else.
+
+MEETING_SCHEDULED_FOR — ONLY set when intent is "book_meeting" or "book_demo": the ISO
+datetime (YYYY-MM-DDTHH:MM) the TM wants the meeting scheduled for, resolved using the
+reference date given below (e.g. "next Tuesday", "the 20th", "tomorrow" all need that
+reference to resolve correctly). If a date was given but no time, default to 09:00. If
+you cannot confidently resolve a SPECIFIC date, return null — never guess one; the caller
+will ask the TM to clarify rather than book something at a made-up time.
+
 MARKET_SIGNALS: short string observations relevant to market intelligence (e.g., "Doctor cited competitor X in city Y", "Affordability concern raised by Active segment").
 
 DOCTOR_MATCH — if a list of "Doctors available" is provided below the note, and the note
@@ -130,6 +153,8 @@ OUTPUT FORMAT — ALWAYS return ONLY a single JSON object, no prose, no markdown
   "sentiment": "Neutral",
   "opportunity_state": "Unknown",
   "visit_date_mentioned": null,
+  "intent": "log_visit",
+  "meeting_scheduled_for": null,
   "promises_detected": [
     {"task_title": "", "task_description": "", "suggested_due_date": "YYYY-MM-DD", "priority": "Medium"}
   ],
@@ -191,6 +216,8 @@ def _empty_result(reason: str = "") -> dict:
         "sentiment": "Neutral",
         "opportunity_state": "Unknown",
         "visit_date_mentioned": None,
+        "intent": "log_visit",
+        "meeting_scheduled_for": None,
         "promises_detected": [],
         "suggested_next_action": "",
         "market_signals": [],
@@ -268,6 +295,13 @@ async def analyze_note(note: str, session_id: str, doctors: Optional[list] = Non
         vdm = data.get("visit_date_mentioned")
         if vdm and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(vdm)) and str(vdm) <= today_str:
             result["visit_date_mentioned"] = str(vdm)
+        intent = data.get("intent") or "log_visit"
+        if intent not in ("log_visit", "book_meeting", "book_demo", "task"):
+            intent = "log_visit"
+        result["intent"] = intent
+        msf = data.get("meeting_scheduled_for")
+        if msf and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?", str(msf)):
+            result["meeting_scheduled_for"] = str(msf)
         promises = data.get("promises_detected") or []
         norm_promises = []
         for p in promises[:6]:

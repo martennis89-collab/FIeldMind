@@ -5,14 +5,47 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "./ui/dialog";
-import { Mic, Square, Sparkles, Plus, Loader2, Wand2, UserPlus } from "lucide-react";
+import { Mic, Square, Sparkles, Plus, Loader2, Wand2, UserPlus, CheckCircle2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import InlineAddDoctor from "./InlineAddDoctor";
 
 const STEP_RECORD = "record";       // pick mic or paste text
-const STEP_EXTRACTING = "extract";  // calling AI
-const STEP_REVIEW = "review";       // user confirms suggestion
+const STEP_EXTRACTING = "extract";  // calling AI (typed-text task flow)
+const STEP_REVIEW = "review";       // user confirms suggestion (typed-text task flow)
 const STEP_SAVING = "saving";
+const STEP_ACTING = "acting";       // voice flow: AI figuring out + performing the action
+const STEP_DONE = "done";           // voice flow: action performed, show what happened
+const STEP_NEEDS_INFO = "needs_info"; // voice flow: AI couldn't confidently act, needs more detail
+
+// Human-readable summary of what /assistant/execute did, for the voice flow's
+// "done" screen — mirrors routers/telegram.py's _format_result_message so a
+// voice note behaves and reads the same whether it came in via the app or Telegram.
+function describeResult(result) {
+  const action = result.action;
+  if (action === "task") {
+    return `Logged task: ${(result.task_titles || []).join("; ")}.`;
+  }
+  if (action === "meeting" || action === "demo") {
+    const doctorName = result.doctor_name || "the doctor";
+    const newDoctorLine = result.doctor_auto_created ? " (added as a new doctor)" : "";
+    const kind = action === "demo" ? "iTero demo" : "Meeting";
+    let when = result.scheduled_at || "";
+    try {
+      when = new Date(result.scheduled_at).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+      });
+    } catch { /* keep raw string */ }
+    return `${kind} booked with ${doctorName}${newDoctorLine} for ${when}.`;
+  }
+  if (action === "visit") {
+    const doctorName = result.doctor_name || "the doctor";
+    const newDoctorLine = result.doctor_auto_created ? " (added as a new doctor)" : "";
+    const promiseLine = result.n_promises ? ` · ${result.n_promises} follow-up${result.n_promises !== 1 ? "s" : ""} tracked` : "";
+    const dateLine = result.visit_date ? ` · dated ${result.visit_date}` : "";
+    return `Logged visit with ${doctorName}${newDoctorLine} — ${result.sentiment || "Neutral"} sentiment${promiseLine}${dateLine}.`;
+  }
+  return "Done.";
+}
 
 function todayISO() {
   const d = new Date();
@@ -33,6 +66,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
   const [doctorSearch, setDoctorSearch] = useState("");
   const [addingDoctor, setAddingDoctor] = useState(false);
   const [noDoctor, setNoDoctor] = useState(false);
+  const [actionResult, setActionResult] = useState(null);
 
   useEffect(() => {
     if (!open) return;
@@ -41,8 +75,35 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
     setSuggestion(null);
     setDoctorSearch("");
     setNoDoctor(false);
+    setActionResult(null);
     api.get("/doctors").then((r) => setDoctors(r.data || [])).catch(() => setDoctors([]));
   }, [open]);
+
+  // Voice flow only — types (book a meeting/demo, log a visit, standalone task)
+  // are figured out and PERFORMED automatically, same engine as Telegram. Typed
+  // text below still goes through the simpler task-only "Suggest task" flow.
+  const runSmartAction = async (noteText) => {
+    setStep(STEP_ACTING);
+    try {
+      const { data } = await api.post("/assistant/execute", {
+        note: noteText,
+        doctor_id: defaultDoctorId || null,
+      });
+      setActionResult(data);
+      if (data.status === "done") {
+        setStep(STEP_DONE);
+        onCreated?.();
+      } else if (data.status === "needs_clarification") {
+        setStep(STEP_NEEDS_INFO);
+      } else {
+        toast.error(data.detail || "Something went wrong");
+        setStep(STEP_RECORD);
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to process that note");
+      setStep(STEP_RECORD);
+    }
+  };
 
   const cleanupStream = () => {
     if (streamRef.current) {
@@ -75,12 +136,18 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
           const txt = (data?.text || "").trim();
           if (!txt) {
             toast.error("Couldn't pick up any speech — try again.");
-          } else {
-            setNote((prev) => (prev ? prev + " " + txt : txt));
+            setTranscribing(false);
+            return;
           }
+          const fullNote = note ? `${note} ${txt}` : txt;
+          setNote(fullNote);
+          setTranscribing(false);
+          // Voice always goes through the smart-action engine — no manual
+          // "Suggest task" click needed, it figures out and performs the
+          // action directly (visit / meeting / demo / task).
+          await runSmartAction(fullNote);
         } catch (e) {
           toast.error(e?.response?.data?.detail || "Transcription failed");
-        } finally {
           setTranscribing(false);
         }
       };
@@ -183,7 +250,8 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
             Quick capture
           </DialogTitle>
           <DialogDescription>
-            Record a voice note or type a quick reminder — AI will turn it into a task or promise.
+            Record a voice note — AI figures out if it's a visit, a meeting/demo to book, or a
+            personal task, and does it. Typed text becomes a task suggestion to review.
           </DialogDescription>
         </DialogHeader>
 
@@ -241,6 +309,41 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
           <div className="py-12 flex flex-col items-center gap-3" data-testid="quick-capture-extracting">
             <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--brand-primary)" }} />
             <div className="text-sm" style={{ color: "var(--text-secondary)" }}>AI is reading your note…</div>
+          </div>
+        )}
+
+        {step === STEP_ACTING && (
+          <div className="py-12 flex flex-col items-center gap-3" data-testid="quick-capture-acting">
+            <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--brand-primary)" }} />
+            <div className="text-sm" style={{ color: "var(--text-secondary)" }}>Figuring out what to do…</div>
+          </div>
+        )}
+
+        {step === STEP_DONE && actionResult && (
+          <div className="space-y-4" data-testid="quick-capture-done">
+            <div className="rounded-md border p-4 flex items-start gap-3" style={{ background: "var(--status-success-bg)", borderColor: "var(--status-success)" }}>
+              <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "var(--status-success)" }} />
+              <div className="text-sm" style={{ color: "var(--text-primary)" }}>{describeResult(actionResult)}</div>
+            </div>
+            <DialogFooter>
+              <Button onClick={handleClose} data-testid="quick-capture-done-close" style={{ background: "var(--brand-primary)", color: "white" }}>
+                Done
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {step === STEP_NEEDS_INFO && actionResult && (
+          <div className="space-y-4" data-testid="quick-capture-needs-info">
+            <div className="rounded-md border p-4 flex items-start gap-3" style={{ background: "var(--status-warning-bg)", borderColor: "var(--status-warning)" }}>
+              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "var(--status-warning)" }} />
+              <div className="text-sm" style={{ color: "var(--text-primary)" }}>{actionResult.reason}</div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setStep(STEP_RECORD)} data-testid="quick-capture-try-again">
+                Try again
+              </Button>
+            </DialogFooter>
           </div>
         )}
 
