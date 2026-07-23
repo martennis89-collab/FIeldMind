@@ -1,18 +1,53 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useAuth } from "../lib/auth";
 import api from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { toast } from "sonner";
-import { KeyRound, ShieldCheck, UserRound } from "lucide-react";
+import { KeyRound, ShieldCheck, UserRound, Globe } from "lucide-react";
+
+// Full IANA zone list where the browser supports it (virtually every modern
+// browser does); falls back to a small curated set otherwise so the picker
+// never breaks. Works for any user in any country — nothing hardcoded.
+function allTimezones() {
+  try {
+    if (typeof Intl.supportedValuesOf === "function") {
+      return Intl.supportedValuesOf("timeZone");
+    }
+  } catch {
+    /* fall through */
+  }
+  return [
+    "UTC", "Europe/Sofia", "Europe/London", "Europe/Berlin", "Europe/Madrid", "Europe/Paris",
+    "Europe/Athens", "Europe/Istanbul", "Europe/Moscow", "America/New_York", "America/Chicago",
+    "America/Denver", "America/Los_Angeles", "America/Sao_Paulo", "Asia/Dubai", "Asia/Kolkata",
+    "Asia/Shanghai", "Asia/Tokyo", "Australia/Sydney",
+  ];
+}
 
 export default function Account() {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const [tzBusy, setTzBusy] = useState(false);
+  const timezones = useMemo(allTimezones, []);
+
+  const updateTimezone = async (tz) => {
+    setTzBusy(true);
+    try {
+      await api.put("/auth/timezone", { timezone: tz });
+      await refresh();
+      toast.success("Timezone updated");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not update timezone");
+    } finally {
+      setTzBusy(false);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -78,6 +113,34 @@ export default function Account() {
         <p className="mt-4 text-xs" style={{ color: "var(--text-muted)" }}>
           Name, email, or role wrong? Ping an admin — they can update your profile from the Admin panel.
         </p>
+      </section>
+
+      {/* Timezone card */}
+      <section
+        className="rounded-lg border p-5 mb-6"
+        style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}
+        data-testid="account-timezone-card"
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <Globe className="w-4 h-4" style={{ color: "var(--brand-primary)" }} />
+          <div className="text-sm font-medium" style={{ color: "var(--brand-primary)" }}>Timezone</div>
+        </div>
+        <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+          Used so voice notes and Telegram messages like "book a meeting tomorrow at 2pm" resolve against
+          your own calendar day, wherever you are.
+        </p>
+        <div className="max-w-sm">
+          <Select value={user?.timezone || ""} onValueChange={updateTimezone} disabled={tzBusy}>
+            <SelectTrigger className="bg-white" data-testid="account-timezone-select">
+              <SelectValue placeholder="Select your timezone" />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              {timezones.map((tz) => (
+                <SelectItem key={tz} value={tz}>{tz.replace(/_/g, " ")}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </section>
 
       {/* Password change card */}

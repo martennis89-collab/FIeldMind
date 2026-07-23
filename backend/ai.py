@@ -3,19 +3,32 @@ import os
 import json
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 from typing import Optional
 import anthropic
 
 logger = logging.getLogger(__name__)
 
-# TMs using this app are in Bulgaria — "today" for date-resolution purposes
-# (visit_date_mentioned, meeting_scheduled_for) needs to be THEIR calendar
-# day, not UTC's. Sofia is UTC+2/+3; anyone dictating a note between
-# midnight and ~3am local time would otherwise get "today" resolved to
-# UTC's still-yesterday date, silently misdating whatever they said.
-_LOCAL_TZ = ZoneInfo("Europe/Sofia")
+_UTC = dt_timezone.utc
+
+
+def _resolve_tz(user_timezone: Optional[str]) -> dt_timezone | ZoneInfo:
+    """Reference timezone for "today" in date-resolution prompts.
+
+    Users can be anywhere — this must NEVER be hardcoded to one country.
+    Each user's own IANA timezone (set in Account settings / auto-detected
+    from their browser) is the source of truth. Falls back to UTC — a
+    neutral default, not a guess at any particular country — when the
+    caller has no timezone on file (e.g. a Telegram-only user who never
+    opened the web app) or the stored value is invalid.
+    """
+    if user_timezone:
+        try:
+            return ZoneInfo(user_timezone)
+        except Exception:
+            logger.warning("Invalid user timezone %r; falling back to UTC", user_timezone)
+    return _UTC
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MODEL_NAME = "claude-sonnet-4-5-20250929"
@@ -254,12 +267,17 @@ def _empty_result(reason: str = "") -> dict:
     }
 
 
-async def analyze_note(note: str, session_id: str, doctors: Optional[list] = None) -> dict:
+async def analyze_note(
+    note: str, session_id: str, doctors: Optional[list] = None, user_timezone: Optional[str] = None
+) -> dict:
     """Run AI extraction. Always returns the schema, never raises.
 
     `doctors`: optional list of {"id": str, "doctor_name": str} the caller may name in
     the note — used to auto-match which doctor the visit was with (e.g. from a voice
     note dictated before picking a doctor manually).
+    `user_timezone`: IANA zone name (e.g. "Europe/Sofia", "America/New_York") for the
+    TM who wrote this note — used to resolve "today"/"tomorrow"/etc. against THEIR
+    calendar day, not the server's. Falls back to UTC if not provided/invalid.
     """
     note = (note or "").strip()
     if not note:
@@ -273,7 +291,7 @@ async def analyze_note(note: str, session_id: str, doctors: Optional[list] = Non
             names_block = "\n\nDoctors available (match one if the note clearly names them):\n- " + "\n- ".join(
                 d["doctor_name"] for d in doctors[:300] if d.get("doctor_name")
             )
-        today_str = datetime.now(_LOCAL_TZ).date().isoformat()
+        today_str = datetime.now(_resolve_tz(user_timezone)).date().isoformat()
         response = await _client.messages.create(
             model=MODEL_NAME,
             max_tokens=4096,

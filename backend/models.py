@@ -135,6 +135,7 @@ class UserPublic(BaseModel):
     region: Optional[str] = None
     active_status: bool = True
     company_id: Optional[str] = None  # Phase C — multi-tenant root
+    timezone: Optional[str] = None  # IANA zone, e.g. "Europe/Sofia" — used to resolve "today" in AI date parsing
     created_at: str
     updated_at: str
 

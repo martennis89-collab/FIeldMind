@@ -15,12 +15,31 @@ export function AuthProvider({ children }) {
   });
   const [loading, setLoading] = useState(false);
 
+  // First time this account is seen (or timezone was never set): silently
+  // adopt the browser's detected zone so "today"/"tomorrow" in voice notes
+  // resolve against the user's own calendar day, wherever they are — no
+  // setup required. They can still override it later in Account settings.
+  const maybeAutoDetectTimezone = async (userData) => {
+    if (userData?.timezone) return userData;
+    try {
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (!detected) return userData;
+      const { data: updated } = await api.put("/auth/timezone", { timezone: detected });
+      setUser(updated);
+      localStorage.setItem("fip_user", JSON.stringify(updated));
+      return updated;
+    } catch {
+      return userData; // non-critical — falls back to UTC server-side
+    }
+  };
+
   const refresh = async () => {
     if (!localStorage.getItem("fip_token")) return;
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
       localStorage.setItem("fip_user", JSON.stringify(data));
+      await maybeAutoDetectTimezone(data);
     } catch {
       logout();
     }
@@ -33,7 +52,8 @@ export function AuthProvider({ children }) {
       localStorage.setItem("fip_token", data.token);
       localStorage.setItem("fip_user", JSON.stringify(data.user));
       setUser(data.user);
-      return data.user;
+      const finalUser = await maybeAutoDetectTimezone(data.user);
+      return finalUser;
     } finally {
       setLoading(false);
     }

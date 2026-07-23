@@ -89,7 +89,9 @@ async def analyze_visit_note(body: AnalyzeNoteRequest, user=Depends(get_current_
         # one from the note against the caller's own scoped roster.
         doc_q = await _doctor_query_for(user)
         doctors = await db.doctors.find(doc_q, {"_id": 0, "id": 1, "doctor_name": 1}).to_list(2000)
-    result = await ai_analyze_note(body.note, session_id=f"analyze-{user['id']}", doctors=doctors)
+    result = await ai_analyze_note(
+        body.note, session_id=f"analyze-{user['id']}", doctors=doctors, user_timezone=user.get("timezone")
+    )
 
     # Nothing on the roster matched, but a name was heard — auto-create/resolve
     # so logging a visit is just as friction-free in the app as via Telegram,

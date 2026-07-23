@@ -6,6 +6,7 @@ its handlers on it. Behaviour is byte-for-byte identical to pre-refactor.
 from __future__ import annotations
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta, date
+from zoneinfo import ZoneInfo, available_timezones
 import io
 import os
 import logging
@@ -127,6 +128,30 @@ async def change_password(body: ChangePasswordBody, user=Depends(get_current_use
     )
     await _audit(user, "change_password", "user", user["id"])
     return {"ok": True}
+
+class TimezoneUpdateBody(BaseModel):
+    timezone: str
+
+
+_VALID_TIMEZONES = available_timezones()
+
+
+@api.put("/auth/timezone", response_model=UserPublic)
+async def update_my_timezone(body: TimezoneUpdateBody, user=Depends(get_current_user)):
+    """Self-service — any authenticated user sets their own IANA timezone.
+
+    This is the reference used to resolve "today"/"tomorrow"/etc. when the AI
+    parses a visit note or meeting request, so it works correctly no matter
+    what country the user is dictating from. The frontend auto-populates this
+    from the browser on first login; users can also change it manually in
+    Account settings.
+    """
+    tz = body.timezone.strip()
+    if tz not in _VALID_TIMEZONES:
+        raise HTTPException(status_code=400, detail="Unrecognised timezone")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"timezone": tz, "updated_at": _now_iso()}})
+    updated = await db.users.find_one({"id": user["id"]})
+    return _strip_user(updated)
 
 @api.post("/seed/init")
 async def seed_init():
