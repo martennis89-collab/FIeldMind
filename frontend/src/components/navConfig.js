@@ -74,12 +74,19 @@ export const SENIORTM_TOP = [
 // most role's average link width. The old single "default" count (used from
 // 768px all the way up) assumed far more room than that and overflowed the
 // header by ~380px on a real 768px tablet.
+// lg/xl counts below are sized against REAL measured pill widths (logged
+// via a live 1280px/1440px SeniorTM session) so the header never exceeds its
+// container and forces a page-wide horizontal scrollbar. Admin/Owner get one
+// fewer slot than Manager at the same width because they render an extra
+// fixed "Admin" pill outside this component (see Layout.jsx). If you add or
+// rename a nav item, re-measure — these are tuned to the current label set,
+// not a formula.
 export const TOP_PRIMARY_COUNT = {
-  TM: { sm: 2, default: 4, lg: 7, xl: 8 },
+  TM: { sm: 2, default: 4, lg: 6, xl: 8 },
   Manager: { sm: 2, default: 4, lg: 5, xl: 5 },
-  SeniorTM: { sm: 2, default: 4, lg: 8, xl: 10 },
-  Admin: { sm: 2, default: 4, lg: 6, xl: 9 },
-  Owner: { sm: 2, default: 4, lg: 6, xl: 9 },
+  SeniorTM: { sm: 2, default: 4, lg: 6, xl: 8 },
+  Admin: { sm: 2, default: 4, lg: 5, xl: 6 },
+  Owner: { sm: 2, default: 4, lg: 5, xl: 6 },
 };
 
 // ---------- Mobile bottom nav (max 5 slots) ----------
