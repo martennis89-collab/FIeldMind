@@ -5,6 +5,8 @@ import { Toaster } from "sonner";
 import { AuthProvider, ProtectedRoute } from "@/lib/auth";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
 import Doctors from "@/pages/Doctors";
 import DoctorProfile from "@/pages/DoctorProfile";
@@ -37,6 +39,8 @@ export default function App() {
         <Toaster position="top-right" richColors />
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           <Route
             path="/"

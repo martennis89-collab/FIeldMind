@@ -1800,6 +1800,8 @@ async def on_startup():
     await db.events.create_index("id", unique=True)
     await db.events.create_index([("tm_user_id", 1), ("scheduled_at", 1)])
     await db.events.create_index([("team_id", 1), ("scheduled_at", 1)])
+    await db.password_resets.create_index("token_hash")
+    await db.password_resets.create_index([("user_id", 1), ("created_at", -1)])
     # Migration: normalise legacy approval statuses (no-op on fresh DBs)
     await db.expenses.update_many(
         {"status": {"$in": ["Approved", "Rejected"]}},

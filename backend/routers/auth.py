@@ -7,13 +7,17 @@ from __future__ import annotations
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo, available_timezones
+import hashlib
 import io
 import os
 import logging
+import secrets
 import uuid
 
 from fastapi import Depends, HTTPException, Request, Query, UploadFile, File, Form
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
+
+from emails import send_password_reset_email
 
 # Pull every shared symbol the handlers reference. The router file is imported AFTER
 # server.py finishes initialising all of these so the names are guaranteed to exist.
@@ -127,6 +131,80 @@ async def change_password(body: ChangePasswordBody, user=Depends(get_current_use
         {"$set": {"password_hash": hash_password(body.new_password), "updated_at": _now_iso()}},
     )
     await _audit(user, "change_password", "user", user["id"])
+    return {"ok": True}
+
+class ForgotPasswordBody(BaseModel):
+    email: EmailStr
+
+
+_GENERIC_RESET_RESPONSE = {"ok": True, "detail": "If that email is registered, we've sent a reset link."}
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordBody, request: Request):
+    """Always returns the same generic response regardless of whether the
+    email exists — an account-enumeration guard, same principle as the
+    login-lockout treating unknown emails like failed attempts."""
+    email = body.email.lower().strip()
+    user = await db.users.find_one({"email": email})
+    if not user or not user.get("active_status", True):
+        return _GENERIC_RESET_RESPONSE
+
+    # Cooldown — don't let a repeat submit spam the inbox or the rate-limited
+    # Resend account. One outstanding link per user per 60s is plenty.
+    recent = await db.password_resets.find_one(
+        {"user_id": user["id"]}, sort=[("created_at", -1)]
+    )
+    if recent and recent.get("created_at") and recent["created_at"] > _now_iso_minus(60):
+        return _GENERIC_RESET_RESPONSE
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    await db.password_resets.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        # Store a hash, not the raw token — a DB leak alone shouldn't hand
+        # out usable reset links. SHA-256 (not bcrypt) because this needs an
+        # exact-match lookup by value, and the token already has 256 bits of
+        # its own entropy from secrets.token_urlsafe — no need for a slow,
+        # salted KDF the way a human-chosen password does.
+        "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "used_at": None,
+    })
+    await send_password_reset_email(email, user.get("full_name", ""), token)
+    await _audit(user, "request_password_reset", "user", user["id"],
+                 ip=request.client.host if request.client else None)
+    return _GENERIC_RESET_RESPONSE
+
+
+def _now_iso_minus(seconds: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+
+
+class ResetPasswordBody(BaseModel):
+    token: str
+    new_password: str
+
+
+@api.post("/auth/reset-password")
+async def reset_password(body: ResetPasswordBody):
+    if len(body.new_password) < 4:
+        raise HTTPException(status_code=400, detail="New password must be at least 4 characters")
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    rec = await db.password_resets.find_one({"token_hash": token_hash})
+    now_iso = _now_iso()
+    if not rec or rec.get("used_at") or rec["expires_at"] < now_iso:
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has expired")
+    await db.users.update_one(
+        {"id": rec["user_id"]},
+        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": _now_iso()}},
+    )
+    await db.password_resets.update_one({"id": rec["id"]}, {"$set": {"used_at": now_iso}})
+    user = await db.users.find_one({"id": rec["user_id"]}, {"_id": 0})
+    if user:
+        await _audit(user, "reset_password", "user", rec["user_id"])
     return {"ok": True}
 
 class TimezoneUpdateBody(BaseModel):

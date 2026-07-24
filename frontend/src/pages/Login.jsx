@@ -96,7 +96,12 @@ export default function Login() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link to="/forgot-password" data-testid="login-forgot-password-link" className="text-xs hover:underline" style={{ color: "var(--text-secondary)" }}>
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"
