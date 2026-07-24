@@ -1754,6 +1754,132 @@ async def _telegram_daily_checkin_loop():
         await asyncio.sleep(300)
 
 
+def _user_local_now(user: dict) -> datetime:
+    """Best-effort local 'now' for a background job — each user's own stored
+    timezone (see ai.py's _resolve_tz for the same principle), falling back
+    to UTC if unset. Never hardcode one country's clock for a per-user job."""
+    tz_name = user.get("timezone")
+    if tz_name:
+        try:
+            return datetime.now(ZoneInfo(tz_name))
+        except Exception:
+            pass
+    return datetime.now(timezone.utc)
+
+
+def _parse_dt_flexible(s: str) -> datetime:
+    """Parse a stored scheduled_at that may or may not carry a UTC offset
+    (booking paths have historically stored both). Naive strings are
+    assumed UTC, matching _now_iso()'s convention everywhere else."""
+    d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+async def _weekly_report_reminder_loop():
+    """Monday-morning nudge (09:00-09:10, each TM's own local time) to
+    anyone who hasn't submitted LAST week's report yet — the same "overdue"
+    definition the Reports page's Overdue tab already uses, just proactive
+    instead of someone having to go look. week_start/week_end stay UTC-week
+    based (matching how reports are actually stored) — only the SEND TIME
+    is per-user local; the week being asked about must match what's in the
+    database regardless of where the TM is."""
+    from emails import send_weekly_report_reminder_email
+
+    while True:
+        try:
+            monday, _ = _week_bounds()
+            prev_monday = monday - timedelta(days=7)
+            prev_week_start = prev_monday.date().isoformat()
+            prev_week_end = (prev_monday + timedelta(days=6)).date().isoformat()
+
+            tms = await db.users.find(
+                {"role": {"$in": ["TM", "SeniorTM"]}, "active_status": True},
+                {"_id": 0, "id": 1, "email": 1, "full_name": 1, "timezone": 1},
+            ).to_list(2000)
+            for tm in tms:
+                local_now = _user_local_now(tm)
+                if not (local_now.weekday() == 0 and local_now.hour == 9 and local_now.minute < 10):
+                    continue
+
+                state_key = f"weekly_report_reminder:{tm['id']}"
+                state = await db.app_state.find_one({"key": state_key})
+                if state and state.get("value") == prev_week_start:
+                    continue  # already handled (sent or found already-submitted) this week
+
+                submitted = await db.reports.find_one({
+                    "tm_user_id": tm["id"], "week_start": prev_week_start,
+                    "status": {"$in": ["Submitted", "Reviewed"]},
+                })
+                if not submitted and tm.get("email"):
+                    await send_weekly_report_reminder_email(
+                        tm["email"], tm.get("full_name", ""), prev_week_start, prev_week_end
+                    )
+                await db.app_state.update_one(
+                    {"key": state_key}, {"$set": {"value": prev_week_start}}, upsert=True
+                )
+        except Exception:
+            logger.exception("Weekly report reminder loop failed")
+        await asyncio.sleep(300)
+
+
+async def _eod_meetings_reminder_loop():
+    """End-of-day nudge (18:00-18:10, each TM's own local time) listing any
+    of TODAY's meetings/demos still sitting at status=Scheduled — the same
+    "not completed" the Calendar's meeting-detail modal already shows.
+    Filters in Python rather than a DB date-range query because scheduled_at
+    strings aren't guaranteed to share one UTC offset across every booking
+    path — safer to parse each one and compare in the TM's own timezone."""
+    from emails import send_unachieved_meetings_reminder_email
+
+    while True:
+        try:
+            tms = await db.users.find(
+                {"role": {"$in": ["TM", "SeniorTM"]}, "active_status": True},
+                {"_id": 0, "id": 1, "email": 1, "full_name": 1, "timezone": 1},
+            ).to_list(2000)
+            for tm in tms:
+                local_now = _user_local_now(tm)
+                if not (local_now.hour == 18 and local_now.minute < 10):
+                    continue
+                today_str = local_now.date().isoformat()
+
+                state_key = f"eod_meetings_reminder:{tm['id']}"
+                state = await db.app_state.find_one({"key": state_key})
+                if state and state.get("value") == today_str:
+                    continue
+
+                candidates = await db.meetings.find(
+                    {"tm_user_id": tm["id"], "deleted_at": None, "status": "Scheduled"},
+                    {"_id": 0, "doctor_name": 1, "scheduled_at": 1, "is_demo": 1},
+                ).to_list(500)
+
+                todays = []
+                for m in candidates:
+                    sched = m.get("scheduled_at")
+                    if not sched:
+                        continue
+                    try:
+                        dt_local = _parse_dt_flexible(sched).astimezone(local_now.tzinfo)
+                    except Exception:
+                        continue
+                    if dt_local.date() == local_now.date():
+                        todays.append({
+                            "doctor_name": m.get("doctor_name") or "Doctor",
+                            "time_label": dt_local.strftime("%H:%M"),
+                            "is_demo": bool(m.get("is_demo")),
+                        })
+                todays.sort(key=lambda x: x["time_label"])
+
+                if todays and tm.get("email"):
+                    await send_unachieved_meetings_reminder_email(tm["email"], tm.get("full_name", ""), todays)
+                await db.app_state.update_one(
+                    {"key": state_key}, {"$set": {"value": today_str}}, upsert=True
+                )
+        except Exception:
+            logger.exception("EOD unachieved meetings reminder loop failed")
+        await asyncio.sleep(300)
+
+
 @app.on_event("startup")
 async def on_startup():
     # Indexes
@@ -1858,6 +1984,8 @@ async def on_startup():
         logger.error(f"Phase B init failed: {e}")
 
     asyncio.create_task(_telegram_daily_checkin_loop())
+    asyncio.create_task(_weekly_report_reminder_loop())
+    asyncio.create_task(_eod_meetings_reminder_loop())
 
     logger.info("Field Intelligence Platform started.")
 

@@ -9,6 +9,7 @@ failed email must not break the request that triggered it (e.g. a password
 reset should still record the token even if Resend is briefly down; the
 user can just request another link).
 """
+import html
 import os
 import logging
 import httpx
@@ -54,12 +55,16 @@ async def _send_email(to: str, subject: str, html: str) -> bool:
         return False
 
 
+def _greeting(full_name: str) -> str:
+    name = html.escape(full_name.strip()) if full_name and full_name.strip() else ""
+    return f"Hi {name}," if name else "Hi,"
+
+
 async def send_password_reset_email(to: str, full_name: str, reset_token: str) -> bool:
     reset_link = f"{FRONTEND_URL}/reset-password?token={reset_token}"
     subject = "Reset your FieldTracker password"
-    greeting = f"Hi {full_name.strip()}," if full_name and full_name.strip() else "Hi,"
     body = f"""
-    <p style="font-size: 15px; line-height: 1.6; margin: 0 0 16px;">{greeting}</p>
+    <p style="font-size: 15px; line-height: 1.6; margin: 0 0 16px;">{_greeting(full_name)}</p>
     <p style="font-size: 15px; line-height: 1.6; margin: 0 0 24px;">
       We received a request to reset your FieldTracker password. This link expires in 1 hour.
     </p>
@@ -69,5 +74,45 @@ async def send_password_reset_email(to: str, full_name: str, reset_token: str) -
     <p style="font-size: 13px; line-height: 1.6; color: #6b6558; margin: 24px 0 0;">
       If you didn't request this, you can safely ignore this email — your password won't change.
     </p>
+    """
+    return await _send_email(to, subject, _wrap(subject, body))
+
+
+async def send_weekly_report_reminder_email(to: str, full_name: str, week_start: str, week_end: str) -> bool:
+    subject = "Your weekly report is overdue"
+    reports_link = f"{FRONTEND_URL}/reports"
+    body = f"""
+    <p style="font-size: 15px; line-height: 1.6; margin: 0 0 16px;">{_greeting(full_name)}</p>
+    <p style="font-size: 15px; line-height: 1.6; margin: 0 0 24px;">
+      You haven't submitted your weekly report for <strong>{html.escape(week_start)} – {html.escape(week_end)}</strong> yet.
+      FieldTracker drafts it from your logged activity — you just review and submit.
+    </p>
+    <a href="{reports_link}" style="display: inline-block; background: {_BRAND_PRIMARY}; color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600;">
+      Submit report
+    </a>
+    """
+    return await _send_email(to, subject, _wrap(subject, body))
+
+
+async def send_unachieved_meetings_reminder_email(to: str, full_name: str, meetings: list) -> bool:
+    n = len(meetings)
+    subject = f"{n} meeting{'s' if n != 1 else ''} today still need{'s' if n == 1 else ''} to be completed"
+    calendar_link = f"{FRONTEND_URL}/calendar"
+    rows = "".join(
+        f'<li style="font-size: 14px; line-height: 1.8;">'
+        f'<strong>{html.escape(m["time_label"])}</strong> — {html.escape(m["doctor_name"])}'
+        f'{" · iTero demo" if m.get("is_demo") else ""}'
+        f"</li>"
+        for m in meetings
+    )
+    body = f"""
+    <p style="font-size: 15px; line-height: 1.6; margin: 0 0 16px;">{_greeting(full_name)}</p>
+    <p style="font-size: 15px; line-height: 1.6; margin: 0 0 16px;">
+      These meetings from today are still marked Scheduled — log what happened to keep your record straight:
+    </p>
+    <ul style="margin: 0 0 24px; padding-left: 20px; color: #1f2a24;">{rows}</ul>
+    <a href="{calendar_link}" style="display: inline-block; background: {_BRAND_PRIMARY}; color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600;">
+      Open calendar
+    </a>
     """
     return await _send_email(to, subject, _wrap(subject, body))
