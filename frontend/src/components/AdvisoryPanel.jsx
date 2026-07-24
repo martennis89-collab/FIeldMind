@@ -268,7 +268,7 @@ export default function AdvisoryPanel({ variant = "tm" }) {
       <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
         <div>
           <div className="text-xs uppercase tracking-widest flex items-center gap-2 flex-wrap" style={{ color: "var(--text-muted)" }}>
-            <Sparkles className="w-3 h-3" /> FieldMind advisory
+            <Sparkles className="w-3 h-3" /> FieldTracker advisory
             <span
               data-testid={`advisory-${variant}-v1-pill`}
               className="pill text-[10px]"

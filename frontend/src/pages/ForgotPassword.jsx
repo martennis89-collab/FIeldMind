@@ -32,7 +32,7 @@ export default function ForgotPassword() {
           <div className="w-10 h-10 rounded-md flex items-center justify-center" style={{ background: "var(--brand-primary)" }}>
             <Brain className="w-5 h-5 text-white" />
           </div>
-          <div className="font-display text-xl font-semibold" style={{ color: "var(--brand-primary)" }}>FieldMind</div>
+          <div className="font-display text-xl font-semibold" style={{ color: "var(--brand-primary)" }}>FieldTracker</div>
         </div>
 
         <div className="rounded-lg border p-6" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }} data-testid="forgot-password-card">

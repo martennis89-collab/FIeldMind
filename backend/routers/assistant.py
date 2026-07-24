@@ -1,7 +1,7 @@
 """assistant.py — shared "figure out what the TM wants and do it" logic.
 
 Single source of truth for turning a free-text note (voice-transcribed or
-typed) into an action inside FieldMind: log a visit, book a meeting, book an
+typed) into an action inside FieldTracker: log a visit, book a meeting, book an
 iTero demo, or log a standalone personal/admin task. Used by BOTH the
 Telegram integration (routers/telegram.py) and the in-app Quick Capture
 voice flow (POST /assistant/execute below) — they call the exact same

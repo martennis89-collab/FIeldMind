@@ -1,4 +1,4 @@
-# Running FieldMind locally with Docker
+# Running FieldTracker locally with Docker
 
 ## One-time setup
 

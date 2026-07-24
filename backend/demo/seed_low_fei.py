@@ -1,4 +1,4 @@
-"""One-shot demo-data seeder for showcasing FieldMind.
+"""One-shot demo-data seeder for showcasing FieldTracker.
 
 Creates a deliberately bumpy field-execution profile for tm1@field.io (Maria)
 so the Insight Cards + Advisory Layer + FEI all light up during the demo.

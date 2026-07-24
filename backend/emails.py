@@ -16,7 +16,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "FieldMind <onboarding@resend.dev>")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "FieldTracker <onboarding@resend.dev>")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 _BRAND_PRIMARY = "#274035"
@@ -26,11 +26,11 @@ _BRAND_SECONDARY = "#c26d53"
 def _wrap(title: str, body_html: str) -> str:
     return f"""
 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #1f2a24;">
-  <div style="font-size: 13px; letter-spacing: 0.2em; text-transform: uppercase; color: {_BRAND_SECONDARY}; font-weight: 600; margin-bottom: 24px;">FieldMind</div>
+  <div style="font-size: 13px; letter-spacing: 0.2em; text-transform: uppercase; color: {_BRAND_SECONDARY}; font-weight: 600; margin-bottom: 24px;">FieldTracker</div>
   <h1 style="font-size: 20px; font-weight: 600; color: {_BRAND_PRIMARY}; margin: 0 0 16px;">{title}</h1>
   {body_html}
   <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e5e0d8; font-size: 12px; color: #8a8478;">
-    FieldMind — your second brain in the field.
+    FieldTracker — your second brain in the field.
   </div>
 </div>
 """.strip()
@@ -56,12 +56,12 @@ async def _send_email(to: str, subject: str, html: str) -> bool:
 
 async def send_password_reset_email(to: str, full_name: str, reset_token: str) -> bool:
     reset_link = f"{FRONTEND_URL}/reset-password?token={reset_token}"
-    subject = "Reset your FieldMind password"
+    subject = "Reset your FieldTracker password"
     greeting = f"Hi {full_name.strip()}," if full_name and full_name.strip() else "Hi,"
     body = f"""
     <p style="font-size: 15px; line-height: 1.6; margin: 0 0 16px;">{greeting}</p>
     <p style="font-size: 15px; line-height: 1.6; margin: 0 0 24px;">
-      We received a request to reset your FieldMind password. This link expires in 1 hour.
+      We received a request to reset your FieldTracker password. This link expires in 1 hour.
     </p>
     <a href="{reset_link}" style="display: inline-block; background: {_BRAND_PRIMARY}; color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600;">
       Reset password

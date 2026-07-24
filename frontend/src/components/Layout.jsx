@@ -63,7 +63,7 @@ export default function Layout({ children }) {
               <Brain className="w-5 h-5 text-white" />
             </div>
             <div className="leading-tight">
-              <div className="font-display text-lg font-semibold" style={{ color: "var(--brand-primary)" }}>FieldMind</div>
+              <div className="font-display text-lg font-semibold" style={{ color: "var(--brand-primary)" }}>FieldTracker</div>
               <div className="text-[10px] uppercase tracking-[0.2em]" style={{ color: "var(--text-muted)" }}>Field Intelligence</div>
             </div>
           </Link>

@@ -47,7 +47,7 @@ class TestCompanyBootstrap:
         assert len(default) == 1, f"expected exactly one default company, got {len(default)}"
         c = default[0]
         # Spec-mandated default values
-        assert c["company_name"] == "FieldMind Default Company"
+        assert c["company_name"] == "FieldTracker Default Company"
         assert c["country"] == "Bulgaria"
         assert c["team_size_category"] == "1-5"
         assert c["sales_motion"] == "dental/orthodontic field team"

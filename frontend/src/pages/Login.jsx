@@ -48,7 +48,7 @@ export default function Login() {
                 className="font-display text-xl font-semibold"
                 style={{ color: "var(--brand-primary)" }}
               >
-                FieldMind
+                FieldTracker
               </div>
               <div
                 className="text-[11px] uppercase tracking-[0.2em]"
@@ -140,7 +140,7 @@ export default function Login() {
             <p className="font-display text-base leading-snug text-white">
               &quot;Salesforce records that an activity happened.{" "}
               <span className="font-medium">
-                FieldMind remembers what was discussed, what was promised, and
+                FieldTracker remembers what was discussed, what was promised, and
                 what the market is saying.
               </span>
               &quot;
@@ -174,7 +174,7 @@ export default function Login() {
             <p className="font-display text-2xl xl:text-3xl font-light leading-snug">
               &quot;Salesforce records that an activity happened.{" "}
               <span className="font-medium">
-                FieldMind remembers what was discussed, what was promised, and
+                FieldTracker remembers what was discussed, what was promised, and
                 what the market is saying.
               </span>
               &quot;

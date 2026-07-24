@@ -79,7 +79,7 @@ class Company(BaseModel):
 
 
 DEFAULT_COMPANY = {
-    "company_name": "FieldMind Default Company",
+    "company_name": "FieldTracker Default Company",
     "slug": "default",
     "industry": "dental/orthodontic field team",
     "country": "Bulgaria",

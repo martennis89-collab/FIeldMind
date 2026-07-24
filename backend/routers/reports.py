@@ -485,7 +485,7 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
         return (text or "").replace("⚠️", "!").replace("⚠", "!")
 
     flow = []
-    flow.append(Paragraph("FIELDMIND · WEEKLY FIELD REPORT", styles["Eyebrow"]))
+    flow.append(Paragraph("FIELDTRACKER · WEEKLY FIELD REPORT", styles["Eyebrow"]))
     flow.append(Paragraph(r.get("tm_name", "Report"), styles["H1"]))
     flow.append(Paragraph(
         f"{r.get('week_start','')} → {r.get('week_end','')}  ·  Status: {r.get('status','Draft')}",

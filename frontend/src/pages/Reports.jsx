@@ -185,7 +185,7 @@ function TMReports() {
         <div className="min-w-0">
           <div className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>Generate a weekly report</div>
           <div className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
-            FieldMind drafts it from your activity. You review, edit, and submit. You can also regenerate up to two weeks back.
+            FieldTracker drafts it from your activity. You review, edit, and submit. You can also regenerate up to two weeks back.
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">

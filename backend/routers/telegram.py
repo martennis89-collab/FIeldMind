@@ -13,7 +13,7 @@ Env vars:
   TELEGRAM_BOT_TOKEN     — from @BotFather
   TELEGRAM_CHAT_ID       — the single authorized chat; messages from any other
                            chat are silently ignored
-  TELEGRAM_USER_EMAIL    — which FieldMind user actions get logged as
+  TELEGRAM_USER_EMAIL    — which FieldTracker user actions get logged as
   TELEGRAM_WEBHOOK_SECRET — random string; must match the secret_token set via
                            Telegram's setWebhook call, checked against the
                            X-Telegram-Bot-Api-Secret-Token header on every
@@ -105,7 +105,7 @@ async def telegram_webhook(request: Request):
 
     user = await db.users.find_one({"email": os.environ.get("TELEGRAM_USER_EMAIL", "")}, {"_id": 0})
     if not user:
-        await _telegram_send("FieldMind isn't linked to a user account yet (TELEGRAM_USER_EMAIL misconfigured).")
+        await _telegram_send("FieldTracker isn't linked to a user account yet (TELEGRAM_USER_EMAIL misconfigured).")
         return {"ok": True}
 
     note_text = None

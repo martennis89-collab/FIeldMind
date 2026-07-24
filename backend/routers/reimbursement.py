@@ -944,7 +944,7 @@ def _render_reimbursement_pdf(report: dict, weekly: list[dict] | None = None) ->
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
     story = []
     t = report.get("totals", {}) or {}
-    story.append(Paragraph("FieldMind — Monthly Reimbursement Report", h1))
+    story.append(Paragraph("FieldTracker — Monthly Reimbursement Report", h1))
     story.append(Paragraph(f"Generated {_now_iso()[:19].replace('T',' ')} UTC — Report {report.get('id','')[:8]}", small))
     story.append(Spacer(1, 6*mm))
 

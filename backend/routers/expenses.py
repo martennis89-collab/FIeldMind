@@ -582,7 +582,7 @@ def _build_expense_pdf(exp: dict, image_bytes: Optional[bytes], image_mime: str)
     """Render a single expense as a self-contained one-page PDF.
 
     Layout:
-      - Header: "FieldMind — Expense Report"
+      - Header: "FieldTracker — Expense Report"
       - Metadata table: date, category, amount, vendor, status, TM, notes
       - Original receipt image (from the TM's phone camera) if present.
     """
@@ -609,7 +609,7 @@ def _build_expense_pdf(exp: dict, image_bytes: Optional[bytes], image_mime: str)
     )
 
     story = []
-    story.append(Paragraph("FieldMind — Expense Report", h1))
+    story.append(Paragraph("FieldTracker — Expense Report", h1))
     story.append(Paragraph(
         f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · "
         f"Expense id <b>{exp.get('id','')}</b>",

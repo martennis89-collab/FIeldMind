@@ -1,4 +1,4 @@
-# FieldMind — Field Intelligence Platform PRD
+# FieldTracker — Field Intelligence Platform PRD
 
 > **NB (Phase H, Feb 2026)**: This PRD has grown past 800 lines of historic
 > iteration log. Phase H onwards, new phase entries live in
@@ -8,7 +8,7 @@
 ## Original problem statement
 Build a secure, production-ready, multi-user Field Intelligence Platform for Territory Managers in the dental/medical (Invisalign/aligners) industry. NOT a CRM. Helps TMs log doctor interactions, remember what was discussed, track promises/follow-ups, identify market sentiment, and surface aggregated insights for managers. Highest priority: SECURITY → UX → intelligence.
 
-Positioning: "Salesforce records that an activity happened. FieldMind remembers what was discussed, what was promised, what the market is saying, and which doctors need attention next."
+Positioning: "Salesforce records that an activity happened. FieldTracker remembers what was discussed, what was promised, what the market is saying, and which doctors need attention next."
 
 ## User personas
 - **TM (Territory Manager)** — sees only their own assigned doctors, visits, tasks, notes.
