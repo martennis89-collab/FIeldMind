@@ -246,7 +246,7 @@ export default function DoctorProfile() {
       </div>
 
       <Tabs defaultValue="prepare" className="space-y-4">
-        <TabsList className="bg-[var(--bg-paper)]">
+        <TabsList className="bg-[var(--bg-paper)] flex w-full overflow-x-auto no-scrollbar">
           <TabsTrigger value="prepare" data-testid="tab-prepare"><Brain className="w-4 h-4 mr-1" />Prepare</TabsTrigger>
           <TabsTrigger value="timeline" data-testid="tab-timeline"><MessageSquare className="w-4 h-4 mr-1" />Timeline</TabsTrigger>
           <TabsTrigger value="promises" data-testid="tab-promises"><ClipboardList className="w-4 h-4 mr-1" />Promises ({openTasks.length})</TabsTrigger>

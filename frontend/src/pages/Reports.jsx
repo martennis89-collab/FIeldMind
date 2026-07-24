@@ -569,7 +569,7 @@ function ManagerReports() {
   return (
     <>
       <Tabs value={bucket} onValueChange={setBucket}>
-        <TabsList className="bg-[var(--bg-paper)]">
+        <TabsList className="bg-[var(--bg-paper)] flex w-full overflow-x-auto no-scrollbar">
           <TabsTrigger value="submitted" data-testid="tab-submitted">Submitted ({counts.submitted ?? "·"})</TabsTrigger>
           <TabsTrigger value="pending" data-testid="tab-pending">Pending ({counts.pending ?? "·"})</TabsTrigger>
           <TabsTrigger value="overdue" data-testid="tab-overdue">Overdue ({counts.overdue ?? "·"})</TabsTrigger>
