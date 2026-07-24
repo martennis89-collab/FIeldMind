@@ -339,6 +339,7 @@ class AIExtraction(BaseModel):
 class AnalyzeNoteRequest(BaseModel):
     note: str
     doctor_id: Optional[str] = None
+    meeting_id: Optional[str] = None
 
 
 class VisitCreate(BaseModel):

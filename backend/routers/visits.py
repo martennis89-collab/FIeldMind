@@ -93,10 +93,18 @@ async def analyze_visit_note(body: AnalyzeNoteRequest, user=Depends(get_current_
         body.note, session_id=f"analyze-{user['id']}", doctors=doctors, user_timezone=user.get("timezone")
     )
 
-    # Nothing on the roster matched, but a name was heard — auto-create/resolve
-    # so logging a visit is just as friction-free in the app as via Telegram,
-    # for reps who never touch the bot. Same duplicate-safe logic either way.
-    if not result.get("doctor_id") and result.get("doctor_name_heard"):
+    if body.doctor_id:
+        # Caller already knows the doctor (e.g. Quick Capture opened from a doctor's
+        # profile, or completing a specific booked meeting) — bind directly rather
+        # than requiring the note to restate the doctor's name for a match.
+        doc = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0, "id": 1, "doctor_name": 1})
+        if doc:
+            result["doctor_id"] = doc["id"]
+            result["doctor_hint"] = doc["doctor_name"]
+    elif not result.get("doctor_id") and result.get("doctor_name_heard"):
+        # Nothing on the roster matched, but a name was heard — auto-create/resolve
+        # so logging a visit is just as friction-free in the app as via Telegram,
+        # for reps who never touch the bot. Same duplicate-safe logic either way.
         resolved = await _resolve_or_create_doctor(user, result["doctor_name_heard"])
         if resolved:
             result["doctor_id"] = resolved["id"]

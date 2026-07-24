@@ -2,8 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../lib/api";
 import { Button } from "../components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { ChevronLeft, ChevronRight, CalendarDays, Rows3, ClipboardList, CalendarPlus } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
+import QuickCaptureDialog from "../components/QuickCaptureDialog";
+import {
+  ChevronLeft, ChevronRight, CalendarDays, Rows3, ClipboardList, CalendarPlus,
+  Clock, MapPin, CheckCircle2, XCircle, ExternalLink,
+} from "lucide-react";
 
 // ---------- Date helpers ----------
 const pad = (n) => String(n).padStart(2, "0");
@@ -81,22 +85,23 @@ export default function CalendarPage() {
   const [visits, setVisits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState(null);
+  const [selectedMeeting, setSelectedMeeting] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const [m, e, v] = await Promise.all([
-          api.get("/meetings", { params: { when: "all" } }),
-          api.get("/events",   { params: { when: "all" } }),
-          api.get("/visits"),
-        ]);
-        setMeetings(m.data || []);
-        setEvents(e.data || []);
-        setVisits(v.data || []);
-      } finally { setLoading(false); }
-    })();
-  }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [m, e, v] = await Promise.all([
+        api.get("/meetings", { params: { when: "all" } }),
+        api.get("/events",   { params: { when: "all" } }),
+        api.get("/visits"),
+      ]);
+      setMeetings(m.data || []);
+      setEvents(e.data || []);
+      setVisits(v.data || []);
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
 
   const items = useMemo(() => {
     const out = [];
@@ -171,18 +176,29 @@ export default function CalendarPage() {
       {loading ? (
         <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }} data-testid="cal-loading">Loading calendar…</div>
       ) : view === "month" ? (
-        <MonthGrid cursor={cursor} byDay={byDay} onDayClick={setSelectedDay} />
+        <MonthGrid cursor={cursor} byDay={byDay} onDayClick={setSelectedDay} onMeetingClick={setSelectedMeeting} />
       ) : (
-        <WeekGrid cursor={cursor} byDay={byDay} onDayClick={setSelectedDay} />
+        <WeekGrid cursor={cursor} byDay={byDay} onDayClick={setSelectedDay} onMeetingClick={setSelectedMeeting} />
       )}
 
-      <DayModal date={selectedDay} items={selectedDayItems} onClose={() => setSelectedDay(null)} />
+      <DayModal
+        date={selectedDay}
+        items={selectedDayItems}
+        onClose={() => setSelectedDay(null)}
+        onMeetingClick={setSelectedMeeting}
+      />
+
+      <MeetingDetailModal
+        meeting={selectedMeeting}
+        onClose={() => setSelectedMeeting(null)}
+        onChanged={load}
+      />
     </div>
   );
 }
 
 // ---------- Day detail modal ----------
-function DayModal({ date, items, onClose }) {
+function DayModal({ date, items, onClose, onMeetingClick }) {
   const dateLabel = date
     ? date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
     : "";
@@ -198,20 +214,37 @@ function DayModal({ date, items, onClose }) {
           <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto" data-testid="cal-day-modal-list">
             {items.map((it) => {
               const s = styleFor(it);
-              return (
-                <Link
-                  key={it.id}
-                  to={it.href}
-                  onClick={onClose}
-                  data-testid={`cal-day-modal-item-${it.id}`}
-                  className="flex items-center gap-3 rounded-md border p-2.5 hover:bg-[var(--bg-paper)] transition-colors"
-                  style={{ borderColor: "var(--border-default)" }}
-                >
+              const inner = (
+                <>
                   <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: s.bg }} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{it.label}</div>
                     <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmtHM(it.iso)} · {s.label}</div>
                   </div>
+                </>
+              );
+              const rowClass = "flex items-center gap-3 rounded-md border p-2.5 hover:bg-[var(--bg-paper)] transition-colors text-left";
+              return it.kind === "meeting" ? (
+                <button
+                  key={it.id}
+                  type="button"
+                  onClick={() => { onMeetingClick(it.doc); onClose(); }}
+                  data-testid={`cal-day-modal-item-${it.id}`}
+                  className={rowClass}
+                  style={{ borderColor: "var(--border-default)" }}
+                >
+                  {inner}
+                </button>
+              ) : (
+                <Link
+                  key={it.id}
+                  to={it.href}
+                  onClick={onClose}
+                  data-testid={`cal-day-modal-item-${it.id}`}
+                  className={rowClass}
+                  style={{ borderColor: "var(--border-default)" }}
+                >
+                  {inner}
                 </Link>
               );
             })}
@@ -219,6 +252,85 @@ function DayModal({ date, items, onClose }) {
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------- Meeting detail modal ----------
+function MeetingDetailModal({ meeting, onClose, onChanged }) {
+  const [completing, setCompleting] = useState(false);
+  const isDemo = !!meeting?.is_demo;
+  const completed = meeting?.status === "Completed";
+  const cancelled = meeting?.status === "Cancelled";
+
+  const handleClose = () => { setCompleting(false); onClose(); };
+
+  return (
+    <>
+      <Dialog open={!!meeting && !completing} onOpenChange={(v) => !v && handleClose()}>
+        <DialogContent data-testid="cal-meeting-modal">
+          {meeting && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {isDemo ? "iTero demo" : "Meeting"} — {meeting.doctor_name}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
+                  <Clock className="w-3.5 h-3.5" />
+                  {new Date(meeting.scheduled_at).toLocaleString(undefined, {
+                    weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                  })}
+                  {meeting.duration_minutes ? ` · ${meeting.duration_minutes} min` : ""}
+                </div>
+                {(meeting.clinic_name || meeting.city) && (
+                  <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
+                    <MapPin className="w-3.5 h-3.5" />
+                    {[meeting.clinic_name, meeting.city].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+                {meeting.subject && (
+                  <div className="text-sm" style={{ color: "var(--text-primary)" }}>{meeting.subject}</div>
+                )}
+                <div>
+                  {completed && <span className="pill pill-success inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Completed</span>}
+                  {cancelled && <span className="pill pill-muted inline-flex items-center gap-1"><XCircle className="w-3 h-3" />Cancelled</span>}
+                  {!completed && !cancelled && <span className="pill">Scheduled</span>}
+                </div>
+              </div>
+              <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+                <Link
+                  to={`/doctors/${meeting.doctor_id}`}
+                  onClick={handleClose}
+                  data-testid="cal-meeting-view-doctor"
+                  className="text-sm inline-flex items-center gap-1 hover:underline"
+                  style={{ color: "var(--brand-primary)" }}
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> View doctor profile
+                </Link>
+                {!completed && !cancelled && (
+                  <Button
+                    onClick={() => setCompleting(true)}
+                    data-testid="cal-meeting-complete-btn"
+                    style={{ background: "var(--status-success)", color: "white" }}
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-1" /> Complete meeting
+                  </Button>
+                )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <QuickCaptureDialog
+        open={completing}
+        meetingId={meeting?.id}
+        defaultDoctorId={meeting?.doctor_id}
+        onClose={() => setCompleting(false)}
+        onCreated={() => { setCompleting(false); onChanged?.(); handleClose(); }}
+      />
+    </>
   );
 }
 
@@ -241,7 +353,7 @@ function Legend() {
 }
 
 // ---------- Month view ----------
-function MonthGrid({ cursor, byDay, onDayClick }) {
+function MonthGrid({ cursor, byDay, onDayClick, onMeetingClick }) {
   const first = startOfMonth(cursor);
   const gridStart = startOfWeek(first);
   const days = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
@@ -281,7 +393,7 @@ function MonthGrid({ cursor, byDay, onDayClick }) {
                 {list.length > 3 && <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>+{list.length - 3}</span>}
               </div>
               <div className="flex flex-col gap-0.5 overflow-hidden">
-                {list.slice(0, 3).map((it) => <EventPill key={it.id} item={it} />)}
+                {list.slice(0, 3).map((it) => <EventPill key={it.id} item={it} onMeetingClick={onMeetingClick} />)}
               </div>
             </div>
           );
@@ -292,7 +404,7 @@ function MonthGrid({ cursor, byDay, onDayClick }) {
 }
 
 // ---------- Week view ----------
-function WeekGrid({ cursor, byDay, onDayClick }) {
+function WeekGrid({ cursor, byDay, onDayClick, onMeetingClick }) {
   const start = startOfWeek(cursor);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -327,7 +439,7 @@ function WeekGrid({ cursor, byDay, onDayClick }) {
               {list.length === 0 ? (
                 <div className="text-[11px] italic" style={{ color: "var(--text-muted)" }}>—</div>
               ) : (
-                list.map((it) => <EventBlock key={it.id} item={it} />)
+                list.map((it) => <EventBlock key={it.id} item={it} onMeetingClick={onMeetingClick} />)
               )}
             </div>
           </div>
@@ -338,8 +450,20 @@ function WeekGrid({ cursor, byDay, onDayClick }) {
 }
 
 // ---------- Row-shape event pill (month view) ----------
-function EventPill({ item }) {
+function EventPill({ item, onMeetingClick }) {
   const s = styleFor(item);
+  if (item.kind === "meeting") {
+    return (
+      <button type="button"
+              onClick={(e) => { e.stopPropagation(); onMeetingClick(item.doc); }}
+              data-testid={`cal-item-${item.id}`}
+              className="text-[10px] truncate rounded px-1.5 py-0.5 leading-tight hover:opacity-90 text-left"
+              style={{ background: s.bg, color: s.fg }}
+              title={`${fmtHM(item.iso)} · ${item.label}`}>
+        <span className="opacity-75 mr-1">{fmtHM(item.iso)}</span>{item.label}
+      </button>
+    );
+  }
   return (
     <Link to={item.href}
           onClick={(e) => e.stopPropagation()}
@@ -353,16 +477,32 @@ function EventPill({ item }) {
 }
 
 // ---------- Row-shape event block (week view — a bit taller) ----------
-function EventBlock({ item }) {
+function EventBlock({ item, onMeetingClick }) {
   const s = styleFor(item);
+  const inner = (
+    <>
+      <div className="opacity-80 text-[10px] mb-0.5">{fmtHM(item.iso)} · {s.label}</div>
+      <div className="font-medium truncate">{item.label}</div>
+    </>
+  );
+  if (item.kind === "meeting") {
+    return (
+      <button type="button"
+              onClick={(e) => { e.stopPropagation(); onMeetingClick(item.doc); }}
+              data-testid={`cal-item-${item.id}`}
+              className="rounded px-2 py-1 text-xs leading-tight hover:opacity-90 text-left w-full"
+              style={{ background: s.bg, color: s.fg }}>
+        {inner}
+      </button>
+    );
+  }
   return (
     <Link to={item.href}
           onClick={(e) => e.stopPropagation()}
           data-testid={`cal-item-${item.id}`}
           className="rounded px-2 py-1 text-xs leading-tight hover:opacity-90"
           style={{ background: s.bg, color: s.fg }}>
-      <div className="opacity-80 text-[10px] mb-0.5">{fmtHM(item.iso)} · {s.label}</div>
-      <div className="font-medium truncate">{item.label}</div>
+      {inner}
     </Link>
   );
 }

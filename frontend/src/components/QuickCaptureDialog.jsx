@@ -42,7 +42,8 @@ function describeResult(result) {
     const newDoctorLine = result.doctor_auto_created ? " (added as a new doctor)" : "";
     const promiseLine = result.n_promises ? ` · ${result.n_promises} follow-up${result.n_promises !== 1 ? "s" : ""} tracked` : "";
     const dateLine = result.visit_date ? ` · dated ${result.visit_date}` : "";
-    return `Logged visit with ${doctorName}${newDoctorLine} — ${result.sentiment || "Neutral"} sentiment${promiseLine}${dateLine}.`;
+    const prefix = result.meeting_id ? "Meeting completed — logged visit with" : "Logged visit with";
+    return `${prefix} ${doctorName}${newDoctorLine} — ${result.sentiment || "Neutral"} sentiment${promiseLine}${dateLine}.`;
   }
   return "Done.";
 }
@@ -52,7 +53,7 @@ function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDoctorId = null }) {
+export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDoctorId = null, meetingId = null }) {
   const [step, setStep] = useState(STEP_RECORD);
   const [note, setNote] = useState("");
   const [recording, setRecording] = useState(false);
@@ -88,6 +89,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
       const { data } = await api.post("/assistant/execute", {
         note: noteText,
         doctor_id: defaultDoctorId || null,
+        meeting_id: meetingId || null,
       });
       setActionResult(data);
       if (data.status === "done") {
@@ -247,11 +249,12 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Wand2 className="w-5 h-5" style={{ color: "var(--brand-primary)" }} />
-            Quick capture
+            {meetingId ? "Complete meeting" : "Quick capture"}
           </DialogTitle>
           <DialogDescription>
-            Record a voice note — AI figures out if it's a visit, a meeting/demo to book, or a
-            personal task, and does it. Typed text becomes a task suggestion to review.
+            {meetingId
+              ? "Record a voice note or type what happened — AI logs the visit notes and marks this meeting complete."
+              : "Record a voice note — AI figures out if it's a visit, a meeting/demo to book, or a personal task, and does it. Typed text becomes a task suggestion to review."}
           </DialogDescription>
         </DialogHeader>
 
@@ -290,7 +293,9 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
                 id="qc-note"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Promise to send Dr. Petrov the certification info by Friday…"
+                placeholder={meetingId
+                  ? "What happened in this meeting? e.g. Discussed pricing, they want to see a demo next month…"
+                  : "Promise to send Dr. Petrov the certification info by Friday…"}
                 rows={4}
                 data-testid="quick-capture-note"
                 className="mt-1"
@@ -298,9 +303,15 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={handleClose}>Cancel</Button>
-              <Button onClick={extract} disabled={!note.trim()} data-testid="quick-capture-extract" style={{ background: "var(--brand-primary)", color: "white" }}>
-                <Sparkles className="w-4 h-4 mr-1" /> Suggest task
-              </Button>
+              {meetingId ? (
+                <Button onClick={() => runSmartAction(note)} disabled={!note.trim()} data-testid="quick-capture-complete-meeting" style={{ background: "var(--brand-primary)", color: "white" }}>
+                  <CheckCircle2 className="w-4 h-4 mr-1" /> Complete meeting
+                </Button>
+              ) : (
+                <Button onClick={extract} disabled={!note.trim()} data-testid="quick-capture-extract" style={{ background: "var(--brand-primary)", color: "white" }}>
+                  <Sparkles className="w-4 h-4 mr-1" /> Suggest task
+                </Button>
+              )}
             </DialogFooter>
           </div>
         )}

@@ -21,7 +21,7 @@ import logging
 from fastapi import Depends, HTTPException
 
 from ai import extract_task_from_text
-from server import api, get_current_user
+from server import api, db, get_current_user
 from routers.visits import _transcribe_audio_bytes, create_visit, analyze_visit_note
 from routers.meetings import create_meeting
 from routers.tasks import create_task
@@ -79,16 +79,35 @@ async def _create_standalone_task(user: dict, note_text: str, visit_analysis: di
     return {"status": "done", "action": "task", "task_titles": created_titles}
 
 
-async def _execute_smart_action(user: dict, note_text: str, doctor_id: str | None = None) -> dict:
+async def _execute_smart_action(
+    user: dict, note_text: str, doctor_id: str | None = None, meeting_id: str | None = None
+) -> dict:
     """Given a free-text note, figure out what the TM wants done and do it.
 
     `doctor_id`: optional — pass this when the caller already knows which
     doctor the note is about (e.g. Quick Capture opened from a doctor's
     profile page) to skip AI doctor-matching and bind directly.
+
+    `meeting_id`: optional — pass this to complete a SPECIFIC already-booked
+    meeting (e.g. "Complete meeting" from the calendar). The doctor is taken
+    from the meeting itself (ignoring `doctor_id`), intent classification is
+    skipped (completing a booked meeting is always "log what happened"), and
+    the resulting visit is linked back so the meeting is marked Completed —
+    same linkage `POST /visits` already does for any visit_date + meeting_id.
     """
     note_text = (note_text or "").strip()
     if not note_text:
         return {"status": "error", "detail": "Empty note"}
+
+    if meeting_id:
+        meeting = await db.meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting or meeting.get("deleted_at"):
+            return {"status": "error", "detail": "Meeting not found"}
+        if meeting["tm_user_id"] != user["id"] and user["role"] not in ("Admin", "Owner"):
+            return {"status": "error", "detail": "Forbidden"}
+        if meeting.get("status") == "Completed":
+            return {"status": "error", "detail": "This meeting is already completed"}
+        doctor_id = meeting["doctor_id"]
 
     try:
         result = await analyze_visit_note(AnalyzeNoteRequest(note=note_text, doctor_id=doctor_id), user=user)
@@ -105,12 +124,12 @@ async def _execute_smart_action(user: dict, note_text: str, doctor_id: str | Non
     doctor_name = newly_created_doctor_name or result.get("doctor_hint") or "the doctor"
 
     # No doctor named at all and not an explicit scheduling request -> personal task.
-    if intent == "task" or (
+    if not meeting_id and (intent == "task" or (
         not resolved_doctor_id and not doctor_name_heard and intent not in ("book_meeting", "book_demo")
-    ):
+    )):
         return await _create_standalone_task(user, note_text, result)
 
-    if intent in ("book_meeting", "book_demo"):
+    if not meeting_id and intent in ("book_meeting", "book_demo"):
         if not resolved_doctor_id:
             return {"status": "needs_clarification", "reason": "Which doctor is this meeting with?"}
         scheduled_for = result.get("meeting_scheduled_for")
@@ -170,6 +189,7 @@ async def _execute_smart_action(user: dict, note_text: str, doctor_id: str | Non
         itero_actions=result.get("itero_actions") or {},
         invisalign_actions=result.get("invisalign_actions") or {},
         commercial_actions=result.get("commercial_actions") or {},
+        meeting_id=meeting_id,
     )
     try:
         saved = await create_visit(visit_body, user=user)
@@ -185,6 +205,7 @@ async def _execute_smart_action(user: dict, note_text: str, doctor_id: str | Non
         "visit_date": mentioned_date,
         "n_promises": len(saved.get("created_tasks") or []),
         "visit_id": saved["visit"]["id"],
+        "meeting_id": meeting_id,
     }
 
 
@@ -192,6 +213,8 @@ async def _execute_smart_action(user: dict, note_text: str, doctor_id: str | Non
 async def execute_assistant_action(body: AnalyzeNoteRequest, user=Depends(get_current_user)):
     """HTTP entry point for the in-app Quick Capture voice flow — same
     engine Telegram uses, so a voice note does the same thing in either
-    place: log a visit, book a meeting/demo, or log a personal task.
+    place: log a visit, book a meeting/demo, or log a personal task. Also
+    used by the "Complete meeting" flow (body.meeting_id set) to log the
+    visit and mark a specific booked meeting Completed in one step.
     """
-    return await _execute_smart_action(user, body.note, doctor_id=body.doctor_id)
+    return await _execute_smart_action(user, body.note, doctor_id=body.doctor_id, meeting_id=body.meeting_id)
