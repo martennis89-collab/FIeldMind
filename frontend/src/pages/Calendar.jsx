@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../lib/api";
 import { Button } from "../components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { ChevronLeft, ChevronRight, CalendarDays, Rows3, ClipboardList, CalendarPlus } from "lucide-react";
 
 // ---------- Date helpers ----------
@@ -79,6 +80,7 @@ export default function CalendarPage() {
   const [events, setEvents] = useState([]);
   const [visits, setVisits] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedDay, setSelectedDay] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -114,6 +116,11 @@ export default function CalendarPage() {
     }
     return g;
   }, [items]);
+
+  const selectedDayItems = useMemo(
+    () => (selectedDay ? (byDay.get(ymd(selectedDay)) || []) : []),
+    [selectedDay, byDay]
+  );
 
   const shiftCursor = (dir) => {
     setCursor((prev) => {
@@ -164,11 +171,54 @@ export default function CalendarPage() {
       {loading ? (
         <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }} data-testid="cal-loading">Loading calendar…</div>
       ) : view === "month" ? (
-        <MonthGrid cursor={cursor} byDay={byDay} />
+        <MonthGrid cursor={cursor} byDay={byDay} onDayClick={setSelectedDay} />
       ) : (
-        <WeekGrid cursor={cursor} byDay={byDay} />
+        <WeekGrid cursor={cursor} byDay={byDay} onDayClick={setSelectedDay} />
       )}
+
+      <DayModal date={selectedDay} items={selectedDayItems} onClose={() => setSelectedDay(null)} />
     </div>
+  );
+}
+
+// ---------- Day detail modal ----------
+function DayModal({ date, items, onClose }) {
+  const dateLabel = date
+    ? date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+    : "";
+  return (
+    <Dialog open={!!date} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent data-testid="cal-day-modal">
+        <DialogHeader><DialogTitle>{dateLabel}</DialogTitle></DialogHeader>
+        {items.length === 0 ? (
+          <div className="text-sm py-6 text-center" style={{ color: "var(--text-muted)" }}>
+            Nothing scheduled this day.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto" data-testid="cal-day-modal-list">
+            {items.map((it) => {
+              const s = styleFor(it);
+              return (
+                <Link
+                  key={it.id}
+                  to={it.href}
+                  onClick={onClose}
+                  data-testid={`cal-day-modal-item-${it.id}`}
+                  className="flex items-center gap-3 rounded-md border p-2.5 hover:bg-[var(--bg-paper)] transition-colors"
+                  style={{ borderColor: "var(--border-default)" }}
+                >
+                  <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: s.bg }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{it.label}</div>
+                    <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmtHM(it.iso)} · {s.label}</div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -191,7 +241,7 @@ function Legend() {
 }
 
 // ---------- Month view ----------
-function MonthGrid({ cursor, byDay }) {
+function MonthGrid({ cursor, byDay, onDayClick }) {
   const first = startOfMonth(cursor);
   const gridStart = startOfWeek(first);
   const days = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
@@ -213,7 +263,11 @@ function MonthGrid({ cursor, byDay }) {
           return (
             <div key={key}
                  data-testid={`cal-day-${key}`}
-                 className="min-h-[110px] border-t border-r p-1.5 flex flex-col gap-1"
+                 onClick={() => onDayClick(d)}
+                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onDayClick(d); } }}
+                 role="button"
+                 tabIndex={0}
+                 className="min-h-[110px] border-t border-r p-1.5 flex flex-col gap-1 cursor-pointer"
                  style={{
                    borderColor: "var(--border-default)",
                    background: inMonth ? "var(--bg-default)" : "var(--bg-paper)",
@@ -238,7 +292,7 @@ function MonthGrid({ cursor, byDay }) {
 }
 
 // ---------- Week view ----------
-function WeekGrid({ cursor, byDay }) {
+function WeekGrid({ cursor, byDay, onDayClick }) {
   const start = startOfWeek(cursor);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -250,7 +304,11 @@ function WeekGrid({ cursor, byDay }) {
         const list = byDay.get(key) || [];
         return (
           <div key={key} data-testid={`cal-day-${key}`}
-               className="rounded-md border p-2 min-h-[220px] flex flex-col"
+               onClick={() => onDayClick(d)}
+               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onDayClick(d); } }}
+               role="button"
+               tabIndex={0}
+               className="rounded-md border p-2 min-h-[220px] flex flex-col cursor-pointer"
                style={{
                  background: "var(--bg-default)",
                  borderColor: isToday ? "var(--brand-secondary)" : "var(--border-default)",
@@ -284,6 +342,7 @@ function EventPill({ item }) {
   const s = styleFor(item);
   return (
     <Link to={item.href}
+          onClick={(e) => e.stopPropagation()}
           data-testid={`cal-item-${item.id}`}
           className="text-[10px] truncate rounded px-1.5 py-0.5 leading-tight hover:opacity-90"
           style={{ background: s.bg, color: s.fg }}
@@ -298,6 +357,7 @@ function EventBlock({ item }) {
   const s = styleFor(item);
   return (
     <Link to={item.href}
+          onClick={(e) => e.stopPropagation()}
           data-testid={`cal-item-${item.id}`}
           className="rounded px-2 py-1 text-xs leading-tight hover:opacity-90"
           style={{ background: s.bg, color: s.fg }}>
