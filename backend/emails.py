@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "FieldTracker <onboarding@resend.dev>")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+# Optional — set once fieldtracker.co is verified in Resend, e.g. "support@fieldtracker.co".
+# Omitted from the payload entirely if unset (a reply-to pointing at an
+# unverified/no-such-mailbox address does more harm than good).
+REPLY_TO_EMAIL = os.environ.get("REPLY_TO_EMAIL", "").strip()
 
 _BRAND_PRIMARY = "#274035"
 _BRAND_SECONDARY = "#c26d53"
@@ -37,16 +41,19 @@ def _wrap(title: str, body_html: str) -> str:
 """.strip()
 
 
-async def _send_email(to: str, subject: str, html: str) -> bool:
+async def _send_email(to: str, subject: str, html_body: str, text_body: str) -> bool:
     if not RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not configured; skipping email to %s (subject=%r)", to, subject)
         return False
+    payload = {"from": SENDER_EMAIL, "to": [to], "subject": subject, "html": html_body, "text": text_body}
+    if REPLY_TO_EMAIL:
+        payload["reply_to"] = REPLY_TO_EMAIL
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.post(
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-                json={"from": SENDER_EMAIL, "to": [to], "subject": subject, "html": html},
+                json=payload,
             )
             r.raise_for_status()
         return True
@@ -57,6 +64,11 @@ async def _send_email(to: str, subject: str, html: str) -> bool:
 
 def _greeting(full_name: str) -> str:
     name = html.escape(full_name.strip()) if full_name and full_name.strip() else ""
+    return f"Hi {name}," if name else "Hi,"
+
+
+def _greeting_text(full_name: str) -> str:
+    name = full_name.strip() if full_name and full_name.strip() else ""
     return f"Hi {name}," if name else "Hi,"
 
 
@@ -75,7 +87,13 @@ async def send_password_reset_email(to: str, full_name: str, reset_token: str) -
       If you didn't request this, you can safely ignore this email — your password won't change.
     </p>
     """
-    return await _send_email(to, subject, _wrap(subject, body))
+    text = (
+        f"{_greeting_text(full_name)}\n\n"
+        f"We received a request to reset your FieldTracker password. This link expires in 1 hour.\n\n"
+        f"{reset_link}\n\n"
+        f"If you didn't request this, you can safely ignore this email — your password won't change."
+    )
+    return await _send_email(to, subject, _wrap(subject, body), text)
 
 
 async def send_weekly_report_reminder_email(to: str, full_name: str, week_start: str, week_end: str) -> bool:
@@ -91,7 +109,13 @@ async def send_weekly_report_reminder_email(to: str, full_name: str, week_start:
       Submit report
     </a>
     """
-    return await _send_email(to, subject, _wrap(subject, body))
+    text = (
+        f"{_greeting_text(full_name)}\n\n"
+        f"You haven't submitted your weekly report for {week_start} - {week_end} yet. "
+        f"FieldTracker drafts it from your logged activity — you just review and submit.\n\n"
+        f"{reports_link}"
+    )
+    return await _send_email(to, subject, _wrap(subject, body), text)
 
 
 async def send_unachieved_meetings_reminder_email(to: str, full_name: str, meetings: list) -> bool:
@@ -115,4 +139,14 @@ async def send_unachieved_meetings_reminder_email(to: str, full_name: str, meeti
       Open calendar
     </a>
     """
-    return await _send_email(to, subject, _wrap(subject, body))
+    text_rows = "\n".join(
+        f"- {m['time_label']} — {m['doctor_name']}{' (iTero demo)' if m.get('is_demo') else ''}"
+        for m in meetings
+    )
+    text = (
+        f"{_greeting_text(full_name)}\n\n"
+        f"These meetings from today are still marked Scheduled — log what happened to keep your record straight:\n\n"
+        f"{text_rows}\n\n"
+        f"{calendar_link}"
+    )
+    return await _send_email(to, subject, _wrap(subject, body), text)
