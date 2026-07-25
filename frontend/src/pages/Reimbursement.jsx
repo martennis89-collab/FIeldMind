@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "../components/ui/button";
 import {
   FileText, Plus, Send, CheckCircle2, XCircle, MessageSquare, Wallet, Download,
-  AlertTriangle, RefreshCw, MapPin, Car, Receipt, CalendarDays, Trash2,
+  AlertTriangle, RefreshCw, MapPin, Car, Receipt, CalendarDays, Trash2, BellRing,
 } from "lucide-react";
 
 const fmtEUR = (v) => (v == null ? "—" : `€ ${Number(v).toFixed(2)}`);
@@ -108,6 +108,8 @@ export default function Reimbursement() {
         )}
       </div>
 
+      {user.role !== "TM" && <PendingReimbursements />}
+
       {loading && <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>}
 
       {!loading && reports.length === 0 && (
@@ -180,6 +182,86 @@ export default function Reimbursement() {
   );
 }
 
+
+function PendingReimbursements() {
+  const [month, setMonth] = useState(monthKey());
+  const [pending, setPending] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [remindingId, setRemindingId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/reimbursement/reports/pending", { params: { month } });
+      setPending(data.pending || []);
+    } catch {
+      setPending([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, [month]);
+
+  const remind = async (tm) => {
+    setRemindingId(tm.tm_user_id);
+    try {
+      await api.post("/reimbursement/reports/remind", { tm_user_id: tm.tm_user_id, month });
+      toast.success(`Reminder sent to ${tm.tm_name}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not send reminder");
+    } finally {
+      setRemindingId(null);
+    }
+  };
+
+  return (
+    <div className="rounded-md border p-4 mb-6" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }} data-testid="pending-reimbursements-panel">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <div className="text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+          Team status — hasn&apos;t submitted yet
+        </div>
+        <input
+          type="month"
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          className="px-2 py-1.5 rounded border text-sm bg-white"
+          style={{ borderColor: "var(--border-default)" }}
+          data-testid="pending-month-input"
+        />
+      </div>
+      {loading ? (
+        <div className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</div>
+      ) : pending.length === 0 ? (
+        <div className="text-sm flex items-center gap-2" style={{ color: "var(--status-success)" }}>
+          <CheckCircle2 className="w-4 h-4" /> Everyone has submitted for {month}.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {pending.map((tm) => (
+            <div
+              key={tm.tm_user_id}
+              className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+              style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+              data-testid={`pending-reimb-row-${tm.tm_user_id}`}
+            >
+              <div className="text-sm font-medium">{tm.tm_name}</div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => remind(tm)}
+                disabled={remindingId === tm.tm_user_id}
+                data-testid={`remind-reimb-btn-${tm.tm_user_id}`}
+              >
+                <BellRing className="w-3.5 h-3.5 mr-1" />
+                {remindingId === tm.tm_user_id ? "Sending…" : "Remind"}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ReportDrawer({ id, onClose, onChange, user }) {
   const [report, setReport] = useState(null);

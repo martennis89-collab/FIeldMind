@@ -9,7 +9,7 @@ import { Label } from "../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { StatusPill } from "../components/StatusPill";
 import { toast } from "sonner";
-import { FileText, Sparkles, Send, Pencil, MessageSquare, AlertTriangle, Clock, CheckCircle2, X, Plus, Download } from "lucide-react";
+import { FileText, Sparkles, Send, Pencil, MessageSquare, AlertTriangle, Clock, CheckCircle2, X, Plus, Download, BellRing } from "lucide-react";
 
 function formatDate(s) {
   if (!s) return "—";
@@ -566,6 +566,15 @@ function ManagerReports() {
   useEffect(() => { load(bucket); }, [bucket]);
   useEffect(() => { loadCounts(); }, []);
 
+  const remind = async (r) => {
+    try {
+      await api.post("/reports/remind", { tm_user_id: r.tm_user_id, week_start: r.week_start, week_end: r.week_end });
+      toast.success(`Reminder sent to ${r.tm_name}`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not send reminder");
+    }
+  };
+
   return (
     <>
       <Tabs value={bucket} onValueChange={setBucket}>
@@ -587,7 +596,7 @@ function ManagerReports() {
                 </div>
               )}
               {reports.map((r) => (
-                <ReportRow key={r.id || r.tm_user_id} report={r} onOpen={() => !r.synthetic && setOpenId(r.id)} />
+                <ReportRow key={r.id || r.tm_user_id} report={r} onOpen={() => !r.synthetic && setOpenId(r.id)} onRemind={remind} />
               ))}
             </div>
           </TabsContent>
@@ -599,10 +608,18 @@ function ManagerReports() {
   );
 }
 
-function ReportRow({ report, onOpen }) {
+function ReportRow({ report, onOpen, onRemind }) {
   const r = report;
   const synth = r.synthetic;
   const Wrapper = synth ? "div" : "button";
+  const [reminding, setReminding] = useState(false);
+
+  const remind = async (e) => {
+    e.stopPropagation();
+    setReminding(true);
+    try { await onRemind(r); } finally { setReminding(false); }
+  };
+
   return (
     <Wrapper
       onClick={synth ? undefined : onOpen}
@@ -624,6 +641,18 @@ function ReportRow({ report, onOpen }) {
             {(r.comments?.length > 0) && <StatusPill kind="info"><MessageSquare className="w-3 h-3" />{r.comments.length}</StatusPill>}
           </div>
         </div>
+        {synth && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={remind}
+            disabled={reminding}
+            data-testid={`remind-btn-${r.tm_user_id}`}
+          >
+            <BellRing className="w-3.5 h-3.5 mr-1" />
+            {reminding ? "Sending…" : "Remind"}
+          </Button>
+        )}
       </div>
     </Wrapper>
   );

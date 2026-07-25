@@ -96,6 +96,7 @@ from server import (
     _assert_same_company,
     _stamp_company,
     ENFORCE_COMPANY_ISOLATION,
+    _managed_tm_ids_for,
     _week_bounds,
     _classify_flags,
     _classify_insights,
@@ -332,6 +333,47 @@ async def list_reports(
         q["status"] = {"$in": ["Submitted", "Reviewed"]}
     reports = await db.reports.find(q, {"_id": 0}).sort("submitted_at", -1).to_list(500)
     return {"reports": reports}
+
+
+class RemindReportBody(BaseModel):
+    tm_user_id: str
+    week_start: str
+    week_end: str
+
+
+@api.post("/reports/remind")
+async def remind_weekly_report(
+    body: RemindReportBody, user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))
+):
+    """Manually nudge one direct report about a specific week's report — the
+    same email the automated Monday reminder sends, just triggered on demand
+    from the Pending/Overdue tabs instead of waiting for the loop."""
+    from emails import send_weekly_report_reminder_email
+
+    scope = await _managed_tm_ids_for(user)
+    if scope is not None and body.tm_user_id not in scope:
+        raise HTTPException(status_code=403, detail="That person isn't one of your direct reports")
+
+    tm = await db.users.find_one({"id": body.tm_user_id}, {"_id": 0})
+    if not tm or not tm.get("active_status", True):
+        raise HTTPException(status_code=404, detail="TM not found")
+    if not tm.get("email"):
+        raise HTTPException(status_code=400, detail="This user has no email on file")
+
+    already = await db.reports.find_one({
+        "tm_user_id": body.tm_user_id, "week_start": body.week_start,
+        "status": {"$in": ["Submitted", "Reviewed"]},
+    })
+    if already:
+        raise HTTPException(status_code=400, detail=f"{tm.get('full_name') or 'This TM'} already submitted that week's report")
+
+    await send_weekly_report_reminder_email(
+        tm["email"], tm.get("full_name", ""), body.week_start, body.week_end,
+        requested_by_name=user.get("full_name"),
+    )
+    await _audit(user, "remind", "report", body.tm_user_id, new={"week_start": body.week_start})
+    return {"ok": True}
+
 
 @api.get("/reports/{report_id}")
 async def get_report(report_id: str, user=Depends(get_current_user)):

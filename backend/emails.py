@@ -72,6 +72,21 @@ def _greeting_text(full_name: str) -> str:
     return f"Hi {name}," if name else "Hi,"
 
 
+def _sent_by_line(requested_by_name: str | None) -> str:
+    """Shown under the CTA when a manager/SeniorTM manually triggers a
+    reminder (vs. the automated Monday/end-of-day loops, which pass None)."""
+    if not requested_by_name or not requested_by_name.strip():
+        return ""
+    name = html.escape(requested_by_name.strip())
+    return f'<p style="font-size: 12px; line-height: 1.6; color: #8a8478; margin: 20px 0 0;">Sent by {name}.</p>'
+
+
+def _sent_by_line_text(requested_by_name: str | None) -> str:
+    if not requested_by_name or not requested_by_name.strip():
+        return ""
+    return f"\n\nSent by {requested_by_name.strip()}."
+
+
 async def send_password_reset_email(to: str, full_name: str, reset_token: str) -> bool:
     reset_link = f"{FRONTEND_URL}/reset-password?token={reset_token}"
     subject = "Reset your FieldTracker password"
@@ -96,7 +111,9 @@ async def send_password_reset_email(to: str, full_name: str, reset_token: str) -
     return await _send_email(to, subject, _wrap(subject, body), text)
 
 
-async def send_weekly_report_reminder_email(to: str, full_name: str, week_start: str, week_end: str) -> bool:
+async def send_weekly_report_reminder_email(
+    to: str, full_name: str, week_start: str, week_end: str, requested_by_name: str | None = None
+) -> bool:
     subject = "Your weekly report is overdue"
     reports_link = f"{FRONTEND_URL}/reports"
     body = f"""
@@ -108,12 +125,41 @@ async def send_weekly_report_reminder_email(to: str, full_name: str, week_start:
     <a href="{reports_link}" style="display: inline-block; background: {_BRAND_PRIMARY}; color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600;">
       Submit report
     </a>
+    {_sent_by_line(requested_by_name)}
     """
     text = (
         f"{_greeting_text(full_name)}\n\n"
         f"You haven't submitted your weekly report for {week_start} - {week_end} yet. "
         f"FieldTracker drafts it from your logged activity — you just review and submit.\n\n"
         f"{reports_link}"
+        f"{_sent_by_line_text(requested_by_name)}"
+    )
+    return await _send_email(to, subject, _wrap(subject, body), text)
+
+
+async def send_monthly_report_reminder_email(
+    to: str, full_name: str, month: str, requested_by_name: str | None = None
+) -> bool:
+    """month is 'YYYY-MM'. Reminds about the Monthly Reimbursement Report,
+    not the weekly field report — a different submission with its own
+    Draft -> Submitted flow."""
+    subject = "Your monthly report is overdue"
+    reimbursement_link = f"{FRONTEND_URL}/reimbursement"
+    body = f"""
+    <p style="font-size: 15px; line-height: 1.6; margin: 0 0 16px;">{_greeting(full_name)}</p>
+    <p style="font-size: 15px; line-height: 1.6; margin: 0 0 24px;">
+      You haven't submitted your monthly reimbursement report for <strong>{html.escape(month)}</strong> yet.
+    </p>
+    <a href="{reimbursement_link}" style="display: inline-block; background: {_BRAND_PRIMARY}; color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600;">
+      Submit report
+    </a>
+    {_sent_by_line(requested_by_name)}
+    """
+    text = (
+        f"{_greeting_text(full_name)}\n\n"
+        f"You haven't submitted your monthly reimbursement report for {month} yet.\n\n"
+        f"{reimbursement_link}"
+        f"{_sent_by_line_text(requested_by_name)}"
     )
     return await _send_email(to, subject, _wrap(subject, body), text)
 

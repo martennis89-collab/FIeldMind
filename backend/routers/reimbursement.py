@@ -19,7 +19,8 @@ from typing import Optional
 from datetime import datetime, timezone
 import re
 
-from fastapi import Depends, HTTPException, Body
+from fastapi import Depends, HTTPException, Body, Query
+from pydantic import BaseModel
 
 from server import (
     api, db,
@@ -501,6 +502,78 @@ async def list_reimbursement_reports(month: Optional[str] = None, status: Option
         r["expense_count"] = len(expenses)
         out.append(r)
     return {"reports": out}
+
+
+@api.get("/reimbursement/reports/pending")
+async def list_pending_reimbursement_reports(month: str = Query(...), user=Depends(get_current_user)):
+    """For Manager/SeniorTM/Admin/Owner — which direct reports haven't
+    submitted (or even started) their reimbursement report for `month` yet.
+    Mirrors the weekly report's synthesized Pending/Overdue rows in
+    routers/reports.py, just against the Draft -> Submitted reimbursement
+    flow instead (a report may not exist at all, not just be un-submitted)."""
+    if user["role"] not in ("Manager", "SeniorTM", "Admin", "Owner"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    scope = await _managed_tm_ids_for(user)
+    q = dict(_company_query_for(user))
+    q["role"] = {"$in": ["TM", "SeniorTM"]}
+    if scope is not None:
+        q["id"] = {"$in": scope}
+    tms = await db.users.find(q, {"_id": 0, "id": 1, "full_name": 1, "email": 1}).to_list(500)
+
+    existing = await db.reimbursement_reports.find(
+        {
+            "tm_user_id": {"$in": [t["id"] for t in tms]},
+            "month": month,
+            "status": {"$nin": ["Draft", "Rejected", "Cancelled"]},
+        },
+        {"_id": 0, "tm_user_id": 1},
+    ).to_list(500)
+    submitted_ids = {r["tm_user_id"] for r in existing}
+
+    pending = [
+        {"tm_user_id": t["id"], "tm_name": t["full_name"], "tm_email": t["email"]}
+        for t in tms if t["id"] not in submitted_ids
+    ]
+    return {"pending": pending, "month": month}
+
+
+class RemindReimbursementBody(BaseModel):
+    tm_user_id: str
+    month: str  # YYYY-MM
+
+
+@api.post("/reimbursement/reports/remind")
+async def remind_reimbursement_report(
+    body: RemindReimbursementBody, user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))
+):
+    """Manually nudge one direct report about a specific month's
+    reimbursement report — mirrors /reports/remind for the weekly field
+    report, just against the separate Draft -> Submitted reimbursement flow."""
+    from emails import send_monthly_report_reminder_email
+
+    scope = await _managed_tm_ids_for(user)
+    if scope is not None and body.tm_user_id not in scope:
+        raise HTTPException(status_code=403, detail="That person isn't one of your direct reports")
+
+    tm = await db.users.find_one({"id": body.tm_user_id}, {"_id": 0})
+    if not tm or not tm.get("active_status", True):
+        raise HTTPException(status_code=404, detail="TM not found")
+    if not tm.get("email"):
+        raise HTTPException(status_code=400, detail="This user has no email on file")
+
+    submitted = await db.reimbursement_reports.find_one({
+        "tm_user_id": body.tm_user_id, "month": body.month,
+        "status": {"$nin": ["Draft", "Rejected", "Cancelled"]},
+    })
+    if submitted:
+        raise HTTPException(status_code=400, detail=f"{tm.get('full_name') or 'This TM'} already submitted that month's report")
+
+    await send_monthly_report_reminder_email(
+        tm["email"], tm.get("full_name", ""), body.month, requested_by_name=user.get("full_name")
+    )
+    await _audit(user, "remind", "reimbursement_report", body.tm_user_id, new={"month": body.month})
+    return {"ok": True}
 
 
 @api.get("/reimbursement/reports/{report_id}")
