@@ -430,7 +430,7 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
         w.writerow(["Auto summary", r.get("auto_summary", "")])
         w.writerow([])
         w.writerow(["Metric", "Value"])
-        for k in ["visits_completed", "meetings_count", "meetings_completed",
+        for k in ["visits_completed", "meetings_count", "meetings_completed", "promises_created",
                  "doctors_visited", "promises_created", "promises_completed",
                  "overdue_promises", "demos_discussed", "demos_booked", "demos_completed",
                  "proposals_sent", "proposals_followed_up"]:

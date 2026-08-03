@@ -557,6 +557,9 @@ class ReportContent(BaseModel):
     meetings_count: int = 0
     meetings_completed: int = 0
     meetings: List[dict] = []
+    # Promises are listed separately from meetings — a commitment is not an
+    # interaction, and mixing them overstates how many meetings happened.
+    promises: List[dict] = []
 
 
 class ReportComment(BaseModel):

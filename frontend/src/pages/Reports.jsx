@@ -319,7 +319,7 @@ function ReportEditor({ open, onClose, draft, setDraft, readonly, saving, onSave
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat label="Meetings held" value={c.visits_completed} />
-            <Stat label="Meetings" value={c.meetings_count || 0} />
+            <Stat label="On calendar" value={c.meetings_count || 0} />
             <Stat label="Doctors" value={c.doctors_visited} />
             <Stat label="Promises created" value={c.promises_created} />
             <Stat label="Promises completed" value={c.promises_completed} kind="success" />
@@ -394,6 +394,32 @@ function ReportEditor({ open, onClose, draft, setDraft, readonly, saving, onSave
                 </div>
               ))}
               {(c.doctors_needing_attention || []).length === 0 && <div className="text-xs" style={{ color: "var(--text-muted)" }}>None flagged</div>}
+            </div>
+          </section>
+
+          {/* Promises are listed in their own section, deliberately apart from
+              meetings — a commitment is not an interaction that took place. */}
+          <section data-testid="report-promises">
+            <Label className="text-xs uppercase tracking-widest mb-2 block" style={{ color: "var(--text-muted)" }}>
+              Promises made ({(c.promises || []).length})
+            </Label>
+            <div className="space-y-1.5">
+              {(c.promises || []).map((p) => (
+                <div key={p.task_id} className="rounded-md border px-3 py-2 flex items-center justify-between gap-3 flex-wrap"
+                     style={{ background: "var(--bg-default)", borderColor: "var(--border-default)" }}
+                     data-testid={`report-promise-${p.task_id}`}>
+                  <div className="min-w-0">
+                    <div className="text-sm" style={{ color: "var(--text-primary)" }}>{p.task_title}</div>
+                    <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{p.doctor_name}</div>
+                  </div>
+                  <div className="text-[11px] whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
+                    due {p.due_date || "—"}
+                  </div>
+                </div>
+              ))}
+              {(c.promises || []).length === 0 && (
+                <div className="text-xs" style={{ color: "var(--text-muted)" }}>No promises made this week</div>
+              )}
             </div>
           </section>
 
@@ -709,7 +735,7 @@ function ReportDrawer({ reportId, onClose }) {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           <Stat label="Meetings held" value={c.visits_completed} />
-          <Stat label="Meetings" value={c.meetings_count || 0} />
+          <Stat label="On calendar" value={c.meetings_count || 0} />
           <Stat label="Doctors" value={c.doctors_visited} />
           <Stat label="Promises created" value={c.promises_created} />
           <Stat label="Promises completed" value={c.promises_completed} kind="success" />

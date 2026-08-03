@@ -1451,12 +1451,17 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
 
     # auto summary
     parts = []
-    parts.append(f"{len(visits)} visit{'s' if len(visits)!=1 else ''} across {len(doctor_ids)} doctor{'s' if len(doctor_ids)!=1 else ''} this week.")
-    if meetings_this_week:
-        parts.append(
-            f"{len(meetings_this_week)} meeting{'s' if len(meetings_this_week)!=1 else ''} scheduled "
-            f"({meetings_completed_count} completed)."
-        )
+    # Visits and meetings are the same thing now, so the summary reports one
+    # count of what actually happened plus what is still outstanding. Listing
+    # "N visits" AND "M meetings (M completed)" double-counted every completed
+    # meeting and read as a contradiction.
+    parts.append(
+        f"{len(visits)} meeting{'s' if len(visits)!=1 else ''} held across "
+        f"{len(doctor_ids)} doctor{'s' if len(doctor_ids)!=1 else ''} this week."
+    )
+    _still_open = max(len(meetings_this_week) - meetings_completed_count, 0)
+    if _still_open:
+        parts.append(f"{_still_open} more scheduled but not yet completed.")
     if top_barriers:
         parts.append("Most-heard barriers: " + ", ".join(top_barriers[:3]) + ".")
     if top_topics:
@@ -1568,7 +1573,16 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
     # Per-doctor breakdown for the week — one row per doctor visited
     # Include doctors who only have demo activity (but no visit) this week too
     combined_doctor_ids = set(doctor_ids) | demo_doctor_ids
-    doctor_lookup = {d["id"]: d for d in (await db.doctors.find({"id": {"$in": list(combined_doctor_ids)}}, {"_id": 0}).to_list(2000))}
+    # Include doctors that only appear via a promise this week, so the
+    # promises list can show a real name rather than "—".
+    promise_doctor_ids = {tk.get("doctor_id") for tk in tasks_created if tk.get("doctor_id")}
+    doctor_lookup = {
+        d["id"]: d for d in (
+            await db.doctors.find(
+                {"id": {"$in": list(combined_doctor_ids | promise_doctor_ids)}}, {"_id": 0}
+            ).to_list(2000)
+        )
+    }
     # Tasks created this week, grouped by doctor
     tasks_by_doctor: dict = {}
     for tk in tasks_created:
@@ -1663,6 +1677,20 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "demos_completed_list": demos_completed_list,
         "proposals_sent": proposals_sent,
         "proposals_followed_up": proposals_followed,
+        # Promises listed in their own right, NOT folded into the meetings
+        # section — a promise is a commitment the TM made, not an interaction
+        # that took place, and conflating the two inflates the meeting count.
+        "promises": [
+            {
+                "task_id": tk.get("id"),
+                "doctor_id": tk.get("doctor_id"),
+                "doctor_name": (doctor_lookup.get(tk.get("doctor_id")) or {}).get("doctor_name") or "—",
+                "task_title": tk.get("task_title") or "",
+                "due_date": tk.get("due_date"),
+                "status": tk.get("status") or "Open",
+            }
+            for tk in tasks_created
+        ],
         # Regular (non-demo) meetings on this week's calendar.
         "meetings_count": len(meetings_this_week),
         "meetings_completed": meetings_completed_count,
