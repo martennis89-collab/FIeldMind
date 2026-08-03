@@ -95,8 +95,12 @@ async def _create_standalone_task(
     }
 
 
+_FORCEABLE_INTENTS = ("log_visit", "log_promise", "book_meeting", "book_demo", "task")
+
+
 async def _execute_smart_action(
-    user: dict, note_text: str, doctor_id: str | None = None, meeting_id: str | None = None
+    user: dict, note_text: str, doctor_id: str | None = None, meeting_id: str | None = None,
+    force_intent: str | None = None,
 ) -> dict:
     """Given a free-text note, figure out what the TM wants done and do it.
 
@@ -133,7 +137,15 @@ async def _execute_smart_action(
         logger.exception("Smart action AI analysis failed")
         return {"status": "error", "detail": "Something went wrong analyzing that note — nothing was saved."}
 
-    intent = result.get("intent") or "log_visit"
+    # An explicit choice by the user (Telegram /promise, Quick Capture mode
+    # selector) always wins. Inferring intent from phrasing is genuinely
+    # ambiguous — "Dr X asked me for pricing, I'll send it Friday" reads as
+    # both a conversation and a commitment — and guessing wrong silently
+    # creates a visit that pollutes the calendar and the weekly report.
+    if force_intent in _FORCEABLE_INTENTS:
+        intent = force_intent
+    else:
+        intent = result.get("intent") or "log_visit"
     resolved_doctor_id = result.get("doctor_id")
     doctor_name_heard = result.get("doctor_name_heard")
     newly_created_doctor_name = result.get("doctor_hint") if result.get("doctor_auto_created") else None
@@ -142,9 +154,14 @@ async def _execute_smart_action(
     # A commitment to a doctor with no visit reported — record it as a promise
     # ON that doctor, never as a phantom visit (a visit would wrongly show on
     # the calendar and inflate the weekly report's visit count).
-    if not meeting_id and intent == "log_promise" and resolved_doctor_id:
+    # When the promise intent was chosen explicitly we honour it even if no
+    # doctor could be matched — it still records as a promise (just unlinked)
+    # rather than falling through and asking "who did you visit?".
+    if not meeting_id and intent == "log_promise":
         return await _create_standalone_task(
-            user, note_text, result, doctor_id=resolved_doctor_id, doctor_name=doctor_name
+            user, note_text, result,
+            doctor_id=resolved_doctor_id,
+            doctor_name=doctor_name if resolved_doctor_id else None,
         )
 
     # No doctor named at all and not an explicit scheduling request -> personal task.
@@ -241,4 +258,7 @@ async def execute_assistant_action(body: AnalyzeNoteRequest, user=Depends(get_cu
     used by the "Complete meeting" flow (body.meeting_id set) to log the
     visit and mark a specific booked meeting Completed in one step.
     """
-    return await _execute_smart_action(user, body.note, doctor_id=body.doctor_id, meeting_id=body.meeting_id)
+    return await _execute_smart_action(
+        user, body.note, doctor_id=body.doctor_id, meeting_id=body.meeting_id,
+        force_intent=body.force_intent,
+    )

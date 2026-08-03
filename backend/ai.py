@@ -122,10 +122,14 @@ INTENT — classify what the TM actually wants done, one of:
 - "log_promise": the TM is recording a COMMITMENT they made to a doctor, WITHOUT
   reporting a visit or conversation (e.g. "I promised Dr. Ivanov I'd send the
   pricing info by Friday", "Need to send Dr. X the certification details").
-  The note is only about what the TM owes someone — it does NOT describe a
-  meeting, a discussion, topics covered, or the doctor's reaction. If the note
-  ALSO describes what was discussed or how the doctor responded, that's a
-  "log_visit" (with the promise captured inside promises_detected), NOT this.
+  The note is only about what the TM owes someone. A passing mention of how the
+  request arose ("Dr. X asked me for pricing, I'll send it Friday") is STILL a
+  promise — the note's substance is the commitment, not a report of a visit.
+  Choose "log_visit" only when the note actually reports the CONTENT of a
+  conversation: what was discussed, topics covered, or how the doctor reacted
+  (e.g. "Saw Dr. X, we went through ClinCheck, she was hesitant about price").
+  When a note is only "<doctor> wants/asked for <thing>, I'll send it", pick
+  log_promise — logging that as a visit invents a visit that never happened.
 - "task": a personal/admin reminder that has NOTHING to do with a doctor visit
   (e.g. "Remind me to call the bank about the loan"). Not a scheduling request, not
   a visit report.

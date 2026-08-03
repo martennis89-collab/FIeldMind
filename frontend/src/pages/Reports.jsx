@@ -112,7 +112,13 @@ function TMReports() {
       if (weeksBack > 0) {
         const d = new Date();
         d.setDate(d.getDate() - weeksBack * 7);
-        params.week_start = d.toISOString().slice(0, 10);
+        // Format from LOCAL parts, not toISOString(). toISOString() converts to
+        // UTC first, so for a user at UTC+3 clicking "Last week" before ~03:00
+        // local, the date rolls back a day — and if that lands on a Sunday the
+        // server normalises to the Monday *before*, silently generating the
+        // report for the wrong week entirely.
+        const pad = (n) => String(n).padStart(2, "0");
+        params.week_start = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       }
       const { data } = await api.post("/reports/generate", null, { params });
       setDraft(data);

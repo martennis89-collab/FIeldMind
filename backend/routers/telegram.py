@@ -59,6 +59,42 @@ async def _download_telegram_voice(file_id: str) -> bytes:
         return audio.content
 
 
+# Explicit commands beat AI guessing. Inferring intent from phrasing is
+# genuinely ambiguous — "Dr X asked me for pricing, I'll send it Friday" reads
+# as both a conversation and a commitment — and a wrong guess silently creates
+# a visit that pollutes the calendar and the weekly report. Works as a text
+# command ("/promise send Dr X pricing") or as the caption on a voice note.
+_COMMANDS = {
+    "/promise": "log_promise",
+    "/visit": "log_visit",
+    "/meeting": "book_meeting",
+    "/demo": "book_demo",
+    "/task": "task",
+}
+
+_COMMAND_HELP = (
+    "Send a voice note or text and I'll work out what to do.\n\n"
+    "To be explicit, start with a command (or use it as a voice-note caption):\n"
+    "  /promise — record a promise, no visit logged\n"
+    "  /visit   — log a visit that happened\n"
+    "  /meeting — book a meeting\n"
+    "  /demo    — book an iTero demo\n"
+    "  /task    — a personal reminder\n\n"
+    'e.g. "/promise send Dr Lekova the pricing by Friday"'
+)
+
+
+def _parse_command(text: str):
+    """Return (forced_intent, remaining_text). Non-command text -> (None, text)."""
+    stripped = (text or "").strip()
+    if not stripped.startswith("/"):
+        return None, stripped
+    head, _, rest = stripped.partition(" ")
+    # Telegram appends @botname when commands are used in groups.
+    head = head.split("@")[0].lower()
+    return _COMMANDS.get(head), rest.strip()
+
+
 def _format_result_message(result: dict) -> str:
     status = result.get("status")
     if status == "needs_clarification":
@@ -114,24 +150,33 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
 
     note_text = None
+    force_intent = None
+    caption = message.get("caption")  # a /command sent WITH a voice note
     if message.get("voice"):
+        force_intent, _ = _parse_command(caption or "")
         try:
             raw = await _download_telegram_voice(message["voice"]["file_id"])
             note_text = await _transcribe_audio_bytes(raw, "voice.ogg", "audio/ogg")
         except HTTPException as e:
             await _telegram_send(f"Couldn't transcribe that voice note ({e.detail}). Try again or send text instead.")
             return {"ok": True}
-    elif message.get("text") and not message["text"].startswith("/"):
-        note_text = message["text"]
+    elif message.get("text"):
+        force_intent, rest = _parse_command(message["text"])
+        if force_intent:
+            if not rest:
+                await _telegram_send(_COMMAND_HELP)
+                return {"ok": True}
+            note_text = rest
+        elif not message["text"].startswith("/"):
+            note_text = message["text"]
+        else:
+            await _telegram_send(_COMMAND_HELP)
+            return {"ok": True}
 
     if not note_text:
-        await _telegram_send(
-            "Send a voice note or a text message — a visit report, \"book a meeting with "
-            "Dr. X on Friday at 2pm\", \"book an iTero demo with Dr. X\", or a personal "
-            "reminder all work, e.g. \"Saw Dr. Ivanov, talked about the iTero demo, he wants pricing info.\""
-        )
+        await _telegram_send(_COMMAND_HELP)
         return {"ok": True}
 
-    result = await _execute_smart_action(user, note_text)
+    result = await _execute_smart_action(user, note_text, force_intent=force_intent)
     await _telegram_send(_format_result_message(result))
     return {"ok": True}

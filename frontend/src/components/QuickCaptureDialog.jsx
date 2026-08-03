@@ -9,6 +9,25 @@ import { Mic, Square, Sparkles, Plus, Loader2, Wand2, UserPlus, CheckCircle2, Al
 import { toast } from "sonner";
 import InlineAddDoctor from "./InlineAddDoctor";
 
+// What the user is recording. Chosen explicitly rather than inferred, because
+// intent is genuinely ambiguous from phrasing alone — "Dr X asked me for
+// pricing, I'll send it Friday" reads as both a conversation and a commitment,
+// and guessing wrong silently creates a visit that pollutes the calendar and
+// the weekly report. "auto" keeps the old let-the-AI-decide behaviour.
+const MODES = [
+  { id: "auto", label: "Auto", hint: "Let AI decide what this is" },
+  { id: "log_promise", label: "Promise", hint: "A commitment you made — no visit is logged" },
+  { id: "book_meeting", label: "Meeting", hint: "Book a meeting — include a date and time" },
+  { id: "book_demo", label: "iTero demo", hint: "Book a scanner demo — include a date and time" },
+];
+
+const MODE_PLACEHOLDER = {
+  auto: "Promise to send Dr. Petrov the certification info by Friday…",
+  log_promise: "Send Dr. Petrov the certification info by Friday…",
+  book_meeting: "Meeting with Dr. Petrov next Tuesday at 2pm…",
+  book_demo: "iTero demo with Dr. Petrov on Friday at 10am…",
+};
+
 const STEP_RECORD = "record";       // pick mic or paste text
 const STEP_EXTRACTING = "extract";  // calling AI (typed-text task flow)
 const STEP_REVIEW = "review";       // user confirms suggestion (typed-text task flow)
@@ -72,6 +91,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
   const [addingDoctor, setAddingDoctor] = useState(false);
   const [noDoctor, setNoDoctor] = useState(false);
   const [actionResult, setActionResult] = useState(null);
+  const [mode, setMode] = useState("auto");
 
   useEffect(() => {
     if (!open) return;
@@ -81,6 +101,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
     setDoctorSearch("");
     setNoDoctor(false);
     setActionResult(null);
+    setMode("auto");
     api.get("/doctors").then((r) => setDoctors(r.data || [])).catch(() => setDoctors([]));
   }, [open]);
 
@@ -94,6 +115,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
         note: noteText,
         doctor_id: defaultDoctorId || null,
         meeting_id: meetingId || null,
+        force_intent: mode === "auto" ? null : mode,
       });
       setActionResult(data);
       if (data.status === "done") {
@@ -264,6 +286,34 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
 
         {step === STEP_RECORD && (
           <div className="space-y-4">
+            {/* Not shown when completing a specific meeting — that intent is
+                already unambiguous. */}
+            {!meetingId && (
+              <div>
+                <Label className="mb-1.5 block">What are you recording?</Label>
+                <div className="flex flex-wrap gap-1.5" data-testid="quick-capture-mode">
+                  {MODES.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setMode(m.id)}
+                      data-testid={`quick-capture-mode-${m.id}`}
+                      className="px-3 py-1.5 rounded-md text-sm border transition-colors"
+                      style={{
+                        background: mode === m.id ? "var(--brand-primary)" : "transparent",
+                        color: mode === m.id ? "white" : "var(--text-secondary)",
+                        borderColor: mode === m.id ? "var(--brand-primary)" : "var(--border-default)",
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+                  {MODES.find((m) => m.id === mode)?.hint}
+                </div>
+              </div>
+            )}
             <div className="rounded-md border p-4 flex items-center justify-between gap-3" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }}>
               <div className="flex-1 text-sm">
                 {recording ? (
@@ -299,7 +349,7 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
                 onChange={(e) => setNote(e.target.value)}
                 placeholder={meetingId
                   ? "What happened in this meeting? e.g. Discussed pricing, they want to see a demo next month…"
-                  : "Promise to send Dr. Petrov the certification info by Friday…"}
+                  : MODE_PLACEHOLDER[mode]}
                 rows={4}
                 data-testid="quick-capture-note"
                 className="mt-1"
@@ -310,6 +360,13 @@ export default function QuickCaptureDialog({ open, onClose, onCreated, defaultDo
               {meetingId ? (
                 <Button onClick={() => runSmartAction(note)} disabled={!note.trim()} data-testid="quick-capture-complete-meeting" style={{ background: "var(--brand-primary)", color: "white" }}>
                   <CheckCircle2 className="w-4 h-4 mr-1" /> Complete meeting
+                </Button>
+              ) : mode !== "auto" ? (
+                // An explicit mode applies to typed text too — otherwise
+                // picking "Meeting" and typing would still produce a task.
+                <Button onClick={() => runSmartAction(note)} disabled={!note.trim()} data-testid="quick-capture-submit-mode" style={{ background: "var(--brand-primary)", color: "white" }}>
+                  <Sparkles className="w-4 h-4 mr-1" />
+                  {mode === "log_promise" ? "Save promise" : mode === "book_demo" ? "Book demo" : "Book meeting"}
                 </Button>
               ) : (
                 <Button onClick={extract} disabled={!note.trim()} data-testid="quick-capture-extract" style={{ background: "var(--brand-primary)", color: "white" }}>

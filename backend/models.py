@@ -340,6 +340,11 @@ class AnalyzeNoteRequest(BaseModel):
     note: str
     doctor_id: Optional[str] = None
     meeting_id: Optional[str] = None
+    # Explicit user choice ("record a promise" / "book a meeting"), which
+    # overrides AI intent inference. None = let the AI decide.
+    force_intent: Optional[
+        Literal["log_visit", "log_promise", "book_meeting", "book_demo", "task"]
+    ] = None
 
 
 class VisitCreate(BaseModel):
