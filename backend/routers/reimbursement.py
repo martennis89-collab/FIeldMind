@@ -127,12 +127,13 @@ async def upsert_doctor_km(body: dict = Body(...), user=Depends(get_current_user
 # REIMBURSEMENT REPORTS
 # ============================================================
 async def _visits_for_month(tm_user_id: str, month: str, company_id: Optional[str]) -> list[dict]:
-    """Completed meetings for the month — the KM basis.
+    """Every non-cancelled meeting for the month — the KM basis.
 
-    Visits were retired; a meeting with status="Completed" is now the record
-    that the TM actually travelled to that doctor. Only Completed counts:
-    a meeting that was merely booked (or cancelled) involved no trip, so
-    paying KM for it would over-reimburse.
+    Visits were retired; meetings are the record of doctor activity. This
+    deliberately counts BOOKED meetings as well as completed ones: the trip
+    was made regardless of whether the TM remembered to mark the meeting
+    complete afterwards, and reimbursement shouldn't punish that. Only
+    cancelled (and soft-deleted) meetings are excluded.
     """
     from server import _find_activity  # lazy — avoids a circular import at module load
 
@@ -140,7 +141,9 @@ async def _visits_for_month(tm_user_id: str, month: str, company_id: Optional[st
     extra = {"tm_user_id": tm_user_id}
     if company_id:
         extra["company_id"] = company_id
-    return await _find_activity(extra, {"$gte": m_from, "$lte": m_to + "T23:59:59Z"})
+    return await _find_activity(
+        extra, {"$gte": m_from, "$lte": m_to + "T23:59:59Z"}, statuses=None
+    )
 
 
 async def _build_breakdown(tm_user_id: str, month: str, company_id: Optional[str]) -> dict:

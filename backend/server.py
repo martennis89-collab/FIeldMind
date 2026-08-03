@@ -314,8 +314,14 @@ def _priority_label(score: int) -> str:
 _NOT_DELETED = {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
 
 
-def _completed_meeting_q(extra: dict | None = None, date_range: dict | None = None) -> dict:
-    q = {"status": "Completed", **_NOT_DELETED}
+def _completed_meeting_q(
+    extra: dict | None = None, date_range: dict | None = None, statuses: tuple | None = ("Completed",)
+) -> dict:
+    """`statuses=None` means "every meeting that wasn't cancelled" — used by
+    reimbursement, where a booked meeting counts as a trip travelled even if
+    the TM never got round to marking it complete."""
+    status_q = {"$in": list(statuses)} if statuses else {"$ne": "Cancelled"}
+    q = {"status": status_q, **_NOT_DELETED}
     if date_range:
         q["scheduled_at"] = date_range
     if extra:
@@ -342,10 +348,11 @@ def _as_activity(doc: dict | None) -> dict | None:
     return doc
 
 
-async def _find_activity(extra=None, date_range=None, sort_desc=True, limit=5000) -> list[dict]:
-    """Completed meetings + not-yet-migrated visits, newest first."""
+async def _find_activity(extra=None, date_range=None, sort_desc=True, limit=5000, statuses=("Completed",)) -> list[dict]:
+    """Meetings + not-yet-migrated visits, newest first. See
+    _completed_meeting_q for what `statuses` selects."""
     meetings = await db.meetings.find(
-        _completed_meeting_q(extra, date_range), {"_id": 0}
+        _completed_meeting_q(extra, date_range, statuses), {"_id": 0}
     ).to_list(limit)
     visits = await db.visits.find(
         _legacy_visit_q(extra, date_range), {"_id": 0}
