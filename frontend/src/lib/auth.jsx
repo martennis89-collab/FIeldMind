@@ -72,6 +72,7 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     refresh();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

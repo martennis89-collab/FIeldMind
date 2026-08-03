@@ -64,6 +64,7 @@ export default function Meetings() {
       sp.delete("new_event");
       setSearchParams(sp, { replace: true });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const load = async () => {
@@ -77,6 +78,7 @@ export default function Meetings() {
       setMeetings(m.data); setEvents(e.data); setVisits(v.data || []);
     } finally { setLoading(false); }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [tab]);
 
   // Combine + sort. Visits carry `visit_date`; meetings/events carry `scheduled_at`.

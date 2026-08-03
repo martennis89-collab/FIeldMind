@@ -104,6 +104,7 @@ function TMReports() {
       setLoading(false);
     }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
   const generate = async (weeksBack = 0) => {
@@ -674,6 +675,7 @@ function ReportDrawer({ reportId, onClose }) {
     try { const { data } = await api.get(`/reports/${reportId}`); setReport(data); }
     catch { toast.error("Could not load report"); onClose(); }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [reportId]);
 
   const post = async () => {

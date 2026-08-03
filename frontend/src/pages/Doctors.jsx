@@ -52,11 +52,13 @@ export default function Doctors() {
 
   useEffect(() => {
     load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segment, cadence, city, growthProgram]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), 300);
     return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
   const setViewMode = (m) => {

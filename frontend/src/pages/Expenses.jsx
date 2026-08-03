@@ -152,6 +152,7 @@ function TMExpenses({ personal = false }) {
       setLoading(false);
     }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(month); }, [month, personal]);
 
   const submitMonth = async () => {

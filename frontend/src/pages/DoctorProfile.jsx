@@ -60,6 +60,7 @@ export default function DoctorProfile() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [id]);
 
   useEffect(() => {

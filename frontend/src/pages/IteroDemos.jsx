@@ -53,6 +53,7 @@ export default function IteroDemos() {
   };
   useEffect(() => { load(); }, []);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const list = data[tab] || [];
   const filtered = useMemo(() => {
     if (!q.trim()) return list;

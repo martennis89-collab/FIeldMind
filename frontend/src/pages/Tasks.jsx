@@ -50,6 +50,7 @@ export default function Tasks() {
       sp.delete("new");
       setSearchParams(sp, { replace: true });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // OPTIMISTIC HELPERS
@@ -102,6 +103,7 @@ export default function Tasks() {
       setLoading(false);
     }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
   useEffect(() => {
     api.get("/doctors").then((r) => setAllDoctors(Array.isArray(r.data) ? r.data : (r.data.doctors || []))).catch(() => {});

@@ -200,6 +200,7 @@ function PendingReimbursements() {
       setLoading(false);
     }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [month]);
 
   const remind = async (tm) => {
@@ -278,6 +279,7 @@ function ReportDrawer({ id, onClose, onChange, user }) {
     const r = await api.get(`/reimbursement/reports/${id}`);
     setReport(r.data);
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [id]);
 
   if (!report) {
