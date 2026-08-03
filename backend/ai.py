@@ -119,6 +119,13 @@ INTENT — classify what the TM actually wants done, one of:
 - "book_demo": explicitly asking to schedule a FUTURE iTero scanner demo
   (e.g. "Book an iTero demo with Dr. X on Friday morning"). Same as book_meeting but
   specifically a scanner demo.
+- "log_promise": the TM is recording a COMMITMENT they made to a doctor, WITHOUT
+  reporting a visit or conversation (e.g. "I promised Dr. Ivanov I'd send the
+  pricing info by Friday", "Need to send Dr. X the certification details").
+  The note is only about what the TM owes someone — it does NOT describe a
+  meeting, a discussion, topics covered, or the doctor's reaction. If the note
+  ALSO describes what was discussed or how the doctor responded, that's a
+  "log_visit" (with the promise captured inside promises_detected), NOT this.
 - "task": a personal/admin reminder that has NOTHING to do with a doctor visit
   (e.g. "Remind me to call the bank about the loan"). Not a scheduling request, not
   a visit report.
@@ -322,7 +329,7 @@ async def analyze_note(
         if vdm and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(vdm)) and str(vdm) <= today_str:
             result["visit_date_mentioned"] = str(vdm)
         intent = data.get("intent") or "log_visit"
-        if intent not in ("log_visit", "book_meeting", "book_demo", "task"):
+        if intent not in ("log_visit", "log_promise", "book_meeting", "book_demo", "task"):
             intent = "log_visit"
         result["intent"] = intent
         msf = data.get("meeting_scheduled_for")

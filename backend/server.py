@@ -1322,6 +1322,20 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         **not_deleted,
     })
 
+    # Regular (non-demo) meetings sitting in this week's calendar. These were
+    # never counted anywhere in the report — only is_demo meetings were — so a
+    # week's worth of booked meetings was invisible next to the visit count.
+    # Keyed on scheduled_at (when it sits on the calendar), not created_at,
+    # which is what "meetings this week" means to a TM reading the report.
+    meetings_this_week = await db.meetings.find({
+        "tm_user_id": tm_id,
+        "is_demo": {"$ne": True},
+        "status": {"$ne": "Cancelled"},
+        "scheduled_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+        **not_deleted,
+    }, {"_id": 0}).sort([("scheduled_at", 1)]).to_list(2000)
+    meetings_completed_count = sum(1 for m in meetings_this_week if m.get("status") == "Completed")
+
     doctor_ids = {v["doctor_id"] for v in visits}
     topic_counts: dict = {}
     barrier_counts: dict = {}
@@ -1349,6 +1363,11 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
     # auto summary
     parts = []
     parts.append(f"{len(visits)} visit{'s' if len(visits)!=1 else ''} across {len(doctor_ids)} doctor{'s' if len(doctor_ids)!=1 else ''} this week.")
+    if meetings_this_week:
+        parts.append(
+            f"{len(meetings_this_week)} meeting{'s' if len(meetings_this_week)!=1 else ''} scheduled "
+            f"({meetings_completed_count} completed)."
+        )
     if top_barriers:
         parts.append("Most-heard barriers: " + ", ".join(top_barriers[:3]) + ".")
     if top_topics:
@@ -1555,6 +1574,21 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "demos_completed_list": demos_completed_list,
         "proposals_sent": proposals_sent,
         "proposals_followed_up": proposals_followed,
+        # Regular (non-demo) meetings on this week's calendar.
+        "meetings_count": len(meetings_this_week),
+        "meetings_completed": meetings_completed_count,
+        "meetings": [
+            {
+                "meeting_id": m["id"],
+                "doctor_id": m.get("doctor_id"),
+                "doctor_name": m.get("doctor_name") or "—",
+                "clinic_name": m.get("clinic_name"),
+                "scheduled_at": m.get("scheduled_at"),
+                "subject": m.get("subject") or "",
+                "status": m.get("status") or "Scheduled",
+            }
+            for m in meetings_this_week
+        ],
         # Phase O — events attended this week (captured on monthly reimbursement).
         "events_count": len(events_this_week),
         "events_total_km": round(sum(float(e.get("km") or 0) for e in events_this_week), 2),

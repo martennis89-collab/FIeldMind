@@ -25,6 +25,10 @@ function describeResult(result) {
   if (action === "task") {
     return `Logged task: ${(result.task_titles || []).join("; ")}.`;
   }
+  if (action === "promise") {
+    const doctorName = result.doctor_name || "the doctor";
+    return `Promise to ${doctorName} logged: ${(result.task_titles || []).join("; ")}. No visit was recorded.`;
+  }
   if (action === "meeting" || action === "demo") {
     const doctorName = result.doctor_name || "the doctor";
     const newDoctorLine = result.doctor_auto_created ? " (added as a new doctor)" : "";

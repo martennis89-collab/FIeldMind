@@ -38,16 +38,33 @@ const fmtHM = (iso) => {
   return d.toLocaleString(undefined, { hour: "numeric", minute: "2-digit" });
 };
 
+// A promise's due_date is a bare "YYYY-MM-DD". new Date("2026-07-28") parses
+// as UTC midnight, which lands on the PREVIOUS day for any negative-offset
+// timezone — filing the promise under the wrong calendar day. Build it from
+// parts so it's local midnight instead.
+const parseDateOnly = (s) => {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+
 // ---------- Item extraction ----------
 // Convert a meeting / event / visit doc to a common shape.
-function toItem(doc, kind) {
-  const iso = kind === "visit" ? doc.visit_date : doc.scheduled_at;
+function toItem(doc, kind, doctorNames = {}) {
+  const iso =
+    kind === "visit" ? doc.visit_date :
+    kind === "promise" ? doc.due_date :
+    doc.scheduled_at;
   if (!iso) return null;
-  const startDate = new Date(iso);
+  // Promises are date-only (no clock time); everything else is a full datetime.
+  const isPromise = kind === "promise";
+  const startDate = isPromise ? parseDateOnly(iso) : new Date(iso);
+  if (Number.isNaN(startDate.getTime())) return null;
   const isDemo = kind === "meeting" && !!doc.is_demo;
+  const promiseDoctor = isPromise && doc.doctor_id ? doctorNames[doc.doctor_id] : null;
   const label =
     kind === "visit" ? (doc.doctor_name || "Visit") :
     kind === "event" ? (doc.title || doc.subject || "Event") :
+    isPromise ? (promiseDoctor ? `${promiseDoctor}: ${doc.task_title}` : doc.task_title || "Promise") :
     isDemo ? `iTero · ${doc.doctor_name || "Demo"}` :
     (doc.doctor_name || doc.subject || "Meeting");
   return {
@@ -59,9 +76,12 @@ function toItem(doc, kind) {
     dayKey: ymd(startDate),
     label,
     isDemo,
-    href: kind === "visit" || kind === "meeting"
-      ? (doc.doctor_id ? `/doctors/${doc.doctor_id}` : "/meetings")
-      : "/meetings",
+    isPromise,
+    href:
+      isPromise ? "/tasks" :
+      kind === "visit" || kind === "meeting"
+        ? (doc.doctor_id ? `/doctors/${doc.doctor_id}` : "/meetings")
+        : "/meetings",
   };
 }
 
@@ -70,6 +90,7 @@ const KIND_STYLE = {
   demo:    { bg: "#A8542F", fg: "white", label: "iTero" },
   event:   { bg: "var(--brand-primary)", fg: "white", label: "Event" },
   visit:   { bg: "var(--status-success)", fg: "white", label: "Visit" },
+  promise: { bg: "var(--status-warning)", fg: "white", label: "Promise" },
 };
 
 function styleFor(item) {
@@ -77,12 +98,17 @@ function styleFor(item) {
   return KIND_STYLE[item.kind];
 }
 
+// Promises have no clock time — showing "12:00 AM" would be misleading.
+const timeLabel = (item) => (item.isPromise ? "Due" : fmtHM(item.iso));
+
 export default function CalendarPage() {
   const [view, setView] = useState("month"); // "month" | "week"
   const [cursor, setCursor] = useState(() => { const n = new Date(); n.setHours(0, 0, 0, 0); return n; });
   const [meetings, setMeetings] = useState([]);
   const [events, setEvents] = useState([]);
   const [visits, setVisits] = useState([]);
+  const [promises, setPromises] = useState([]);
+  const [doctorNames, setDoctorNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState(null);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
@@ -90,14 +116,21 @@ export default function CalendarPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [m, e, v] = await Promise.all([
+      const [m, e, v, t, d] = await Promise.all([
         api.get("/meetings", { params: { when: "all" } }),
         api.get("/events",   { params: { when: "all" } }),
         api.get("/visits"),
+        // Open + overdue promises only — completed ones would just clutter
+        // the calendar with work that's already done.
+        api.get("/tasks", { params: { bucket: "open" } }),
+        api.get("/doctors"),
       ]);
       setMeetings(m.data || []);
       setEvents(e.data || []);
       setVisits(v.data || []);
+      setPromises(t.data || []);
+      const docs = Array.isArray(d.data) ? d.data : (d.data?.doctors || []);
+      setDoctorNames(Object.fromEntries(docs.map((x) => [x.id, x.doctor_name])));
     } finally { setLoading(false); }
   };
 
@@ -108,9 +141,13 @@ export default function CalendarPage() {
     for (const x of meetings) { const it = toItem(x, "meeting"); if (it) out.push(it); }
     for (const x of events) { const it = toItem(x, "event"); if (it) out.push(it); }
     for (const x of visits) { const it = toItem(x, "visit"); if (it) out.push(it); }
-    out.sort((a, b) => a.iso.localeCompare(b.iso));
+    for (const x of promises) { const it = toItem(x, "promise", doctorNames); if (it) out.push(it); }
+    // Sort within a day by real start time. Promises are date-only, so sort
+    // them first — comparing a bare "YYYY-MM-DD" against a full ISO datetime
+    // lexicographically would otherwise scatter them unpredictably.
+    out.sort((a, b) => (a.dayKey.localeCompare(b.dayKey)) || (a.startDate - b.startDate));
     return out;
-  }, [meetings, events, visits]);
+  }, [meetings, events, visits, promises, doctorNames]);
 
   const byDay = useMemo(() => {
     const g = new Map();
@@ -219,7 +256,7 @@ function DayModal({ date, items, onClose, onMeetingClick }) {
                   <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: s.bg }} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{it.label}</div>
-                    <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmtHM(it.iso)} · {s.label}</div>
+                    <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{timeLabel(it)} · {s.label}</div>
                   </div>
                 </>
               );
@@ -340,6 +377,7 @@ function Legend() {
     { k: "demo", label: "iTero demo" },
     { k: "event", label: "Event" },
     { k: "visit", label: "Logged visit" },
+    { k: "promise", label: "Promise due" },
   ];
   return (
     <div className="flex flex-wrap items-center gap-3 mb-3 text-xs" data-testid="cal-legend" style={{ color: "var(--text-muted)" }}>
@@ -459,8 +497,8 @@ function EventPill({ item, onMeetingClick }) {
               data-testid={`cal-item-${item.id}`}
               className="text-[10px] truncate rounded px-1.5 py-0.5 leading-tight hover:opacity-90 text-left"
               style={{ background: s.bg, color: s.fg }}
-              title={`${fmtHM(item.iso)} · ${item.label}`}>
-        <span className="opacity-75 mr-1">{fmtHM(item.iso)}</span>{item.label}
+              title={`${timeLabel(item)} · ${item.label}`}>
+        <span className="opacity-75 mr-1">{timeLabel(item)}</span>{item.label}
       </button>
     );
   }
@@ -470,8 +508,8 @@ function EventPill({ item, onMeetingClick }) {
           data-testid={`cal-item-${item.id}`}
           className="text-[10px] truncate rounded px-1.5 py-0.5 leading-tight hover:opacity-90"
           style={{ background: s.bg, color: s.fg }}
-          title={`${fmtHM(item.iso)} · ${item.label}`}>
-      <span className="opacity-75 mr-1">{fmtHM(item.iso)}</span>{item.label}
+          title={`${timeLabel(item)} · ${item.label}`}>
+      <span className="opacity-75 mr-1">{timeLabel(item)}</span>{item.label}
     </Link>
   );
 }
@@ -481,7 +519,7 @@ function EventBlock({ item, onMeetingClick }) {
   const s = styleFor(item);
   const inner = (
     <>
-      <div className="opacity-80 text-[10px] mb-0.5">{fmtHM(item.iso)} · {s.label}</div>
+      <div className="opacity-80 text-[10px] mb-0.5">{timeLabel(item)} · {s.label}</div>
       <div className="font-medium truncate">{item.label}</div>
     </>
   );

@@ -30,10 +30,21 @@ from models import AnalyzeNoteRequest, VisitCreate, AIExtraction, MeetingCreate,
 logger = logging.getLogger(__name__)
 
 
-async def _create_standalone_task(user: dict, note_text: str, visit_analysis: dict) -> dict:
-    """A note that doesn't name a doctor at all — e.g. "call Viktoria at TBI
-    Bank about the marketing materials" — isn't a visit. Log it as a personal/
-    admin task instead of erroring out asking for a doctor.
+async def _create_standalone_task(
+    user: dict, note_text: str, visit_analysis: dict,
+    doctor_id: str | None = None, doctor_name: str | None = None,
+) -> dict:
+    """Create task(s) WITHOUT logging a visit.
+
+    Two callers:
+      - intent "task"         — no doctor involved at all (e.g. "call the bank"),
+                                 doctor_id stays None.
+      - intent "log_promise"  — a commitment made TO a doctor, but no visit
+                                 happened. doctor_id is passed so the promise
+                                 shows on that doctor's profile and counts in
+                                 their follow-up history — previously any matched
+                                 doctor was silently dropped here, orphaning the
+                                 promise from the doctor it was made to.
     """
     promises = [p for p in (visit_analysis.get("promises_detected") or []) if p.get("task_title")]
     if not promises:
@@ -59,7 +70,7 @@ async def _create_standalone_task(user: dict, note_text: str, visit_analysis: di
         due = p.get("suggested_due_date") or (today + timedelta(days=14)).isoformat()
         prio = p.get("priority") if p.get("priority") in ("Low", "Medium", "High") else "Medium"
         task_body = TaskCreate(
-            doctor_id=None,
+            doctor_id=doctor_id,
             task_title=title,
             task_description=p.get("task_description") or note_text[:400],
             due_date=due,
@@ -76,7 +87,12 @@ async def _create_standalone_task(user: dict, note_text: str, visit_analysis: di
 
     if not created_titles:
         return {"status": "error", "detail": "Something went wrong saving that task — nothing was saved."}
-    return {"status": "done", "action": "task", "task_titles": created_titles}
+    return {
+        "status": "done",
+        "action": "promise" if doctor_id else "task",
+        "task_titles": created_titles,
+        "doctor_name": doctor_name,
+    }
 
 
 async def _execute_smart_action(
@@ -122,6 +138,14 @@ async def _execute_smart_action(
     doctor_name_heard = result.get("doctor_name_heard")
     newly_created_doctor_name = result.get("doctor_hint") if result.get("doctor_auto_created") else None
     doctor_name = newly_created_doctor_name or result.get("doctor_hint") or "the doctor"
+
+    # A commitment to a doctor with no visit reported — record it as a promise
+    # ON that doctor, never as a phantom visit (a visit would wrongly show on
+    # the calendar and inflate the weekly report's visit count).
+    if not meeting_id and intent == "log_promise" and resolved_doctor_id:
+        return await _create_standalone_task(
+            user, note_text, result, doctor_id=resolved_doctor_id, doctor_name=doctor_name
+        )
 
     # No doctor named at all and not an explicit scheduling request -> personal task.
     if not meeting_id and (intent == "task" or (

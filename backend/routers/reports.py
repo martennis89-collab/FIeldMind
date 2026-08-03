@@ -430,7 +430,8 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
         w.writerow(["Auto summary", r.get("auto_summary", "")])
         w.writerow([])
         w.writerow(["Metric", "Value"])
-        for k in ["visits_completed", "doctors_visited", "promises_created", "promises_completed",
+        for k in ["visits_completed", "meetings_count", "meetings_completed",
+                 "doctors_visited", "promises_created", "promises_completed",
                  "overdue_promises", "demos_discussed", "demos_booked", "demos_completed",
                  "proposals_sent", "proposals_followed_up"]:
             w.writerow([k.replace("_", " ").title(), c.get(k, 0)])
@@ -543,6 +544,7 @@ async def export_report(report_id: str, format: str = "pdf", user=Depends(get_cu
     flow.append(Paragraph("Activity", styles["H2"]))
     metrics = [
         ["Visits completed", c.get("visits_completed", 0), "Doctors visited", c.get("doctors_visited", 0)],
+        ["Meetings scheduled", c.get("meetings_count", 0), "Meetings completed", c.get("meetings_completed", 0)],
         ["Promises created", c.get("promises_created", 0), "Promises completed", c.get("promises_completed", 0)],
         ["Overdue promises", c.get("overdue_promises", 0), "Demos completed", c.get("demos_completed", 0)],
         ["Demos discussed", c.get("demos_discussed", 0), "Demos booked", c.get("demos_booked", 0)],

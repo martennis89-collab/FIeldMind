@@ -70,6 +70,11 @@ def _format_result_message(result: dict) -> str:
     if action == "task":
         return f"Logged task: {'; '.join(result.get('task_titles') or [])}. ✓"
 
+    if action == "promise":
+        doctor_name = result.get("doctor_name") or "the doctor"
+        titles = "; ".join(result.get("task_titles") or [])
+        return f"Promise to {doctor_name} logged: {titles}. (No visit recorded.) ✓"
+
     if action in ("meeting", "demo"):
         doctor_name = result.get("doctor_name") or "the doctor"
         new_doctor_line = " (added as a new doctor)" if result.get("doctor_auto_created") else ""

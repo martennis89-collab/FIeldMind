@@ -312,6 +312,7 @@ function ReportEditor({ open, onClose, draft, setDraft, readonly, saving, onSave
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat label="Visits" value={c.visits_completed} />
+            <Stat label="Meetings" value={c.meetings_count || 0} />
             <Stat label="Doctors" value={c.doctors_visited} />
             <Stat label="Promises created" value={c.promises_created} />
             <Stat label="Promises completed" value={c.promises_completed} kind="success" />
@@ -700,6 +701,7 @@ function ReportDrawer({ reportId, onClose }) {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           <Stat label="Visits" value={c.visits_completed} />
+          <Stat label="Meetings" value={c.meetings_count || 0} />
           <Stat label="Doctors" value={c.doctors_visited} />
           <Stat label="Promises created" value={c.promises_created} />
           <Stat label="Promises completed" value={c.promises_completed} kind="success" />

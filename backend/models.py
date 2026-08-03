@@ -547,6 +547,11 @@ class ReportContent(BaseModel):
     demos_completed: int = 0
     proposals_sent: int = 0
     proposals_followed_up: int = 0
+    # Regular (non-demo) meetings on the week's calendar — counted separately
+    # from visits so a booked meeting isn't confused with a logged visit.
+    meetings_count: int = 0
+    meetings_completed: int = 0
+    meetings: List[dict] = []
 
 
 class ReportComment(BaseModel):
