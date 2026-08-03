@@ -68,6 +68,7 @@ from server import (
     _same_company,
     _assert_same_company,
     _stamp_company,
+    _find_activity,
     ENFORCE_COMPANY_ISOLATION,
     # ai
     ai_analyze_note,
@@ -164,18 +165,24 @@ async def transcribe_visit_audio(audio: UploadFile = File(...), user=Depends(get
 
 @api.post("/visits")
 async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
+    """Record that an interaction happened.
+
+    Writes a COMPLETED MEETING, not a visit row — meetings are the single
+    activity record now. If body.meeting_id names an existing booked meeting
+    the outcome is written onto that meeting; otherwise a completed meeting is
+    created on the spot (a walk-in that was never booked ahead).
+
+    The response still uses the "visit" key so existing callers (Quick
+    Capture, Telegram, the log-visit form) keep working unchanged.
+    """
     doctor = await db.doctors.find_one({"id": body.doctor_id}, {"_id": 0})
     if not doctor or not await _can_access_doctor(user, doctor):
         raise HTTPException(status_code=404, detail="Doctor not found")
     vdate = body.visit_date or _now_iso()
-    visit = {
-        "id": str(uuid.uuid4()),
-        "doctor_id": body.doctor_id,
-        "tm_user_id": user["id"],
-        "team_id": user.get("team_id") or doctor.get("team_id"),
-        "visit_date": vdate,
+
+    outcome = {
         "visit_type": body.visit_type,
-        "track_type": body.track_type or "BOTH",
+        "track_type": body.track_type or "General",
         "free_text_note": body.free_text_note,
         "confirmed_topics": body.confirmed_topics,
         "confirmed_barriers": body.confirmed_barriers,
@@ -186,14 +193,49 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
         "itero_actions": body.itero_actions.model_dump() if body.itero_actions else IteroActions().model_dump(),
         "invisalign_actions": body.invisalign_actions.model_dump() if body.invisalign_actions else InvisalignActions().model_dump(),
         "commercial_actions": body.commercial_actions.model_dump() if body.commercial_actions else CommercialActions().model_dump(),
-        "created_at": _now_iso(),
+        "status": "Completed",
+        "completed_at": vdate,
         "updated_at": _now_iso(),
     }
-    _stamp_company(visit, user)
-    await db.visits.insert_one(visit)
+
+    existing = None
+    if body.meeting_id:
+        existing = await db.meetings.find_one(
+            {"id": body.meeting_id, "tm_user_id": user["id"]}, {"_id": 0}
+        )
+
+    if existing:
+        await db.meetings.update_one({"id": existing["id"]}, {"$set": outcome})
+        visit = {**existing, **outcome}
+    else:
+        visit = {
+            "id": str(uuid.uuid4()),
+            "doctor_id": body.doctor_id,
+            "doctor_name": doctor.get("doctor_name", ""),
+            "clinic_name": doctor.get("clinic_name"),
+            "city": doctor.get("city"),
+            "tm_user_id": user["id"],
+            "tm_name": user.get("full_name", ""),
+            "team_id": user.get("team_id") or doctor.get("team_id"),
+            "scheduled_at": vdate,
+            "duration_minutes": 30,
+            "subject": None,
+            "is_demo": bool((outcome["itero_actions"] or {}).get("demo_completed")),
+            "visit_id": None,
+            "is_draft": False,
+            "deleted_at": None,
+            "created_at": _now_iso(),
+            **outcome,
+        }
+        _stamp_company(visit, user)
+        await db.meetings.insert_one(visit)
+
+    # Downstream helpers (track signals, report, exports) read `visit_date`.
+    visit["visit_date"] = vdate
+
     # Spec §3.12 — named event
     await _audit(
-        user, "create", "visit", visit["id"],
+        user, "create", "meeting", visit["id"],
         new={"doctor_id": body.doctor_id, "sentiment": body.sentiment},
         event_type="meeting_logged",
         track_type=_visit_track_type(body),
@@ -210,14 +252,8 @@ async def create_visit(body: VisitCreate, user=Depends(get_current_user)):
         visit=visit, doctor=doctor, body=body, source=src_label, user=user
     )
 
-    # Auto-link meeting -> Completed when visit logged from a booked meeting
-    if body.meeting_id:
-        m = await db.meetings.find_one({"id": body.meeting_id, "tm_user_id": user["id"]}, {"_id": 0})
-        if m and m.get("status") == "Scheduled":
-            await db.meetings.update_one(
-                {"id": body.meeting_id},
-                {"$set": {"status": "Completed", "visit_id": visit["id"], "updated_at": _now_iso()}},
-            )
+    # (The meeting is marked Completed above — writing the outcome onto it IS
+    # the completion, so there's no separate link-up step any more.)
 
     # auto-create tasks from confirmed promises
     created_tasks = []
@@ -279,10 +315,10 @@ async def list_visits(
         q["doctor_id"] = doctor_id
     if tm_user_id and user["role"] in ("Admin", "Manager", "SeniorTM"):
         q["tm_user_id"] = tm_user_id
-    visits = await db.visits.find(q, {"_id": 0}).sort("visit_date", -1).to_list(500)
-    # Meetings already carry doctor_name/clinic_name/city on the document itself;
-    # visits never did, which left them showing as a generic "Visit" everywhere
-    # that renders a label from the raw list (the Calendar page in particular).
+    q.pop("deleted_at", None)  # _find_activity applies its own not-deleted filter
+    visits = await _find_activity(q, limit=500)
+    # Meetings carry doctor_name/clinic_name/city already, but not-yet-migrated
+    # visits don't — backfill so every row renders with a real doctor name.
     doc_ids = list({v["doctor_id"] for v in visits if v.get("doctor_id")})
     if doc_ids:
         docs = await db.doctors.find(
@@ -304,11 +340,17 @@ async def update_visit(visit_id: str, body: VisitUpdate, user=Depends(get_curren
     tasks, itero stage, track signals) — those were already materialized
     from the original values when the visit was created.
     """
-    v = await db.visits.find_one({"id": visit_id}, {"_id": 0})
+    # Activity lives on meetings now; fall back to a legacy visit row for
+    # anything not yet migrated.
+    coll = db.meetings
+    v = await db.meetings.find_one({"id": visit_id}, {"_id": 0})
+    if not v:
+        coll = db.visits
+        v = await db.visits.find_one({"id": visit_id}, {"_id": 0})
     if not v or v.get("deleted_at"):
-        raise HTTPException(status_code=404, detail="Visit not found")
+        raise HTTPException(status_code=404, detail="Not found")
     if not _same_company(user, v):
-        raise HTTPException(status_code=404, detail="Visit not found")
+        raise HTTPException(status_code=404, detail="Not found")
     if user["role"] in ("TM", "SeniorTM") and v.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and v.get("team_id") != user.get("team_id"):
@@ -316,10 +358,13 @@ async def update_visit(visit_id: str, body: VisitUpdate, user=Depends(get_curren
     update = body.model_dump(exclude_none=True)
     if not update:
         return v
+    # visit_date is the meeting's scheduled_at.
+    if "visit_date" in update and coll is db.meetings:
+        update["scheduled_at"] = update.pop("visit_date")
     update["updated_at"] = _now_iso()
-    await db.visits.update_one({"id": visit_id}, {"$set": update})
-    new = await db.visits.find_one({"id": visit_id}, {"_id": 0})
-    await _audit(user, "update", "visit", visit_id, prev=v, new=new)
+    await coll.update_one({"id": visit_id}, {"$set": update})
+    new = await coll.find_one({"id": visit_id}, {"_id": 0})
+    await _audit(user, "update", "meeting", visit_id, prev=v, new=new)
     return new
 
 @api.delete("/visits/{visit_id}")
@@ -330,16 +375,20 @@ async def delete_visit(visit_id: str, user=Depends(get_current_user)):
     Does not reverse downstream effects (created tasks, itero stage advances,
     track signals) — same as delete_meeting/delete_task in this codebase.
     """
-    v = await db.visits.find_one({"id": visit_id}, {"_id": 0})
+    coll = db.meetings
+    v = await db.meetings.find_one({"id": visit_id}, {"_id": 0})
+    if not v:
+        coll = db.visits
+        v = await db.visits.find_one({"id": visit_id}, {"_id": 0})
     if not v or v.get("deleted_at"):
-        raise HTTPException(status_code=404, detail="Visit not found")
+        raise HTTPException(status_code=404, detail="Not found")
     if not _same_company(user, v):
-        raise HTTPException(status_code=404, detail="Visit not found")
+        raise HTTPException(status_code=404, detail="Not found")
     if user["role"] in ("TM", "SeniorTM") and v.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] == "Manager" and v.get("team_id") != user.get("team_id"):
         raise HTTPException(status_code=403, detail="Forbidden")
     now = _now_iso()
-    await db.visits.update_one({"id": visit_id}, {"$set": {"deleted_at": now, "updated_at": now}})
-    await _audit(user, "delete", "visit", visit_id, prev=v, event_type="visit_deleted")
+    await coll.update_one({"id": visit_id}, {"$set": {"deleted_at": now, "updated_at": now}})
+    await _audit(user, "delete", "meeting", visit_id, prev=v, event_type="visit_deleted")
     return {"ok": True, "id": visit_id}

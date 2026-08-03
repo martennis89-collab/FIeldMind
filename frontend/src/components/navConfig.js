@@ -153,7 +153,7 @@ export const SENIORTM_MORE = [
 // ---------- Shared "+ Add" sheet (TM + SeniorTM) ----------
 // Each item: { icon, label, to, testId, subtitle? }
 export const ADD_SHEET_ITEMS = [
-  { icon: ClipboardList, label: "Log a visit", to: "/log-visit", testId: "add-log-visit" },
+  { icon: ClipboardList, label: "Log a meeting", to: "/log-visit", testId: "add-log-visit" },
   { icon: CalendarPlus, label: "Book a meeting", to: "/meetings/book", testId: "add-book-meeting" },
   { icon: ScanLine, label: "Book an iTero demo", to: "/meetings/book?demo=1", testId: "add-book-demo", subtitle: "Auto-marks pipeline as Demo Booked" },
   { icon: Calendar, label: "Add an event", to: "/meetings?new_event=1", testId: "add-event", subtitle: "Generic agenda item, no doctor" },

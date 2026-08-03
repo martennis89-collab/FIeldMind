@@ -129,7 +129,7 @@ export default function Reimbursement() {
               <tr className="text-left text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)", background: "var(--bg-paper)" }}>
                 {user.role !== "TM" && <th className="px-4 py-2">TM</th>}
                 <th className="px-4 py-2">Month</th>
-                <th className="px-4 py-2">Visits</th>
+                <th className="px-4 py-2">Meetings</th>
                 <th className="px-4 py-2">KM</th>
                 <th className="px-4 py-2">Fuel</th>
                 <th className="px-4 py-2">Manual</th>
@@ -447,7 +447,7 @@ function ReportDrawer({ id, onClose, onChange, user }) {
 
         {/* Totals */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3" data-testid="report-totals">
-          <Stat label="Total visits" value={report.total_visits ?? 0} />
+          <Stat label="Meetings held" value={report.total_visits ?? 0} />
           <Stat label="Total KM" value={(report.total_km || 0).toFixed(1)} />
           <Stat label="Litres used" value={(t.litres_used || 0).toFixed(2)} />
           <Stat label="Fuel cost (KM-based)" value={fmtEUR(t.fuel_cost)} />
@@ -535,7 +535,7 @@ function ReportDrawer({ id, onClose, onChange, user }) {
               <tr className="text-left text-[11px]" style={{ color: "var(--text-muted)" }}>
                 <th className="px-4 py-2">Doctor</th>
                 <th className="px-4 py-2">City</th>
-                <th className="px-4 py-2">Visits</th>
+                <th className="px-4 py-2">Meetings</th>
                 <th className="px-4 py-2">KM/visit</th>
                 <th className="px-4 py-2">Total KM</th>
                 <th className="px-4 py-2">Match</th>

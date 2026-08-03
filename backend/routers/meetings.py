@@ -229,42 +229,28 @@ async def complete_demo_meeting(meeting_id: str, body: CompleteDemoBody, user=De
     today_date = today_iso[:10]
     note = (body.outcome_note or f"iTero demo completed. Interest: {body.interest_level}.").strip()
 
-    # Build a lightweight visit record
-    visit_id = str(uuid.uuid4())
-    visit_doc = {
-        "id": visit_id,
-        "doctor_id": m["doctor_id"],
-        "tm_user_id": user["id"],
-        "team_id": m.get("team_id"),
-        "track_type": "iTero",
-        "visit_date": today_iso,
-        "visit_type": "Demo session",
-        "free_text_note": note,
-        "ai_extracted_tags": {},
-        "confirmed_topics": [],
-        "confirmed_barriers": [],
-        "sentiment": None,
-        "itero_actions": {
-            "demo_completed": True,
-            "demo_completed_date": today_date,
-            "scanner_interest_level": body.interest_level,
-            "scanner_concerns": [],
-        },
-        "invisalign_actions": {},
-        "commercial_actions": {},
-        "meeting_id": meeting_id,
-        "created_at": today_iso,
-        "updated_at": today_iso,
-    }
-    _stamp_company(visit_doc, user)
-    await db.visits.insert_one(visit_doc)
-    await _audit(user, "create", "visit", visit_id, new={"doctor_id": m["doctor_id"], "from": "demo-complete"})
-
-    # Mark meeting Completed and link the visit
+    # Completing the demo writes the outcome onto the meeting itself — the
+    # meeting IS the activity record now, so no separate visit row is created.
+    visit_id = meeting_id
     await db.meetings.update_one(
         {"id": meeting_id},
-        {"$set": {"status": "Completed", "visit_id": visit_id, "updated_at": today_iso}},
+        {"$set": {
+            "status": "Completed",
+            "completed_at": today_iso,
+            "track_type": "iTero",
+            "visit_type": "Demo session",
+            "free_text_note": note,
+            "itero_actions": {
+                "demo_completed": True,
+                "demo_completed_date": today_date,
+                "scanner_interest_level": body.interest_level,
+                "scanner_concerns": [],
+            },
+            "updated_at": today_iso,
+        }},
     )
+    await _audit(user, "complete", "meeting", meeting_id,
+                 new={"doctor_id": m["doctor_id"], "from": "demo-complete"})
 
     # Auto-advance the pipeline stage forward
     class _IA:

@@ -193,7 +193,7 @@ export default function Layout({ children }) {
           style={{ background: "var(--brand-secondary)" }}
         >
           <ClipboardList className="w-4 h-4" />
-          Log Visit
+          Log meeting
         </button>
       )}
 

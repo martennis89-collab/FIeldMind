@@ -183,7 +183,7 @@ export default function DoctorProfile() {
               style={{ background: "var(--brand-secondary)", color: "white" }}
               className="font-medium"
             >
-              <ClipboardList className="w-4 h-4 mr-2" /> Log Visit
+              <ClipboardList className="w-4 h-4 mr-2" /> Log meeting
             </Button>
             <Button
               onClick={() => navigate(`/meetings/book?doctor_id=${doctor.id}`)}

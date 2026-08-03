@@ -37,7 +37,7 @@ const FILTERS = [
   { id: "all", label: "All" },
   { id: "meetings", label: "Meetings" },
   { id: "events", label: "Events" },
-  { id: "visits", label: "Visits" },
+  { id: "completed", label: "Completed" },
 ];
 
 const TABS = [
@@ -70,12 +70,13 @@ export default function Meetings() {
   const load = async () => {
     setLoading(true);
     try {
-      const [m, e, v] = await Promise.all([
+      // A completed meeting IS the former "visit" — loading /visits too would
+      // list the same activity twice.
+      const [m, e] = await Promise.all([
         api.get(`/meetings`, { params: { when: tab } }),
         api.get(`/events`, { params: { when: tab } }),
-        api.get(`/visits`),
       ]);
-      setMeetings(m.data); setEvents(e.data); setVisits(v.data || []);
+      setMeetings(m.data); setEvents(e.data); setVisits([]);
     } finally { setLoading(false); }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -302,7 +303,7 @@ function MeetingCard({ m, onLog, onCancel, onMarkDemoDone, onMarkDone }) {
               )}
               <Button size="sm" onClick={onLog} data-testid={`meeting-log-${m.id}`}
                 variant="outline">
-                <ClipboardList className="w-3.5 h-3.5 mr-1" /> Log visit
+                <ClipboardList className="w-3.5 h-3.5 mr-1" /> Log outcome
               </Button>
               <Button size="sm" variant="outline" onClick={onCancel} data-testid={`meeting-cancel-${m.id}`}>
                 <Trash2 className="w-3.5 h-3.5" style={{ color: "var(--status-danger)" }} />

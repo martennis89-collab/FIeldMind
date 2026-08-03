@@ -70,13 +70,18 @@ function toItem(doc, kind) {
 }
 
 const KIND_STYLE = {
+  done:    { bg: "var(--status-success)", fg: "white", label: "Completed" },
   meeting: { bg: "var(--brand-secondary)", fg: "white", label: "Meeting" },
   demo:    { bg: "#A8542F", fg: "white", label: "iTero" },
   event:   { bg: "var(--brand-primary)", fg: "white", label: "Event" },
-  visit:   { bg: "var(--status-success)", fg: "white", label: "Visit" },
 };
 
+const DONE_STYLE = { bg: "var(--status-success)", fg: "white", label: "Completed" };
+
 function styleFor(item) {
+  // A completed meeting is the thing that actually happened — show it green so
+  // it reads differently from something still on the books.
+  if (item.kind === "meeting" && item.doc?.status === "Completed") return DONE_STYLE;
   if (item.kind === "meeting" && item.isDemo) return KIND_STYLE.demo;
   return KIND_STYLE[item.kind];
 }
@@ -107,7 +112,6 @@ export default function CalendarPage() {
   const [cursor, setCursor] = useState(() => { const n = new Date(); n.setHours(0, 0, 0, 0); return n; });
   const [meetings, setMeetings] = useState([]);
   const [events, setEvents] = useState([]);
-  const [visits, setVisits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState(null);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
@@ -121,14 +125,14 @@ export default function CalendarPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [m, e, v] = await Promise.all([
+      // Meetings are the single activity record now — a completed meeting IS
+      // what a "visit" used to be, so there is no separate source to merge.
+      const [m, e] = await Promise.all([
         api.get("/meetings", { params: { when: "all" } }),
         api.get("/events",   { params: { when: "all" } }),
-        api.get("/visits"),
       ]);
       setMeetings(m.data || []);
       setEvents(e.data || []);
-      setVisits(v.data || []);
     } finally { setLoading(false); }
   };
 
@@ -138,11 +142,10 @@ export default function CalendarPage() {
     const out = [];
     for (const x of meetings) { const it = toItem(x, "meeting"); if (it) out.push(it); }
     for (const x of events) { const it = toItem(x, "event"); if (it) out.push(it); }
-    for (const x of visits) { const it = toItem(x, "visit"); if (it) out.push(it); }
     // Sort by day, then by real start time within the day.
     out.sort((a, b) => (a.dayKey.localeCompare(b.dayKey)) || (a.startDate - b.startDate));
     return out;
-  }, [meetings, events, visits]);
+  }, [meetings, events]);
 
   const byDay = useMemo(() => {
     const g = new Map();
@@ -257,7 +260,7 @@ export default function CalendarPage() {
             <Button variant="outline" size="sm" onClick={goToday} data-testid="cal-today-btn">Today</Button>
             <Button variant="outline" size="sm" onClick={() => shiftCursor(1)} data-testid="cal-next-btn"><ChevronRight className="w-4 h-4" /></Button>
           </div>
-          <Link to="/log-visit"><Button size="sm" variant="outline" data-testid="cal-log-visit-btn"><ClipboardList className="w-3.5 h-3.5 mr-1" /> Log visit</Button></Link>
+          <Link to="/log-visit"><Button size="sm" variant="outline" data-testid="cal-log-visit-btn"><ClipboardList className="w-3.5 h-3.5 mr-1" /> Log meeting</Button></Link>
           <Link to="/meetings/book"><Button size="sm" data-testid="cal-book-meeting-btn" style={{ background: "var(--brand-secondary)", color: "white" }}>
             <CalendarPlus className="w-3.5 h-3.5 mr-1" /> Book meeting
           </Button></Link>
@@ -508,7 +511,7 @@ function Legend() {
     { k: "meeting", label: "Meeting" },
     { k: "demo", label: "iTero demo" },
     { k: "event", label: "Event" },
-    { k: "visit", label: "Logged visit" },
+    { k: "done", label: "Completed" },
   ];
   return (
     <div className="flex flex-wrap items-center gap-3 mb-3 text-xs" data-testid="cal-legend" style={{ color: "var(--text-muted)" }}>
