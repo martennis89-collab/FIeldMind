@@ -17,6 +17,7 @@ from pydantic import BaseModel
 # Pull every shared symbol the handlers reference. The router file is imported AFTER
 # server.py finishes initialising all of these so the names are guaranteed to exist.
 from server import (
+    _find_activity,
     api,
     db,
     app,
@@ -109,8 +110,9 @@ async def itero_pipeline(user=Depends(get_current_user)):
             {"$sort": {"visit_date": -1}},
             {"$group": {"_id": "$doctor_id", "last": {"$first": "$visit_date"}}},
         ]
-        async for row in db.visits.aggregate(pipeline):
-            last_visit_lookup[row["_id"]] = row.get("last")
+        # Completed meetings + not-yet-migrated visits, newest first.
+        for row in await _find_activity({"doctor_id": {"$in": [d["id"] for d in docs]}}, limit=20000):
+            last_visit_lookup.setdefault(row["doctor_id"], row.get("visit_date"))
 
     stages = ["None", "Demo Discussed", "Demo Booked", "Demo Completed",
               "Proposal Sent", "Contract Sent", "Contract Signed", "Lost"]
@@ -175,10 +177,7 @@ async def itero_demos(user=Depends(get_current_user)):
         return {"booked": [], "completed": [], "lost": [], "counts": {"booked": 0, "completed": 0, "lost": 0}}
     doc_map = {d["id"]: d for d in docs}
 
-    visits = await db.visits.find(
-        {"doctor_id": {"$in": list(doc_map.keys())}},
-        {"_id": 0}
-    ).sort("visit_date", -1).to_list(20000)
+    visits = await _find_activity({"doctor_id": {"$in": list(doc_map.keys())}}, limit=20000)
 
     # Walk newest -> oldest; first encountered booked/completed dates win.
     # Track total event counts per doctor across all sources so the UI/counts
@@ -351,7 +350,7 @@ async def itero_demo_breakdown(scope: str = "week", user=Depends(get_current_use
         week_end_iso = sunday.isoformat()
 
     # Fetch the data we need
-    visits = await db.visits.find(visit_filter, {"_id": 0}).to_list(10000)
+    visits = await _find_activity(visit_filter, limit=10000)
     meetings = await db.meetings.find(meeting_filter, {"_id": 0}).to_list(10000)
 
     # Doctor lookup for naming

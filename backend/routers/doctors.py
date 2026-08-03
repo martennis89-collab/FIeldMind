@@ -18,6 +18,7 @@ from pydantic import BaseModel
 # Pull every shared symbol the handlers reference. The router file is imported AFTER
 # server.py finishes initialising all of these so the names are guaranteed to exist.
 from server import (
+    _find_activity,
     api,
     db,
     app,
@@ -479,8 +480,10 @@ async def delete_doctor(doctor_id: str, user=Depends(require_roles("Admin", "Sen
     if user["role"] in ("TM", "SeniorTM") and existing.get("assigned_tm_id") != user["id"]:
         raise HTTPException(status_code=403, detail="You can only delete your own doctors")
     await db.doctors.delete_one({"id": doctor_id})
-    # Cascade-clean owned visits & tasks so they don't orphan
+    # Cascade-clean owned activity & tasks so they don't orphan. Meetings now
+    # hold the interaction history that visits used to, so both are cleared.
     await db.visits.delete_many({"doctor_id": doctor_id})
+    await db.meetings.delete_many({"doctor_id": doctor_id})
     await db.tasks.update_many(
         {"doctor_id": doctor_id, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]},
         {"$set": {"deleted_at": _now_iso(), "deleted_by": user["id"]}},
@@ -505,6 +508,7 @@ async def bulk_delete_doctors(body: dict, user=Depends(require_roles("Admin", "S
         return {"deleted_count": 0, "deleted_ids": [], "skipped_ids": ids}
     await db.doctors.delete_many({"id": {"$in": deletable_ids}})
     await db.visits.delete_many({"doctor_id": {"$in": deletable_ids}})
+    await db.meetings.delete_many({"doctor_id": {"$in": deletable_ids}})
     await db.tasks.update_many(
         {"doctor_id": {"$in": deletable_ids}, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]},
         {"$set": {"deleted_at": _now_iso(), "deleted_by": user["id"]}},
@@ -519,10 +523,7 @@ async def get_doctor_visits(doctor_id: str, user=Depends(get_current_user)):
     doc = await db.doctors.find_one({"id": doctor_id}, {"_id": 0})
     if not doc or not await _can_access_doctor(user, doc):
         raise HTTPException(status_code=404, detail="Doctor not found")
-    visits = await db.visits.find({
-        "doctor_id": doctor_id,
-        "deleted_at": None,
-    }, {"_id": 0}).sort("visit_date", -1).to_list(200)
+    visits = await _find_activity({"doctor_id": doctor_id}, limit=200)
     return visits
 
 @api.get("/doctors/{doctor_id}/tasks")
@@ -553,7 +554,7 @@ async def prepare_visit(doctor_id: str, user=Depends(get_current_user)):
     if not doc or not await _can_access_doctor(user, doc):
         raise HTTPException(status_code=404, detail="Doctor not found")
     enriched = await _enrich_doctor(doc)
-    visits = await db.visits.find({"doctor_id": doctor_id, "deleted_at": None}, {"_id": 0}).sort("visit_date", -1).to_list(3)
+    visits = await _find_activity({"doctor_id": doctor_id}, limit=3)
     open_tasks = await db.tasks.find(
         {"doctor_id": doctor_id, "status": {"$in": ["Open", "Overdue"]},
          "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}, {"_id": 0}

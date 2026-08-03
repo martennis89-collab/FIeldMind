@@ -127,15 +127,24 @@ async def upsert_doctor_km(body: dict = Body(...), user=Depends(get_current_user
 # REIMBURSEMENT REPORTS
 # ============================================================
 async def _visits_for_month(tm_user_id: str, month: str, company_id: Optional[str]) -> list[dict]:
+    """Completed meetings for the month — the KM basis.
+
+    Visits were retired; a meeting with status="Completed" is now the record
+    that the TM actually travelled to that doctor. Only Completed counts:
+    a meeting that was merely booked (or cancelled) involved no trip, so
+    paying KM for it would over-reimburse.
+    """
+    from server import _find_activity  # lazy — avoids a circular import at module load
+
     m_from, m_to = _month_bounds(month)
-    q = {"tm_user_id": tm_user_id, "visit_date": {"$gte": m_from, "$lte": m_to + "T23:59:59Z"}}
+    extra = {"tm_user_id": tm_user_id}
     if company_id:
-        q["company_id"] = company_id
-    return await db.visits.find(q, {"_id": 0}).to_list(5000)
+        extra["company_id"] = company_id
+    return await _find_activity(extra, {"$gte": m_from, "$lte": m_to + "T23:59:59Z"})
 
 
 async def _build_breakdown(tm_user_id: str, month: str, company_id: Optional[str]) -> dict:
-    """Aggregate visits → per-doctor counts → match against doctor_km."""
+    """Aggregate completed meetings → per-doctor counts → match against doctor_km."""
     visits = await _visits_for_month(tm_user_id, month, company_id)
     counts: dict[str, int] = {}
     for v in visits:
@@ -914,10 +923,8 @@ async def _weekly_km_summary(report: dict) -> list[dict]:
     if not tm_user_id or not month:
         return []
     m_from, m_to = _month_bounds(month)
-    visits = await db.visits.find({
-        "tm_user_id": tm_user_id,
-        "visit_date": {"$gte": m_from, "$lte": f"{m_to}T23:59:59"},
-    }, {"_id": 0, "doctor_id": 1, "visit_date": 1}).to_list(5000)
+    # Same basis as _build_breakdown, via the shared helper.
+    visits = await _visits_for_month(tm_user_id, month, report.get("company_id"))
     doctor_ids = list({v.get("doctor_id") for v in visits if v.get("doctor_id")})
     km_rows = []
     if doctor_ids:

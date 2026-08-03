@@ -17,6 +17,7 @@ from pydantic import BaseModel
 # Pull every shared symbol the handlers reference. The router file is imported AFTER
 # server.py finishes initialising all of these so the names are guaranteed to exist.
 from server import (
+    _find_activity,
     api,
     db,
     app,
@@ -91,7 +92,7 @@ async def search(q: str, user=Depends(get_current_user)):
         visit_q["tm_user_id"] = user["id"]
     elif user["role"] == "Manager":
         visit_q["team_id"] = user.get("team_id")
-    visits = await db.visits.find(visit_q, {"_id": 0}).sort("visit_date", -1).to_list(50)
+    visits = await _find_activity(visit_q, limit=50)
 
     task_q = {"$or": [{"task_title": rgx}, {"task_description": rgx}]}
     if user["role"] == "TM":

@@ -18,6 +18,8 @@ from pydantic import BaseModel
 # Pull every shared symbol the handlers reference. The router file is imported AFTER
 # server.py finishes initialising all of these so the names are guaranteed to exist.
 from server import (
+    _find_activity,
+    _count_activity,
     api,
     db,
     app,
@@ -158,16 +160,13 @@ async def tm_dashboard(user=Depends(get_current_user)):
         visit_q["team_id"] = user.get("team_id")
         meeting_q["team_id"] = user.get("team_id")
     # Visits logged in the current ISO week (resets every Monday)
-    visits_week = await db.visits.count_documents({
-        **visit_q,
-        "visit_date": {"$gte": week_start, "$lte": week_end_inclusive + "T23:59:59"},
-    })
+    visits_week = await _count_activity(
+        visit_q, {"$gte": week_start, "$lte": week_end_inclusive + "T23:59:59"}
+    )
     # Distinct doctors visited today, vs the team's daily target.
     tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
-    doctors_visited_today = await db.visits.distinct("doctor_id", {
-        **visit_q,
-        "visit_date": {"$gte": today, "$lt": tomorrow},
-    })
+    _today_activity = await _find_activity(visit_q, {"$gte": today, "$lt": tomorrow})
+    doctors_visited_today = list({a["doctor_id"] for a in _today_activity if a.get("doctor_id")})
     # Meetings — open (scheduled, not yet completed) and completed this week
     open_meetings = await db.meetings.count_documents({
         **meeting_q,
@@ -210,7 +209,7 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "SeniorTM", "A
     # visits/tasks/meetings — team_q (built by _apply_role_scope) doesn't apply here.
     docs_q = await _doctor_query_for(user)
     docs = await db.doctors.find(docs_q, {"_id": 0}).to_list(1000)
-    visits = await db.visits.find(team_q, {"_id": 0}).sort("visit_date", -1).to_list(2000)
+    visits = await _find_activity(team_q, limit=2000)
     tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(2000)
     users = await db.users.find({**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": {"$in": ["TM", "SeniorTM"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
 
@@ -323,7 +322,7 @@ async def manager_performance(user=Depends(require_roles("Manager", "SeniorTM", 
     user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
     tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
     docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
-    visits = await db.visits.find(team_q, {"_id": 0}).to_list(5000)
+    visits = await _find_activity(team_q, limit=5000)
     tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(5000)
 
     now = datetime.now(timezone.utc)
@@ -493,7 +492,7 @@ async def manager_commercial(user=Depends(require_roles("Manager", "SeniorTM", "
                  for d in enriched if not d["commercial_state"]["growth_program_explained"]][:20]
 
     # Barriers by stage
-    visits = await db.visits.find(team_q, {"_id": 0}).to_list(5000)
+    visits = await _find_activity(team_q, limit=5000)
     doc_state = {d["id"]: d["commercial_state"] for d in enriched}
     pre_demo: dict = {}
     post_demo: dict = {}
@@ -682,7 +681,7 @@ async def manager_itero(user=Depends(require_roles("Manager", "SeniorTM", "Admin
 
     # TM performance in demos (track-restricted)
     by_tm = {}
-    visits = await db.visits.find({**team_q, **_track_filter_visits("ITERO")}, {"_id": 0}).to_list(5000)
+    visits = await _find_activity({**team_q, **_track_filter_visits("ITERO")}, limit=5000)
     for v in visits:
         ia = v.get("itero_actions") or {}
         legacy = v.get("commercial_actions") or {}

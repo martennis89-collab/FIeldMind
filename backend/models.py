@@ -676,6 +676,22 @@ class Meeting(BaseModel):
     is_demo: bool = False
     status: MeetingStatus = "Scheduled"
     visit_id: Optional[str] = None
+    # ---- Outcome of the meeting (absorbed from the retired Visit model) ----
+    # Populated when the meeting is completed. A meeting with status
+    # "Completed" IS the record that the interaction happened — there is no
+    # separate visit row any more.
+    visit_type: VisitType = "In-person visit"
+    free_text_note: Optional[str] = None
+    confirmed_topics: List[str] = []
+    confirmed_barriers: List[str] = []
+    sentiment: Optional[Sentiment] = None
+    opportunity_state: Optional[OpportunityState] = None
+    next_step: Optional[str] = None
+    ai_extraction: Optional[AIExtraction] = None
+    itero_actions: IteroActions = Field(default_factory=IteroActions)
+    invisalign_actions: InvisalignActions = Field(default_factory=InvisalignActions)
+    commercial_actions: CommercialActions = Field(default_factory=CommercialActions)
+    completed_at: Optional[str] = None
     # Phase A additions — backward-compatible
     track_type: Literal["General", "iTero", "Invisalign", "Both"] = "General"
     is_draft: bool = False

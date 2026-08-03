@@ -297,6 +297,71 @@ def _priority_label(score: int) -> str:
 # enrichment for hundreds of doctors unbounded (each doctor = ~5 queries) can be
 # SLOWER than sequential once the burst exceeds what the shared cluster can serve
 # concurrently. Cap how many doctors are enriched in parallel at once.
+# ============================================================
+# ACTIVITY = "an interaction with a doctor actually happened".
+#
+# Visits were retired in favour of meetings: a meeting with status
+# "Completed" IS that record, and now carries the note/sentiment/topics/
+# action blocks visits used to hold.
+#
+# These helpers read completed meetings AND any visits not yet migrated, so
+# the app is correct both before and after scripts/migrate_visits_to_meetings
+# is run — the migration soft-deletes each visit as it converts it, so once
+# it has run the visit half of the union is simply empty. That avoids a
+# window where reimbursement or a dashboard reads zero because the code
+# shipped ahead of the data.
+# ============================================================
+_NOT_DELETED = {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+
+
+def _completed_meeting_q(extra: dict | None = None, date_range: dict | None = None) -> dict:
+    q = {"status": "Completed", **_NOT_DELETED}
+    if date_range:
+        q["scheduled_at"] = date_range
+    if extra:
+        q.update(extra)
+    return q
+
+
+def _legacy_visit_q(extra: dict | None = None, date_range: dict | None = None) -> dict:
+    q = dict(_NOT_DELETED)
+    if date_range:
+        q["visit_date"] = date_range
+    if extra:
+        q.update(extra)
+    return q
+
+
+def _as_activity(doc: dict | None) -> dict | None:
+    """Normalise a meeting into the visit-shaped dict the rest of the app
+    still reads (`visit_date`). Visits pass through unchanged."""
+    if not doc:
+        return None
+    if "visit_date" not in doc and "scheduled_at" in doc:
+        doc = {**doc, "visit_date": doc["scheduled_at"]}
+    return doc
+
+
+async def _find_activity(extra=None, date_range=None, sort_desc=True, limit=5000) -> list[dict]:
+    """Completed meetings + not-yet-migrated visits, newest first."""
+    meetings = await db.meetings.find(
+        _completed_meeting_q(extra, date_range), {"_id": 0}
+    ).to_list(limit)
+    visits = await db.visits.find(
+        _legacy_visit_q(extra, date_range), {"_id": 0}
+    ).to_list(limit)
+    rows = [_as_activity(m) for m in meetings] + visits
+    rows.sort(key=lambda r: r.get("visit_date") or "", reverse=sort_desc)
+    return rows[:limit]
+
+
+async def _count_activity(extra=None, date_range=None) -> int:
+    return (
+        await db.meetings.count_documents(_completed_meeting_q(extra, date_range))
+        + await db.visits.count_documents(_legacy_visit_q(extra, date_range))
+    )
+
+
 _ENRICH_SEMAPHORE = asyncio.Semaphore(10)
 
 
@@ -314,18 +379,18 @@ async def _enrich_doctor_impl(doctor: dict) -> dict:
     # These 5 queries are independent of each other's results — fire them
     # concurrently rather than one round-trip at a time (matters a lot once
     # the DB is a real network hop away instead of local Docker).
-    last_visit, visit_count_q, open_promises, overdue_promises, recent = await asyncio.gather(
-        db.visits.find_one({"doctor_id": doc_id, "deleted_at": None}, {"_id": 0}, sort=[("visit_date", -1)]),
-        db.visits.count_documents({"doctor_id": doc_id, "deleted_at": None, "visit_date": {"$gte": quarter_start.isoformat()}}),
+    recent_all, visit_count_q, open_promises, overdue_promises = await asyncio.gather(
+        _find_activity({"doctor_id": doc_id}, limit=10),
+        _count_activity({"doctor_id": doc_id}, {"$gte": quarter_start.isoformat()}),
         db.tasks.count_documents({"doctor_id": doc_id, "status": {"$in": ["Open", "Overdue"]}}),
         db.tasks.count_documents({
             "doctor_id": doc_id,
             "status": {"$in": ["Open", "Overdue"]},
             "due_date": {"$lt": today},
         }),
-        db.visits.find({"doctor_id": doc_id, "deleted_at": None}, {"_id": 0}).sort("visit_date", -1).to_list(10),
     )
-    return _compute_enriched_fields(doctor, last_visit, visit_count_q, open_promises, overdue_promises, recent)
+    last_visit = recent_all[0] if recent_all else None
+    return _compute_enriched_fields(doctor, last_visit, visit_count_q, open_promises, overdue_promises, recent_all)
 
 
 async def _enrich_doctors_batch(docs: list) -> list:
@@ -356,15 +421,30 @@ async def _enrich_doctors_batch(docs: list) -> list:
                 "overdue_promises": {"$sum": {"$cond": [{"$lt": ["$due_date", today]}, 1, 0]}},
             }},
         ]).to_list(None),
-        db.visits.aggregate([
-            {"$match": {"doctor_id": {"$in": doc_ids}, "deleted_at": None, "visit_date": {"$gte": quarter_start.isoformat()}}},
+        # Completed meetings and any not-yet-migrated visits, unioned in the
+        # DB via $unionWith so this stays one round-trip per aggregate.
+        # $addFields aliases scheduled_at -> visit_date so both halves share
+        # the shape the downstream code already expects.
+        db.meetings.aggregate([
+            {"$match": {"doctor_id": {"$in": doc_ids}, "status": "Completed", **_NOT_DELETED,
+                        "scheduled_at": {"$gte": quarter_start.isoformat()}}},
+            {"$project": {"doctor_id": 1}},
+            {"$unionWith": {"coll": "visits", "pipeline": [
+                {"$match": {"doctor_id": {"$in": doc_ids}, **_NOT_DELETED,
+                            "visit_date": {"$gte": quarter_start.isoformat()}}},
+                {"$project": {"doctor_id": 1}},
+            ]}},
             {"$group": {"_id": "$doctor_id", "count": {"$sum": 1}}},
         ]).to_list(None),
-        # Per-doctor top-10-most-recent visits in one pass: sort globally first
-        # (index-backed on {doctor_id, visit_date}), then group + cap to 10 —
-        # $group preserves the pre-sorted order within each group's $push.
-        db.visits.aggregate([
-            {"$match": {"doctor_id": {"$in": doc_ids}, "deleted_at": None}},
+        # Per-doctor top-10-most-recent activity in one pass: sort globally
+        # first, then group + cap to 10 — $group preserves the pre-sorted
+        # order within each group's $push.
+        db.meetings.aggregate([
+            {"$match": {"doctor_id": {"$in": doc_ids}, "status": "Completed", **_NOT_DELETED}},
+            {"$addFields": {"visit_date": "$scheduled_at"}},
+            {"$unionWith": {"coll": "visits", "pipeline": [
+                {"$match": {"doctor_id": {"$in": doc_ids}, **_NOT_DELETED}},
+            ]}},
             {"$sort": {"visit_date": -1}},
             {"$group": {"_id": "$doctor_id", "visits": {"$push": "$$ROOT"}}},
             {"$project": {"visits": {"$slice": ["$visits", 10]}}},
@@ -1293,11 +1373,13 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
     # None of these queries excluded soft-deleted rows, so a visit or promise
     # you deleted (e.g. fixing a mis-dated Telegram log) still counted here.
     not_deleted = {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
-    visits = await db.visits.find({
-        "tm_user_id": tm_id,
-        "visit_date": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
-        **not_deleted,
-    }, {"_id": 0}).to_list(2000)
+    # "Visits" in the report now means completed meetings (plus any visits not
+    # yet migrated) — the record that an interaction actually happened.
+    visits = await _find_activity(
+        {"tm_user_id": tm_id},
+        {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+        limit=2000,
+    )
     events_this_week = await db.events.find({
         "tm_user_id": tm_id,
         "status": {"$ne": "Cancelled"},
