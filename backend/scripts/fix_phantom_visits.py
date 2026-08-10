@@ -13,8 +13,10 @@ promise into a real task linked to the doctor. So the pollution is only the
 extra visit row.
 
 WHAT IT DOES
-  1. Cheap DB pre-filter for plausible phantoms (AI-created, no topics, no
-     barriers, has note text) — keeps the AI bill to candidates only.
+  1. Cheap DB pre-filter for plausible phantoms (AI-created, has note text,
+     and by default no topics/barriers) — keeps the AI bill to candidates
+     only. --thorough drops the topics/barriers condition, since the AI often
+     tags a topic even on a note that is purely a promise.
   2. Re-classifies each candidate's ORIGINAL note text with the SAME
      analyze_note() the app now uses. Only notes the AI now calls
      "log_promise" are treated as phantoms — no bespoke regex heuristics
@@ -35,6 +37,9 @@ to the target database — on Render that is production):
 
     # 1. review first — writes nothing
     python -m scripts.fix_phantom_visits --since 2026-07-01
+
+    # widen the net if that finds fewer candidates than you expect
+    python -m scripts.fix_phantom_visits --thorough
 
     # 2. apply once you're happy with the list
     python -m scripts.fix_phantom_visits --since 2026-07-01 --apply
@@ -65,8 +70,14 @@ NOT_DELETED = {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]
 
 async def find_candidates(db, args) -> list:
     """Cheap DB-side pre-filter. Deliberately permissive — the AI re-check in
-    classify() is what actually decides. A visit with topics or barriers
-    recorded is a real conversation and is never considered."""
+    classify() is what actually decides.
+
+    By default a visit that recorded topics or barriers is treated as a real
+    conversation and skipped. That is a cost optimisation, not a rule: the AI
+    often tags a topic ("Invisalign pricing") even on a note that is purely a
+    promise, so a genuine phantom can carry topics and be missed. Pass
+    --thorough to drop that condition and AI-check every AI-created visit.
+    """
     q = {
         **NOT_DELETED,
         "free_text_note": {"$nin": [None, ""]},
@@ -74,11 +85,12 @@ async def find_candidates(db, args) -> list:
         # the Log Visit form was a deliberate choice by the user — not ours to
         # second-guess.
         "ai_extraction": {"$ne": None},
-        "$and": [
+    }
+    if not args.thorough:
+        q["$and"] = [
             {"$or": [{"confirmed_topics": {"$size": 0}}, {"confirmed_topics": {"$exists": False}}]},
             {"$or": [{"confirmed_barriers": {"$size": 0}}, {"confirmed_barriers": {"$exists": False}}]},
-        ],
-    }
+        ]
     if args.since:
         q.setdefault("visit_date", {})["$gte"] = args.since
     if args.until:
@@ -119,6 +131,10 @@ async def main():
     ap.add_argument("--since", help="earliest visit_date, YYYY-MM-DD")
     ap.add_argument("--until", help="latest visit_date, YYYY-MM-DD")
     ap.add_argument("--limit", type=int, default=500, help="max candidates to inspect (default 500)")
+    ap.add_argument("--thorough", action="store_true",
+                    help="AI-check every AI-created visit, including ones that recorded "
+                         "topics/barriers (slower + more AI calls, but catches phantoms "
+                         "the AI happened to tag with a topic)")
     args = ap.parse_args()
 
     mongo_url = os.environ.get("MONGO_URL")
