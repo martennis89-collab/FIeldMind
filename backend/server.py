@@ -1411,14 +1411,13 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         **not_deleted,
     })
 
-    # Regular (non-demo) meetings sitting in this week's calendar. These were
-    # never counted anywhere in the report — only is_demo meetings were — so a
-    # week's worth of booked meetings was invisible next to the visit count.
-    # Keyed on scheduled_at (when it sits on the calendar), not created_at,
-    # which is what "meetings this week" means to a TM reading the report.
+    # EVERY non-cancelled meeting sitting in this week's calendar — demos
+    # included. Excluding demos here made "on calendar" smaller than "meetings
+    # held" (which counts them), so the report could claim more meetings
+    # happened than were ever on the calendar. Keyed on scheduled_at (when it
+    # sits on the calendar), which is what "this week" means to whoever reads it.
     meetings_this_week = await db.meetings.find({
         "tm_user_id": tm_id,
-        "is_demo": {"$ne": True},
         "status": {"$ne": "Cancelled"},
         "scheduled_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
         **not_deleted,
@@ -1500,7 +1499,10 @@ async def _build_report_draft(tm_user, week_start_iso: str, week_end_iso: str) -
         "tm_user_id": tm_id,
         "is_demo": True,
         "status": "Completed",
-        "updated_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
+        # Keyed on when the demo was scheduled, not updated_at — otherwise a
+        # demo from an earlier week shows up in this week's report purely
+        # because its record was touched (e.g. marked complete late).
+        "scheduled_at": {"$gte": week_start_iso, "$lte": week_end_iso + "T23:59:59"},
         **not_deleted,
     }, {"_id": 0}).to_list(2000)
 
