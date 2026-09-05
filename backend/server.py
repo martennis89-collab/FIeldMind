@@ -1928,62 +1928,91 @@ def _parse_dt_flexible(s: str) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
-async def _weekly_report_reminder_loop():
-    """Monday-morning nudge (09:00-09:10, each TM's own local time) to
-    anyone who hasn't submitted LAST week's report yet — the same "overdue"
-    definition the Reports page's Overdue tab already uses, just proactive
-    instead of someone having to go look. week_start/week_end stay UTC-week
-    based (matching how reports are actually stored) — only the SEND TIME
-    is per-user local; the week being asked about must match what's in the
-    database regardless of where the TM is."""
+async def _send_weekly_report_reminder(tm: dict) -> None:
+    """Monday-morning nudge to a TM who hasn't submitted LAST week's report
+    — the same "overdue" definition the Reports page's Overdue tab uses,
+    just proactive instead of someone having to go look. week_start/week_end
+    stay UTC-week based (matching how reports are actually stored); only the
+    SEND TIME is per-user local, because the week being asked about must
+    match what's in the database regardless of where the TM is."""
     from emails import send_weekly_report_reminder_email
 
-    while True:
-        try:
-            monday, _ = _week_bounds()
-            prev_monday = monday - timedelta(days=7)
-            prev_week_start = prev_monday.date().isoformat()
-            prev_week_end = (prev_monday + timedelta(days=6)).date().isoformat()
+    monday, _ = _week_bounds()
+    prev_monday = monday - timedelta(days=7)
+    prev_week_start = prev_monday.date().isoformat()
+    prev_week_end = (prev_monday + timedelta(days=6)).date().isoformat()
 
-            tms = await db.users.find(
-                {"role": {"$in": ["TM", "SeniorTM"]}, "active_status": True},
-                {"_id": 0, "id": 1, "email": 1, "full_name": 1, "timezone": 1},
-            ).to_list(2000)
-            for tm in tms:
-                local_now = _user_local_now(tm)
-                if not (local_now.weekday() == 0 and local_now.hour == 9 and local_now.minute < 10):
-                    continue
+    state_key = f"weekly_report_reminder:{tm['id']}"
+    state = await db.app_state.find_one({"key": state_key})
+    if state and state.get("value") == prev_week_start:
+        return  # already handled (sent or found already-submitted) this week
 
-                state_key = f"weekly_report_reminder:{tm['id']}"
-                state = await db.app_state.find_one({"key": state_key})
-                if state and state.get("value") == prev_week_start:
-                    continue  # already handled (sent or found already-submitted) this week
-
-                submitted = await db.reports.find_one({
-                    "tm_user_id": tm["id"], "week_start": prev_week_start,
-                    "status": {"$in": ["Submitted", "Reviewed"]},
-                })
-                if not submitted and tm.get("email"):
-                    await send_weekly_report_reminder_email(
-                        tm["email"], tm.get("full_name", ""), prev_week_start, prev_week_end
-                    )
-                await db.app_state.update_one(
-                    {"key": state_key}, {"$set": {"value": prev_week_start}}, upsert=True
-                )
-        except Exception:
-            logger.exception("Weekly report reminder loop failed")
-        await asyncio.sleep(300)
+    submitted = await db.reports.find_one({
+        "tm_user_id": tm["id"], "week_start": prev_week_start,
+        "status": {"$in": ["Submitted", "Reviewed"]},
+    })
+    if not submitted and tm.get("email"):
+        await send_weekly_report_reminder_email(
+            tm["email"], tm.get("full_name", ""), prev_week_start, prev_week_end
+        )
+    await db.app_state.update_one(
+        {"key": state_key}, {"$set": {"value": prev_week_start}}, upsert=True
+    )
 
 
-async def _eod_meetings_reminder_loop():
-    """End-of-day nudge (18:00-18:10, each TM's own local time) listing any
-    of TODAY's meetings/demos still sitting at status=Scheduled — the same
-    "not completed" the Calendar's meeting-detail modal already shows.
-    Filters in Python rather than a DB date-range query because scheduled_at
-    strings aren't guaranteed to share one UTC offset across every booking
-    path — safer to parse each one and compare in the TM's own timezone."""
+async def _send_eod_meetings_reminder(tm: dict, local_now: datetime) -> None:
+    """End-of-day nudge listing any of TODAY's meetings/demos still sitting
+    at status=Scheduled — the same "not completed" the Calendar's
+    meeting-detail modal already shows. Filters in Python rather than a DB
+    date-range query because scheduled_at strings aren't guaranteed to share
+    one UTC offset across every booking path — safer to parse each one and
+    compare in the TM's own timezone."""
     from emails import send_unachieved_meetings_reminder_email
 
+    today_str = local_now.date().isoformat()
+    state_key = f"eod_meetings_reminder:{tm['id']}"
+    state = await db.app_state.find_one({"key": state_key})
+    if state and state.get("value") == today_str:
+        return
+
+    candidates = await db.meetings.find(
+        {"tm_user_id": tm["id"], "deleted_at": None, "status": "Scheduled"},
+        {"_id": 0, "doctor_name": 1, "scheduled_at": 1, "is_demo": 1},
+    ).to_list(500)
+
+    todays = []
+    for m in candidates:
+        sched = m.get("scheduled_at")
+        if not sched:
+            continue
+        try:
+            dt_local = _parse_dt_flexible(sched).astimezone(local_now.tzinfo)
+        except Exception:
+            continue
+        if dt_local.date() == local_now.date():
+            todays.append({
+                "doctor_name": m.get("doctor_name") or "Doctor",
+                "time_label": dt_local.strftime("%H:%M"),
+                "is_demo": bool(m.get("is_demo")),
+            })
+    todays.sort(key=lambda x: x["time_label"])
+
+    if todays and tm.get("email"):
+        await send_unachieved_meetings_reminder_email(tm["email"], tm.get("full_name", ""), todays)
+    await db.app_state.update_one(
+        {"key": state_key}, {"$set": {"value": today_str}}, upsert=True
+    )
+
+
+async def _reminder_loop():
+    """One poll driving both per-user reminders (Monday 09:00-09:10 weekly
+    report, and 18:00-18:10 end-of-day unachieved meetings — each in the
+    TM's own local time).
+
+    These were two separate loops that each re-read the whole TM list every
+    five minutes around the clock, so ~576 identical user queries a day just
+    to discover nobody was in a send window. Same schedule, one query.
+    """
     while True:
         try:
             tms = await db.users.find(
@@ -1992,45 +2021,34 @@ async def _eod_meetings_reminder_loop():
             ).to_list(2000)
             for tm in tms:
                 local_now = _user_local_now(tm)
-                if not (local_now.hour == 18 and local_now.minute < 10):
-                    continue
-                today_str = local_now.date().isoformat()
-
-                state_key = f"eod_meetings_reminder:{tm['id']}"
-                state = await db.app_state.find_one({"key": state_key})
-                if state and state.get("value") == today_str:
-                    continue
-
-                candidates = await db.meetings.find(
-                    {"tm_user_id": tm["id"], "deleted_at": None, "status": "Scheduled"},
-                    {"_id": 0, "doctor_name": 1, "scheduled_at": 1, "is_demo": 1},
-                ).to_list(500)
-
-                todays = []
-                for m in candidates:
-                    sched = m.get("scheduled_at")
-                    if not sched:
-                        continue
-                    try:
-                        dt_local = _parse_dt_flexible(sched).astimezone(local_now.tzinfo)
-                    except Exception:
-                        continue
-                    if dt_local.date() == local_now.date():
-                        todays.append({
-                            "doctor_name": m.get("doctor_name") or "Doctor",
-                            "time_label": dt_local.strftime("%H:%M"),
-                            "is_demo": bool(m.get("is_demo")),
-                        })
-                todays.sort(key=lambda x: x["time_label"])
-
-                if todays and tm.get("email"):
-                    await send_unachieved_meetings_reminder_email(tm["email"], tm.get("full_name", ""), todays)
-                await db.app_state.update_one(
-                    {"key": state_key}, {"$set": {"value": today_str}}, upsert=True
-                )
+                if local_now.minute >= 10:
+                    continue  # both windows are the first 10 minutes of an hour
+                try:
+                    if local_now.weekday() == 0 and local_now.hour == 9:
+                        await _send_weekly_report_reminder(tm)
+                    if local_now.hour == 18:
+                        await _send_eod_meetings_reminder(tm, local_now)
+                except Exception:
+                    # One TM's failure must not skip everyone after them.
+                    logger.exception(f"Reminder failed for tm={tm.get('id')}")
         except Exception:
-            logger.exception("EOD unachieved meetings reminder loop failed")
+            logger.exception("Reminder loop failed")
         await asyncio.sleep(300)
+
+
+# Bump when you add a one-time data migration to on_startup(). Migrations
+# below run only when the stored version is behind this one, so a redeploy
+# or a cold start no longer re-scans every collection to discover there is
+# nothing to do. Set FORCE_MIGRATIONS=1 to run them regardless.
+SCHEMA_VERSION = 1
+
+
+async def _stored_schema_version() -> int:
+    try:
+        doc = await db.app_state.find_one({"key": "schema_version"}, {"_id": 0, "value": 1})
+        return int(doc["value"]) if doc else 0
+    except Exception:
+        return 0  # unreadable marker → treat as fresh and re-run; migrations are idempotent
 
 
 @app.on_event("startup")
@@ -2081,64 +2099,96 @@ async def on_startup():
     await db.events.create_index([("team_id", 1), ("scheduled_at", 1)])
     await db.password_resets.create_index("token_hash")
     await db.password_resets.create_index([("user_id", 1), ("created_at", -1)])
-    # Migration: normalise legacy approval statuses (no-op on fresh DBs)
-    await db.expenses.update_many(
-        {"status": {"$in": ["Approved", "Rejected"]}},
-        {"$set": {"status": "Submitted"}, "$unset": {"manager_comment": "", "reviewed_at": ""}},
-    )
-    await db.expenses.update_many(
-        {"currency": {"$ne": "EUR"}},
-        {"$set": {"currency": "EUR"}},
-    )
-    # Bootstrap platform Owner (idempotent)
+    await db.track_signals.create_index([("doctor_id", 1), ("track_type", 1), ("signal_date", -1)])
+    await db.track_signals.create_index("idempotency_key", unique=False, sparse=True)
+    await db.track_signals.create_index([("tm_user_id", 1)])
+    await db.clinical_patterns.create_index([("doctor_id", 1)])
+    await db.clinical_patterns.create_index([("tm_user_id", 1)])
+
+    # Bootstrap platform Owner (idempotent, one find_one — always safe to run)
     try:
         owner_report = await seed_owner(db)
         logger.info(f"Owner seed: {owner_report}")
     except Exception as e:
         logger.error(f"Owner seed failed: {e}")
 
-    # PHASE C — multi-tenant Company spine
-    try:
-        c_report = await _ensure_default_company_and_backfill()
-        logger.info(f"Phase C company: {c_report}")
-    except Exception as e:
-        logger.error(f"Phase C company init failed: {e}")
+    # ---- One-time data migrations -------------------------------------
+    # These all filter on things no index can serve ({"$exists": False},
+    # {"$ne": ...}), so each one is a full collection scan, and the
+    # track_signals backfill additionally does four queries per visit.
+    # They used to run on every boot — i.e. on every deploy and every cold
+    # start — to find nothing to do. Now they run once per schema version.
+    stored_v = 0 if os.environ.get("FORCE_MIGRATIONS") else await _stored_schema_version()
+    if stored_v >= SCHEMA_VERSION:
+        logger.info(f"Schema v{stored_v} — one-time migrations already applied, skipping")
+    else:
+        logger.info(f"Schema v{stored_v} → v{SCHEMA_VERSION} — running one-time migrations")
+        ok = True
 
-    # PHASE A — backfill nullable defaults for backward compatibility
-    try:
-        a = await db.visits.update_many(
-            {"deleted_at": {"$exists": False}},
-            {"$set": {"deleted_at": None, "is_draft": False}},
-        )
-        b = await db.meetings.update_many(
-            {"deleted_at": {"$exists": False}},
-            {"$set": {"deleted_at": None, "is_draft": False, "track_type": "General"}},
-        )
-        c = await db.tasks.update_many(
-            {"category": {"$exists": False}},
-            {"$set": {"category": "other", "ai_confirmed": True}},
-        )
-        logger.info(f"Phase A backfill: visits={a.modified_count} meetings={b.modified_count} tasks={c.modified_count}")
-    except Exception as e:
-        logger.error(f"Phase A backfill failed: {e}")
+        # Migration: normalise legacy approval statuses (no-op on fresh DBs)
+        try:
+            await db.expenses.update_many(
+                {"status": {"$in": ["Approved", "Rejected"]}},
+                {"$set": {"status": "Submitted"}, "$unset": {"manager_comment": "", "reviewed_at": ""}},
+            )
+            await db.expenses.update_many(
+                {"currency": {"$ne": "EUR"}},
+                {"$set": {"currency": "EUR"}},
+            )
+        except Exception as e:
+            ok = False
+            logger.error(f"Expense normalisation failed: {e}")
 
-    # PHASE B — indexes + backfill track_signals from historical visits
-    try:
-        await db.track_signals.create_index([("doctor_id", 1), ("track_type", 1), ("signal_date", -1)])
-        await db.track_signals.create_index("idempotency_key", unique=False, sparse=True)
-        await db.track_signals.create_index([("tm_user_id", 1)])
-        await db.clinical_patterns.create_index([("doctor_id", 1)])
-        await db.clinical_patterns.create_index([("tm_user_id", 1)])
-        # Backfill: walk every visit that hasn't been processed yet and materialize signals.
-        # We use the meeting_id (=visit_id) idempotency_key set on insert.
-        backfilled = await _backfill_track_signals_from_visits()
-        logger.info(f"Phase B backfill: {backfilled} new track_signals materialized")
-    except Exception as e:
-        logger.error(f"Phase B init failed: {e}")
+        # PHASE C — multi-tenant Company spine
+        try:
+            c_report = await _ensure_default_company_and_backfill()
+            logger.info(f"Phase C company: {c_report}")
+        except Exception as e:
+            ok = False
+            logger.error(f"Phase C company init failed: {e}")
+
+        # PHASE A — backfill nullable defaults for backward compatibility
+        try:
+            a = await db.visits.update_many(
+                {"deleted_at": {"$exists": False}},
+                {"$set": {"deleted_at": None, "is_draft": False}},
+            )
+            b = await db.meetings.update_many(
+                {"deleted_at": {"$exists": False}},
+                {"$set": {"deleted_at": None, "is_draft": False, "track_type": "General"}},
+            )
+            c = await db.tasks.update_many(
+                {"category": {"$exists": False}},
+                {"$set": {"category": "other", "ai_confirmed": True}},
+            )
+            logger.info(f"Phase A backfill: visits={a.modified_count} meetings={b.modified_count} tasks={c.modified_count}")
+        except Exception as e:
+            ok = False
+            logger.error(f"Phase A backfill failed: {e}")
+
+        # PHASE B — backfill track_signals from historical visits.
+        # Uses the meeting_id (=visit_id) idempotency_key set on insert.
+        try:
+            backfilled = await _backfill_track_signals_from_visits()
+            logger.info(f"Phase B backfill: {backfilled} new track_signals materialized")
+        except Exception as e:
+            ok = False
+            logger.error(f"Phase B init failed: {e}")
+
+        # Only record the version if everything landed — a partial run must
+        # be retried on the next boot, not silently marked done.
+        if ok:
+            await db.app_state.update_one(
+                {"key": "schema_version"},
+                {"$set": {"value": SCHEMA_VERSION, "applied_at": _now_iso()}},
+                upsert=True,
+            )
+            logger.info(f"Schema marked v{SCHEMA_VERSION}")
+        else:
+            logger.warning("One or more migrations failed — schema version NOT bumped; will retry next boot")
 
     asyncio.create_task(_telegram_daily_checkin_loop())
-    asyncio.create_task(_weekly_report_reminder_loop())
-    asyncio.create_task(_eod_meetings_reminder_loop())
+    asyncio.create_task(_reminder_loop())
 
     logger.info("Field Intelligence Platform started.")
 
