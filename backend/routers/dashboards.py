@@ -208,10 +208,14 @@ async def manager_dashboard(user=Depends(require_roles("Manager", "SeniorTM", "A
     # NOTE: doctors are scoped by `assigned_tm_id`/`team_id`, not `tm_user_id` like
     # visits/tasks/meetings — team_q (built by _apply_role_scope) doesn't apply here.
     docs_q = await _doctor_query_for(user)
-    docs = await db.doctors.find(docs_q, {"_id": 0}).to_list(1000)
-    visits = await _find_activity(team_q, limit=2000)
-    tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(2000)
-    users = await db.users.find({**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": {"$in": ["TM", "SeniorTM"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
+    # Four independent reads — issue them together so the page costs one
+    # round trip's latency instead of four against a remote cluster.
+    docs, visits, tasks, users = await asyncio.gather(
+        db.doctors.find(docs_q, {"_id": 0}).to_list(1000),
+        _find_activity(team_q, limit=2000),
+        db.tasks.find(team_q, {"_id": 0}).to_list(2000),
+        db.users.find({**({"team_id": user.get("team_id")} if user["role"] == "Manager" else {}), "role": {"$in": ["TM", "SeniorTM"]}}, {"_id": 0, "password_hash": 0}).to_list(200),
+    )
 
     today = datetime.now(timezone.utc).date().isoformat()
     now_iso = _now_iso()
@@ -320,10 +324,14 @@ async def manager_performance(user=Depends(require_roles("Manager", "SeniorTM", 
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
     user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
-    tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
-    docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
-    visits = await _find_activity(team_q, limit=5000)
-    tasks = await db.tasks.find(team_q, {"_id": 0}).to_list(5000)
+    docs_q = await _doctor_query_for(user)
+    # Four independent reads — see manager_dashboard above.
+    tms, docs, visits, tasks = await asyncio.gather(
+        db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500),
+        db.doctors.find(docs_q, {"_id": 0}).to_list(2000),
+        _find_activity(team_q, limit=5000),
+        db.tasks.find(team_q, {"_id": 0}).to_list(5000),
+    )
 
     now = datetime.now(timezone.utc)
     today = now.date().isoformat()
@@ -546,10 +554,15 @@ async def manager_commercial(user=Depends(require_roles("Manager", "SeniorTM", "
 async def manager_interventions(stale_proposal_days: int = 7, user=Depends(require_roles("Manager", "SeniorTM", "Admin", "Owner"))):
     _sr_ids = await _managed_tm_ids_for(user) if user["role"] == "SeniorTM" else None
     team_q = dict(_company_query_for(user)) if user["role"] in ("Admin","Owner") else _apply_role_scope(dict(_company_query_for(user)), user, sr_ids=_sr_ids)
-    docs = await db.doctors.find(await _doctor_query_for(user), {"_id": 0}).to_list(2000)
-    enriched = await _enrich_doctors_batch(docs)
+    docs_q = await _doctor_query_for(user)
     user_q = {**({"team_id": user.get("team_id"), "role": {"$in": ["TM", "SeniorTM"]}} if user["role"] == "Manager" else {"id": {"$in": _sr_ids or []}, "role": "TM"} if user["role"] == "SeniorTM" else {"role": {"$in": ["TM", "SeniorTM"]}})}
-    tms = await db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500)
+    # The TM list doesn't depend on the doctors, so fetch both at once; only
+    # the enrichment below actually needs `docs` in hand.
+    docs, tms = await asyncio.gather(
+        db.doctors.find(docs_q, {"_id": 0}).to_list(2000),
+        db.users.find(user_q, {"_id": 0, "password_hash": 0}).to_list(500),
+    )
+    enriched = await _enrich_doctors_batch(docs)
     tm_name = {t["id"]: t["full_name"] for t in tms}
 
     today = datetime.now(timezone.utc).date()

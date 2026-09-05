@@ -351,22 +351,29 @@ def _as_activity(doc: dict | None) -> dict | None:
 async def _find_activity(extra=None, date_range=None, sort_desc=True, limit=5000, statuses=("Completed",)) -> list[dict]:
     """Meetings + not-yet-migrated visits, newest first. See
     _completed_meeting_q for what `statuses` selects."""
-    meetings = await db.meetings.find(
-        _completed_meeting_q(extra, date_range, statuses), {"_id": 0}
-    ).to_list(limit)
-    visits = await db.visits.find(
-        _legacy_visit_q(extra, date_range), {"_id": 0}
-    ).to_list(limit)
+    # The two halves are independent, so issue them together instead of
+    # paying two sequential round trips to a remote Atlas cluster. Network
+    # latency dominates here — this is the helper behind the calendar,
+    # reports, reimbursement and every doctor page.
+    meetings, visits = await asyncio.gather(
+        db.meetings.find(
+            _completed_meeting_q(extra, date_range, statuses), {"_id": 0}
+        ).to_list(limit),
+        db.visits.find(
+            _legacy_visit_q(extra, date_range), {"_id": 0}
+        ).to_list(limit),
+    )
     rows = [_as_activity(m) for m in meetings] + visits
     rows.sort(key=lambda r: r.get("visit_date") or "", reverse=sort_desc)
     return rows[:limit]
 
 
 async def _count_activity(extra=None, date_range=None) -> int:
-    return (
-        await db.meetings.count_documents(_completed_meeting_q(extra, date_range))
-        + await db.visits.count_documents(_legacy_visit_q(extra, date_range))
+    meetings, visits = await asyncio.gather(
+        db.meetings.count_documents(_completed_meeting_q(extra, date_range)),
+        db.visits.count_documents(_legacy_visit_q(extra, date_range)),
     )
+    return meetings + visits
 
 
 _ENRICH_SEMAPHORE = asyncio.Semaphore(10)
@@ -2092,6 +2099,10 @@ async def on_startup():
     await db.meetings.create_index("id", unique=True)
     await db.meetings.create_index([("tm_user_id", 1), ("scheduled_at", 1)])
     await db.meetings.create_index([("doctor_id", 1)])
+    # Mirrors the visits index. Serves the per-doctor, date-ranged activity
+    # lookups behind every doctor page and the batch enrichment aggregate,
+    # which previously matched on doctor_id and then sorted/ranged in memory.
+    await db.meetings.create_index([("doctor_id", 1), ("scheduled_at", -1)])
     await db.meetings.create_index([("team_id", 1), ("scheduled_at", 1)])
     await db.itero_stage_history.create_index([("doctor_id", 1), ("at", -1)])
     await db.events.create_index("id", unique=True)
