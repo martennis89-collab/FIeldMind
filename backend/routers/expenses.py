@@ -74,6 +74,35 @@ from server import (
 )
 from models import ExpenseUpdate
 
+EXPENSE_CATEGORIES = ("Petrol", "Food", "Hotel", "Parking", "Tolls", "Other")
+
+# A reimbursement report in one of these states has been signed off, so the
+# expenses behind it are frozen. Anything earlier is still in flight and its
+# numbers are expected to move.
+SETTLED_REPORT_STATUSES = ("Approved", "Paid")
+
+
+async def _settled_report_for_expense(exp: dict) -> Optional[dict]:
+    """The Approved/Paid reimbursement report this expense belongs to, if any.
+
+    An expense reaches a report two ways — explicitly linked via
+    `reimbursement_report_id`, or auto-included because it falls in the
+    report's month — so both have to be checked. Returns None when the
+    expense isn't locked by anything.
+    """
+    month = (exp.get("expense_date") or "")[:7]
+    clauses: list[dict] = []
+    if exp.get("reimbursement_report_id"):
+        clauses.append({"id": exp["reimbursement_report_id"]})
+    if month and exp.get("tm_user_id"):
+        clauses.append({"tm_user_id": exp["tm_user_id"], "month": month})
+    if not clauses:
+        return None
+    return await db.reimbursement_reports.find_one(
+        {"$or": clauses, "status": {"$in": list(SETTLED_REPORT_STATUSES)}},
+        {"_id": 0, "id": 1, "month": 1, "status": 1},
+    )
+
 
 @api.post("/expenses")
 async def create_expense(
@@ -94,8 +123,8 @@ async def create_expense(
     """
     if user["role"] not in ("TM", "SeniorTM"):
         raise HTTPException(status_code=403, detail="Only TMs can log expenses")
-    if category not in ("Petrol", "Food", "Hotel", "Parking", "Tolls", "Other"):
-        raise HTTPException(status_code=400, detail="category must be one of Petrol, Food, Hotel, Parking, Tolls, Other")
+    if category not in EXPENSE_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"category must be one of {', '.join(EXPENSE_CATEGORIES)}")
     if amount < 0:
         raise HTTPException(status_code=400, detail="amount must be non-negative")
     try:
@@ -297,16 +326,32 @@ async def update_expense(exp_id: str, body: ExpenseUpdate, user=Depends(get_curr
         raise HTTPException(status_code=403, detail="Forbidden")
     if user["role"] in ("TM", "SeniorTM") and exp.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
-    if exp.get("status") != "Draft":
-        raise HTTPException(status_code=409, detail="Only Draft expenses can be edited")
+    # Submitted expenses are editable — a TM has to be able to correct a
+    # wrong amount or tick "paid with company card" after the fact. What is
+    # NOT editable is an expense already settled by an Approved or Paid
+    # reimbursement report: report totals are computed on read, so an edit
+    # there would silently rewrite a financial record someone signed off.
+    blocking = await _settled_report_for_expense(exp)
+    if blocking:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This expense is part of the {blocking['month']} reimbursement report, "
+                f"which is already {blocking['status']}. Ask a manager to reopen that "
+                f"report before changing the expense."
+            ),
+        )
     update: dict = {}
     for field in ("expense_date", "category", "amount", "vendor", "notes",
                   "paid_with_company_card"):
         v = getattr(body, field, None)
         if v is None:
             continue
-        if field == "category" and v not in ("Petrol", "Food"):
-            raise HTTPException(status_code=400, detail="category must be 'Petrol' or 'Food'")
+        if field == "category" and v not in EXPENSE_CATEGORIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"category must be one of {', '.join(EXPENSE_CATEGORIES)}",
+            )
         if field == "expense_date":
             try:
                 datetime.strptime(v, "%Y-%m-%d")

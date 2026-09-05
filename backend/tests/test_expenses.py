@@ -151,7 +151,7 @@ class TestExpensesEndToEnd:
         assert d.status_code == 200
 
     # ----- submit / approve / reject -----
-    def test_submit_month_locks_drafts(self):
+    def test_submit_month_keeps_expenses_editable(self):
         # create two drafts in 2026-07
         for amt in (10, 20):
             requests.post(f"{API}/expenses", headers=H(self.tm),
@@ -159,11 +159,43 @@ class TestExpensesEndToEnd:
         s = requests.post(f"{API}/expenses/submit-month", headers=H(self.tm), json={"month": "2026-07"}, timeout=10)
         assert s.status_code == 200, s.text
         assert s.json()["submitted"] >= 2
-        # Cannot edit after submit
+        # Submitting no longer freezes an expense: a TM still has to be able to
+        # fix a wrong amount or tick "paid with company card" afterwards. The
+        # lock arrives only once a reimbursement report is Approved or Paid.
         listed = requests.get(f"{API}/expenses?month=2026-07", headers=H(self.tm), timeout=10).json()["expenses"]
         any_submitted = next(e for e in listed if e["status"] == "Submitted")
         u = requests.put(f"{API}/expenses/{any_submitted['id']}", headers=H(self.tm), json={"amount": 99}, timeout=10)
-        assert u.status_code == 409
+        assert u.status_code == 200, u.text
+        assert u.json()["amount"] == 99
+
+    def test_approved_report_locks_its_expenses(self):
+        month = "2026-09"
+        cr = requests.post(f"{API}/expenses", headers=H(self.tm),
+                           data={"expense_date": f"{month}-04", "category": "Food", "amount": "30"},
+                           timeout=10).json()
+        eid = cr["expense"]["id"]
+        # Editable while nothing has settled it.
+        pre = requests.put(f"{API}/expenses/{eid}", headers=H(self.tm), json={"amount": 31}, timeout=10)
+        assert pre.status_code == 200, pre.text
+
+        gen = requests.post(f"{API}/reimbursement/reports/generate", headers=H(self.tm),
+                            json={"month": month}, timeout=30)
+        assert gen.status_code == 200, gen.text
+        rid = gen.json()["id"]
+        # Fuel price is required before a report may be submitted.
+        pt = requests.patch(f"{API}/reimbursement/reports/{rid}", headers=H(self.tm),
+                            json={"fuel_price_per_l": 1.85}, timeout=10)
+        assert pt.status_code == 200, pt.text
+        sub = requests.post(f"{API}/reimbursement/reports/{rid}/submit", headers=H(self.tm), timeout=20)
+        assert sub.status_code == 200, sub.text
+        ap = requests.post(f"{API}/reimbursement/reports/{rid}/approve", headers=H(self.admin),
+                           json={}, timeout=20)
+        assert ap.status_code == 200, ap.text
+
+        # The expense now sits behind a signed-off financial record.
+        locked = requests.put(f"{API}/expenses/{eid}", headers=H(self.tm), json={"amount": 99}, timeout=10)
+        assert locked.status_code == 409, locked.text
+        assert month in locked.json()["detail"]
 
     def test_approve_endpoint_removed(self):
         # The approve/reject endpoints are gone in this version

@@ -5,7 +5,7 @@ import api from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { toast } from "sonner";
-import { Receipt, Plus, ChevronLeft, ChevronRight, FileText, Trash2, Send, Download } from "lucide-react";
+import { Receipt, Plus, ChevronLeft, ChevronRight, FileText, Trash2, Send, Download, Pencil, X, Check } from "lucide-react";
 
 const STATUS_KIND = { Draft: "muted", Submitted: "info" };
 
@@ -160,7 +160,7 @@ function TMExpenses({ personal = false }) {
       toast.info("No drafts to submit this month");
       return;
     }
-    if (!window.confirm(`Submit ${summary.submittable_drafts} draft(s) for ${fmtMonth(month)}? They will be locked from editing.`)) return;
+    if (!window.confirm(`Submit ${summary.submittable_drafts} draft(s) for ${fmtMonth(month)}? You can still correct them until that month's reimbursement report is approved.`)) return;
     setSubmitting(true);
     try {
       const { data } = await api.post("/expenses/submit-month", { month });
@@ -170,6 +170,20 @@ function TMExpenses({ personal = false }) {
       toast.error("Submission failed");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const saveEdit = async (id, patch) => {
+    try {
+      await api.put(`/expenses/${id}`, patch);
+      toast.success("Expense updated");
+      load(month);
+      return true;
+    } catch (err) {
+      // The backend explains WHY (settled report, wrong owner) — surface it
+      // rather than a generic failure the TM can't act on.
+      toast.error(err?.response?.data?.detail || "Could not update this expense");
+      return false;
     }
   };
 
@@ -253,7 +267,7 @@ function TMExpenses({ personal = false }) {
       ) : (
         <div className="rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)", background: "var(--bg-default)" }} data-testid="expenses-list">
           {list.map((e) => (
-            <ExpenseRow key={e.id} expense={e} onDelete={() => remove(e.id)} />
+            <ExpenseRow key={e.id} expense={e} onDelete={() => remove(e.id)} onSave={saveEdit} />
           ))}
         </div>
       )}
@@ -303,7 +317,63 @@ function ReceiptBlobImg({ expenseId, size, onError }) {
   return <img src={src} alt="receipt" data-testid={`receipt-thumb-${expenseId}`} className="rounded object-cover flex-shrink-0" style={{ width: size, height: size }} />;
 }
 
-function ExpenseRow({ expense, onDelete, isManager }) {
+const EDIT_CATEGORIES = ["Petrol", "Food", "Hotel", "Parking", "Tolls", "Other"];
+
+function ExpenseEditor({ expense, onCancel, onSave }) {
+  const [category, setCategory] = useState(expense.category || "Other");
+  const [amount, setAmount] = useState(String(expense.amount ?? ""));
+  const [date, setDate] = useState((expense.expense_date || "").slice(0, 10));
+  const [vendor, setVendor] = useState(expense.vendor || "");
+  const [notes, setNotes] = useState(expense.notes || "");
+  const [card, setCard] = useState(!!expense.paid_with_company_card);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    const amt = parseFloat(amount);
+    if (!Number.isFinite(amt) || amt < 0) { toast.error("Enter a valid amount"); return; }
+    if (!date) { toast.error("Pick a date"); return; }
+    setSaving(true);
+    const ok = await onSave(expense.id, {
+      category, amount: amt, expense_date: date,
+      vendor: vendor.trim(), notes: notes.trim(),
+      paid_with_company_card: card,
+    });
+    setSaving(false);
+    if (ok) onCancel();
+  };
+
+  return (
+    <div className="px-4 py-3 border-b last:border-b-0" style={{ borderColor: "var(--border-default)", background: "var(--bg-paper)" }} data-testid={`expense-editor-${expense.id}`}>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+        <select className="border rounded-md px-2 py-1.5 text-sm bg-white" value={category} onChange={(e) => setCategory(e.target.value)} data-testid={`edit-category-${expense.id}`}>
+          {EDIT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <input type="number" step="0.01" min="0" className="border rounded-md px-2 py-1.5 text-sm bg-white" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" data-testid={`edit-amount-${expense.id}`} />
+        <input type="date" className="border rounded-md px-2 py-1.5 text-sm bg-white" value={date} onChange={(e) => setDate(e.target.value)} data-testid={`edit-date-${expense.id}`} />
+        <input className="border rounded-md px-2 py-1.5 text-sm bg-white" value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor" data-testid={`edit-vendor-${expense.id}`} />
+      </div>
+      <input className="border rounded-md px-2 py-1.5 text-sm bg-white w-full mb-2" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" data-testid={`edit-notes-${expense.id}`} />
+      <label className="flex items-center gap-2 text-sm mb-3 cursor-pointer">
+        <input type="checkbox" checked={card} onChange={(e) => setCard(e.target.checked)} data-testid={`edit-card-${expense.id}`} />
+        <span>Paid with company card <span style={{ color: "var(--text-muted)" }}>(deducted from your reimbursement)</span></span>
+      </label>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} disabled={saving} className="px-3 py-1.5 rounded-md text-sm flex items-center gap-1" style={{ color: "var(--text-secondary)" }} data-testid={`edit-cancel-${expense.id}`}>
+          <X className="w-3.5 h-3.5" /> Cancel
+        </button>
+        <button onClick={submit} disabled={saving} className="px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1" style={{ background: "var(--brand-secondary)", color: "white" }} data-testid={`edit-save-${expense.id}`}>
+          <Check className="w-3.5 h-3.5" /> {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ExpenseRow({ expense, onDelete, onSave, isManager }) {
+  const [editing, setEditing] = useState(false);
+  if (editing && onSave) {
+    return <ExpenseEditor expense={expense} onCancel={() => setEditing(false)} onSave={onSave} />;
+  }
   return (
     <div className="px-4 py-3 flex items-center gap-3 border-b last:border-b-0" style={{ borderColor: "var(--border-default)" }} data-testid={`expense-row-${expense.id}`}>
       <ReceiptThumb expense={expense} />
@@ -312,6 +382,9 @@ function ExpenseRow({ expense, onDelete, isManager }) {
           <span className="font-medium" style={{ color: "var(--brand-primary)" }}>{expense.vendor || "(no vendor)"}</span>
           <span className={`pill pill-${expense.category === "Petrol" ? "info" : "warning"}`}>{expense.category}</span>
           <StatusPill status={expense.status} />
+          {expense.paid_with_company_card && (
+            <span className="pill pill-muted" data-testid={`expense-card-${expense.id}`}>Company card</span>
+          )}
           {isManager && expense.tm_name && <span className="text-xs" style={{ color: "var(--text-muted)" }}>· {expense.tm_name}</span>}
         </div>
         <div className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
@@ -322,11 +395,18 @@ function ExpenseRow({ expense, onDelete, isManager }) {
         <div className="font-display text-lg font-medium" style={{ color: "var(--brand-primary)" }}>
           {fmtAmount(expense.amount)}
         </div>
-        {!isManager && expense.status === "Draft" && (
-          <button onClick={onDelete} data-testid={`expense-delete-${expense.id}`} title="Delete draft" className="p-1 rounded hover:bg-[var(--bg-paper)] mt-1">
-            <Trash2 className="w-3.5 h-3.5" style={{ color: "var(--status-danger)" }} />
-          </button>
-        )}
+        <div className="flex items-center justify-end gap-1 mt-1">
+          {onSave && (
+            <button onClick={() => setEditing(true)} data-testid={`expense-edit-${expense.id}`} title="Edit expense" className="p-1 rounded hover:bg-[var(--bg-paper)]">
+              <Pencil className="w-3.5 h-3.5" style={{ color: "var(--text-secondary)" }} />
+            </button>
+          )}
+          {!isManager && expense.status === "Draft" && (
+            <button onClick={onDelete} data-testid={`expense-delete-${expense.id}`} title="Delete draft" className="p-1 rounded hover:bg-[var(--bg-paper)]">
+              <Trash2 className="w-3.5 h-3.5" style={{ color: "var(--status-danger)" }} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
