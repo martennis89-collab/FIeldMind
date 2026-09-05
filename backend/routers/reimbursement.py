@@ -920,7 +920,13 @@ async def _weekly_km_summary(report: dict) -> list[dict]:
     """Aggregate the report's visits into per-ISO-week km totals so the
     PDF can show a weekly rollup instead of a per-doctor breakdown.
     Doctor-KM values come from the same `doctor_km` collection used by
-    _build_breakdown."""
+    _build_breakdown.
+
+    Each week also carries the doctors seen that week (`doctors`: a list of
+    {name, visits}) so the PDF can show WHO was visited, not just how many
+    times — a KM total on its own is not auditable without the names behind
+    it. Events contribute km but no doctor, so a week can legitimately have
+    km with an empty doctor list."""
     tm_user_id = report.get("tm_user_id")
     month = report.get("month") or ""
     if not tm_user_id or not month:
@@ -935,15 +941,24 @@ async def _weekly_km_summary(report: dict) -> list[dict]:
             {"doctor_id": {"$in": doctor_ids}}, {"_id": 0, "doctor_id": 1, "km_per_visit": 1}
         ).to_list(len(doctor_ids))
     km_by_doc = {r["doctor_id"]: float(r["km_per_visit"] or 0) for r in km_rows}
+    name_by_doc: dict[str, str] = {}
+    if doctor_ids:
+        docs = await db.doctors.find(
+            {"id": {"$in": doctor_ids}}, {"_id": 0, "id": 1, "doctor_name": 1}
+        ).to_list(len(doctor_ids))
+        name_by_doc = {d["id"]: (d.get("doctor_name") or "Unknown") for d in docs}
 
     weekly: dict[str, dict] = {}
     for v in visits:
         did = v.get("doctor_id")
         km = km_by_doc.get(did, 0.0)
         label, key = _iso_week_bucket(v.get("visit_date") or "")
-        row = weekly.setdefault(key, {"label": label, "sort": key, "visits": 0, "km": 0.0})
+        row = weekly.setdefault(key, {"label": label, "sort": key, "visits": 0, "km": 0.0, "doctors": {}})
         row["visits"] += 1
         row["km"] += km
+        if did:
+            nm = name_by_doc.get(did) or "Unknown"
+            row["doctors"][nm] = row["doctors"].get(nm, 0) + 1
 
     # Events attended, using event.km already stored on each event.
     events = await db.events.find({
@@ -956,13 +971,24 @@ async def _weekly_km_summary(report: dict) -> list[dict]:
         if km <= 0:
             continue
         label, key = _iso_week_bucket((e.get("scheduled_at") or "")[:10])
-        row = weekly.setdefault(key, {"label": label, "sort": key, "visits": 0, "km": 0.0})
+        row = weekly.setdefault(key, {"label": label, "sort": key, "visits": 0, "km": 0.0, "doctors": {}})
         row["km"] += km
 
-    return sorted(
-        [{"week": r["label"], "visits": r["visits"], "km": round(r["km"], 2)} for r in weekly.values()],
-        key=lambda x: x["week"],
-    )
+    # Sort on the ISO year-week key, not the display label: a December month
+    # can carry dates whose ISO week belongs to the next year, and "Week 01"
+    # sorts before "Week 49" as a plain string.
+    return [
+        {
+            "week": r["label"],
+            "visits": r["visits"],
+            "km": round(r["km"], 2),
+            "doctors": [
+                {"name": n, "visits": c}
+                for n, c in sorted(r["doctors"].items(), key=lambda kv: (-kv[1], kv[0]))
+            ],
+        }
+        for r in sorted(weekly.values(), key=lambda r: r["sort"])
+    ]
 
 
 def _register_pdf_font():
@@ -1072,19 +1098,43 @@ def _render_reimbursement_pdf(report: dict, weekly: list[dict] | None = None) ->
     story.append(tt)
 
     # Weekly KM summary (replaces the doctor breakdown — user prefers a
-    # rollup view for the exported PDF).
+    # rollup view for the exported PDF). Each week also names the doctors
+    # seen that week, so a reviewer can tie the km back to real visits.
     if weekly:
+        from xml.sax.saxutils import escape as _xesc
+
+        # Doctor lists wrap over several lines, so those cells must be
+        # Paragraphs — a plain string would overflow the column silently.
+        cell = ParagraphStyle("cell", parent=styles["Normal"], fontName=body_font,
+                              fontSize=8, leading=10)
+
+        def _doctor_cell(w: dict):
+            docs = w.get("doctors") or []
+            if not docs:
+                return Paragraph("<i>—</i>", cell)
+            parts = []
+            for d in docs:
+                nm = _xesc(str(d.get("name") or "Unknown"))
+                n = int(d.get("visits") or 0)
+                parts.append(f"{nm} ×{n}" if n > 1 else nm)
+            return Paragraph(", ".join(parts), cell)
+
         story.append(Paragraph("Weekly KM breakdown", h2))
-        w_hdr = ["Week", "Visits", "KM"]
-        w_rows = [w_hdr]
+        w_rows = [["Week", "Visits", "KM", "Doctors visited"]]
         wk_total = 0.0
         for w in weekly:
-            w_rows.append([w["week"], str(w.get("visits", 0)), f"{w['km']:.1f}"])
+            w_rows.append([
+                Paragraph(_xesc(str(w.get("week") or "")), cell),
+                str(w.get("visits", 0)),
+                f"{w['km']:.1f}",
+                _doctor_cell(w),
+            ])
             wk_total += float(w.get("km", 0))
-        w_rows.append(["Total", "", f"{wk_total:.1f}"])
-        wt = Table(w_rows, colWidths=[95*mm, 30*mm, 45*mm])
+        w_rows.append(["Total", "", f"{wk_total:.1f}", ""])
+        wt = Table(w_rows, colWidths=[42*mm, 15*mm, 20*mm, 103*mm])
         wt.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), body_font),
                                 ("FONTSIZE", (0, 0), (-1, -1), 9),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
                                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f4f2ee")),
                                 ("FONTNAME", (0, -1), (-1, -1), bold_font),
                                 ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f4f2ee")),

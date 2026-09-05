@@ -3,6 +3,11 @@ FROM python:3.11-slim
 # Build tools kept in the image (not just build stage) because a couple of
 # requirements (e.g. the `jq` binding) may fall back to compiling from
 # source if no prebuilt wheel matches your platform/architecture.
+# fonts-liberation: python:3.11-slim ships NO TTF fonts, so reportlab fell
+# back to Helvetica and rendered every Cyrillic character in the exported
+# reimbursement PDF as a black square. _register_pdf_font() looks for
+# LiberationSans here (DejaVu is its fallback); without this package the
+# whole Cyrillic-font path is dead code.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     autoconf \
@@ -10,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtool \
     pkg-config \
     curl \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

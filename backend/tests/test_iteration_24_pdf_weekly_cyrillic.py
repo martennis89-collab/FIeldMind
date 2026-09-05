@@ -122,7 +122,14 @@ def test_pdf_render_uses_weekly_and_no_doctor_breakdown():
                    "already_reimbursed": 0.0, "amount_to_reimburse": 20.55},
         "expenses": [],
     }
-    weekly = [{"week": "Week 01  (Jan 06 – Jan 12)", "visits": 3, "km": 42.0}]
+    weekly = [
+        {"week": "Week 01  (Jan 06 – Jan 12)", "visits": 3, "km": 42.0,
+         "doctors": [{"name": "Dr. Jorova", "visits": 2}, {"name": "Dr. Dekov", "visits": 1}]},
+        # A week with km but no doctors (events only), and a legacy row with
+        # no `doctors` key at all — both must render, not explode.
+        {"week": "Week 02  (Jan 13 – Jan 19)", "visits": 0, "km": 18.0, "doctors": []},
+        {"week": "Week 03  (Jan 20 – Jan 26)", "visits": 1, "km": 5.0},
+    ]
     pdf = _render_reimbursement_pdf(fake_report, weekly=weekly)
     assert pdf[:4] == b"%PDF"
     # pypdf gives us decoded text
@@ -135,6 +142,10 @@ def test_pdf_render_uses_weekly_and_no_doctor_breakdown():
     assert "Weekly KM breakdown" in text, f"missing weekly heading: {text[:400]}"
     assert "doctor breakdown" not in text.lower(), "per-doctor breakdown must be gone"
     assert "Reimbursement summary" in text
+    # Each week must name WHO was visited — a km total alone isn't auditable.
+    assert "Doctors visited" in text, f"missing doctors column: {text[:400]}"
+    assert "Dr. Jorova" in text and "Dr. Dekov" in text
+    assert "×2" in text, "repeat visits to the same doctor must show a count"
 
 
 def test_pdf_embeds_cyrillic_font(tm, month_str):
