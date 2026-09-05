@@ -92,7 +92,12 @@ async def main():
         cancelled = m.get("status") == "Cancelled"
         deleted = m.get("deleted_at") is not None
 
-        in_report = in_window and is_mine and not is_demo and not cancelled and not deleted
+        # Demos ARE meetings for counting purposes: _build_report_draft's
+        # meetings_this_week takes every non-cancelled meeting in the window
+        # regardless of is_demo, and reports them again separately under
+        # demos_booked/demos_completed. This check used to exclude them,
+        # which under-reported the count and blamed the wrong filter.
+        in_report = in_window and is_mine and not cancelled and not deleted
         on_calendar = (not deleted) and (cal_owners is None or m.get("tm_user_id") in cal_owners)
 
         reasons = []
@@ -100,12 +105,12 @@ async def main():
             reasons.append(f"outside week (stored {sched[:10]})")
         if not is_mine:
             reasons.append("owned by another TM")
-        if is_demo:
-            reasons.append("is_demo -> counted as demo, not meeting")
         if cancelled:
             reasons.append("cancelled")
         if deleted:
             reasons.append("soft-deleted")
+        if is_demo and in_report:
+            reasons.append("demo (counted as a meeting AND under demos)")
 
         counted += in_report
         shown += on_calendar
