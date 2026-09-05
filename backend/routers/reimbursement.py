@@ -265,6 +265,14 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
     receipt_count_counted = 0
     exception_count_counted = 0
     included_count = 0
+    # Anything the company card already paid for. The TM is owed nothing for
+    # these, so they come off the amount to reimburse at the end. Petrol is
+    # the usual case: the fuel allowance is derived from KM rather than from
+    # the receipt, so the card total has to be deducted from the TOTAL — it
+    # can't simply be left out of a bucket the receipt never entered.
+    company_card_total = 0.0
+    company_card_count = 0
+    card_by_cat: dict[str, float] = {}
     for e in expenses:
         cat = e.get("category") or "Other"
         amt = float(e.get("amount") or 0)
@@ -275,7 +283,13 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
         exp_date = (e.get("expense_date") or "")
         in_current_month = exp_date.startswith(month) if month else False
         is_linked = e.get("reimbursement_report_id") == report_id
-        counts_in_manual = (cat != "Petrol") and (in_current_month or is_linked)
+        in_scope = in_current_month or is_linked
+        counts_in_manual = (cat != "Petrol") and in_scope
+
+        if e.get("paid_with_company_card") and in_scope:
+            company_card_total += amt
+            company_card_count += 1
+            card_by_cat[cat] = round(card_by_cat.get(cat, 0.0) + amt, 2)
 
         if cat == "Petrol":
             petrol_recorded += amt
@@ -295,7 +309,10 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
 
     already = float(report.get("already_reimbursed") or 0.0)
     total_reimbursable = (fuel_cost or 0.0) + manual_total
-    amount_due = round(total_reimbursable - already, 2)
+    company_card_total = round(company_card_total, 2)
+    # Never hand back a negative payout: if the card covered more than the
+    # calculated entitlement, the TM is simply owed nothing.
+    amount_due = round(max(total_reimbursable - already - company_card_total, 0.0), 2)
     return {
         "consumption_l_per_100km": consumption,
         "fuel_price_per_l": price,
@@ -309,6 +326,9 @@ def _compute_totals(report: dict, expenses: list[dict]) -> dict:
         "included_expense_count": included_count,
         "total_reimbursable": round(total_reimbursable, 2) if price is not None else None,
         "already_reimbursed": round(already, 2),
+        "company_card_total": company_card_total,
+        "company_card_count": company_card_count,
+        "company_card_by_category": card_by_cat,
         "amount_to_reimburse": amount_due if price is not None else None,
         "receipt_invoice_count": receipt_count_counted,
         "exception_count": exception_count_counted,
@@ -389,7 +409,8 @@ async def searchable_expenses(
     rows = await db.expenses.find(
         match,
         {"_id": 0, "id": 1, "expense_date": 1, "category": 1, "amount": 1, "currency": 1,
-         "vendor": 1, "receipt_image_id": 1, "reimbursement_report_id": 1, "notes": 1},
+         "vendor": 1, "receipt_image_id": 1, "reimbursement_report_id": 1, "notes": 1,
+         "paid_with_company_card": 1},
     ).sort([("expense_date", -1)]).to_list(max(1, min(limit, 100)))
     return {"results": rows, "count": len(rows)}
 
@@ -1087,6 +1108,7 @@ def _render_reimbursement_pdf(report: dict, weekly: list[dict] | None = None) ->
         ["Fuel price / L", _eur(t.get("fuel_price_per_l")), "Litres used", f"{t.get('litres_used', 0):.2f} L"],
         ["Fuel cost", _eur(t.get("fuel_cost")), "Manual expenses", _eur(t.get("manual_expenses_total"))],
         ["Total reimbursable", _eur(t.get("total_reimbursable")), "Already reimbursed", _eur(t.get("already_reimbursed"))],
+        ["", "", "Paid by company card", "− " + _eur(t.get("company_card_total") or 0.0)],
         ["", "", "Amount to reimburse", _eur(t.get("amount_to_reimburse"))],
     ]
     tt = Table(totals_tbl, colWidths=[42*mm, 45*mm, 42*mm, 46*mm])
@@ -1142,18 +1164,42 @@ def _render_reimbursement_pdf(report: dict, weekly: list[dict] | None = None) ->
                                 ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e6e2da"))]))
         story.append(wt)
 
+    # Company-card deduction. Spelled out on its own so a reviewer can see
+    # exactly what was taken off the payout and why, rather than finding a
+    # smaller number at the bottom of the summary with no explanation.
+    card_total = float(t.get("company_card_total") or 0.0)
+    if card_total:
+        story.append(Paragraph("Paid by company card (not reimbursed)", h2))
+        card_rows = [["Category", "Amount"]]
+        for cat, amt in sorted((t.get("company_card_by_category") or {}).items(),
+                               key=lambda kv: -kv[1]):
+            card_rows.append([cat, _eur(amt)])
+        card_rows.append([f"Deducted from payout ({t.get('company_card_count', 0)} expense(s))",
+                          "− " + _eur(card_total)])
+        ct = Table(card_rows, colWidths=[130*mm, 45*mm])
+        ct.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), body_font),
+                                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f4f2ee")),
+                                ("FONTNAME", (0, -1), (-1, -1), bold_font),
+                                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f4f2ee")),
+                                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                                ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#d9d6cf")),
+                                ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e6e2da"))]))
+        story.append(ct)
+
     exps = report.get("expenses", []) or []
     if exps:
         story.append(Paragraph("Expenses", h2))
-        e_hdr = ["Category", "Vendor", "Date", "Amount", "Receipt"]
+        e_hdr = ["Category", "Vendor", "Date", "Amount", "Paid by", "Receipt"]
         e_rows = [e_hdr]
         for e in exps:
             e_rows.append([e.get("category") or "—",
                            e.get("vendor") or "—",
                            (e.get("expense_date") or "—")[:10],
                            _eur(e.get("amount")),
+                           "Company card" if e.get("paid_with_company_card") else "Own money",
                            "Yes" if e.get("receipt_image_id") else ("Exception" if e.get("exception_approved") else "MISSING")])
-        et = Table(e_rows, colWidths=[25*mm, 55*mm, 25*mm, 30*mm, 30*mm])
+        et = Table(e_rows, colWidths=[22*mm, 44*mm, 22*mm, 26*mm, 32*mm, 24*mm])
         et.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), body_font),
                                 ("FONTSIZE", (0, 0), (-1, -1), 8),
                                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f4f2ee")),

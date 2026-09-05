@@ -82,6 +82,7 @@ async def create_expense(
     amount: float = Form(...),
     vendor: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
+    paid_with_company_card: bool = Form(False),
     reimbursement_report_id: Optional[str] = Form(None),
     receipt: Optional[UploadFile] = File(None),
     user=Depends(get_current_user),
@@ -142,6 +143,7 @@ async def create_expense(
         "currency": "EUR",
         "vendor": (vendor or "").strip() or None,
         "notes": (notes or "").strip() or None,
+        "paid_with_company_card": bool(paid_with_company_card),
         "receipt_image_id": image_id,
         "receipt_mime": image_mime,
         "receipt_hash": image_hash,
@@ -298,7 +300,8 @@ async def update_expense(exp_id: str, body: ExpenseUpdate, user=Depends(get_curr
     if exp.get("status") != "Draft":
         raise HTTPException(status_code=409, detail="Only Draft expenses can be edited")
     update: dict = {}
-    for field in ("expense_date", "category", "amount", "vendor", "notes"):
+    for field in ("expense_date", "category", "amount", "vendor", "notes",
+                  "paid_with_company_card"):
         v = getattr(body, field, None)
         if v is None:
             continue

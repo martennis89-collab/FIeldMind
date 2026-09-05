@@ -616,6 +616,7 @@ class ExpenseUpdate(BaseModel):
     amount: Optional[float] = None
     vendor: Optional[str] = None
     notes: Optional[str] = None
+    paid_with_company_card: Optional[bool] = None
 
 
 class Expense(BaseModel):
@@ -631,6 +632,10 @@ class Expense(BaseModel):
     currency: str = "EUR"
     vendor: Optional[str] = None
     notes: Optional[str] = None
+    # True when the company card footed this bill, so the TM is owed nothing
+    # for it. Fuel is on the company card; food is still paid personally.
+    # The monthly report deducts these from the amount to reimburse.
+    paid_with_company_card: bool = False
     receipt_image_id: Optional[str] = None
     receipt_mime: Optional[str] = None
     receipt_hash: Optional[str] = None

@@ -46,6 +46,14 @@ export default function LogExpense() {
   const [duplicateOf, setDuplicateOf] = useState(null);
 
   const [category, setCategory] = useState(reimbursementReportId ? "Food" : "Petrol");
+  // Fuel goes on the company card, food doesn't — so default the toggle from
+  // the category, but stop guessing the moment the user sets it themselves.
+  const [paidWithCard, setPaidWithCard] = useState(!reimbursementReportId);
+  const cardTouched = useRef(false);
+  const pickCategory = (v) => {
+    setCategory(v);
+    if (!cardTouched.current) setPaidWithCard(v === "Petrol");
+  };
   const [date, setDate] = useState(todayISO());
   const [amount, setAmount] = useState("");
   const [vendor, setVendor] = useState("");
@@ -94,7 +102,7 @@ export default function LogExpense() {
       if (ex.category_hint) {
         // In reimbursement flow, Petrol is not a manual expense — auto-computed from KM.
         if (!(reimbursementReportId && ex.category_hint === "Petrol")) {
-          setCategory(ex.category_hint);
+          pickCategory(ex.category_hint);
           populated.add("category_hint");
         }
       }
@@ -125,6 +133,7 @@ export default function LogExpense() {
       fd.append("amount", String(amount));
       if (vendor.trim()) fd.append("vendor", vendor.trim());
       if (notes.trim()) fd.append("notes", notes.trim());
+      fd.append("paid_with_company_card", paidWithCard ? "true" : "false");
       if (file) fd.append("receipt", file);
       if (reimbursementReportId) fd.append("reimbursement_report_id", reimbursementReportId);
       const { data } = await api.post("/expenses", fd);
@@ -215,7 +224,7 @@ export default function LogExpense() {
               <button
                 key={opt.v}
                 type="button"
-                onClick={() => { setCategory(opt.v); clearAiField("category_hint"); }}
+                onClick={() => { pickCategory(opt.v); clearAiField("category_hint"); }}
                 data-testid={`cat-${opt.v.toLowerCase()}`}
                 className="px-3 py-2 rounded-md text-sm font-medium transition-all"
                 style={{
@@ -252,6 +261,27 @@ export default function LogExpense() {
         <div className="col-span-2">
           <Label className="mb-1 block flex items-center">Vendor (optional)<ConfBadge pct={fieldConf("vendor")} testId="vendor-conf-badge" /></Label>
           <Input value={vendor} onChange={(e) => { setVendor(e.target.value); clearAiField("vendor"); }} placeholder="e.g. Shell, Starbucks" className="bg-white" data-testid="vendor-input" />
+        </div>
+        <div className="col-span-2">
+          <label
+            className="flex items-start gap-2 p-3 rounded-md cursor-pointer"
+            style={{ background: "white", border: "1px solid var(--border)" }}
+            data-testid="company-card-toggle"
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={paidWithCard}
+              onChange={(e) => { cardTouched.current = true; setPaidWithCard(e.target.checked); }}
+              data-testid="company-card-checkbox"
+            />
+            <span>
+              <span className="text-sm font-medium">Paid with company card</span>
+              <span className="block text-xs" style={{ color: "var(--text-muted)" }}>
+                The company already paid, so this is deducted from your monthly reimbursement.
+              </span>
+            </span>
+          </label>
         </div>
         <div className="col-span-2">
           <Label className="mb-1 block">Notes (optional)</Label>

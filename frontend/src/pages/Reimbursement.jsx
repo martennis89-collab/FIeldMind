@@ -454,8 +454,28 @@ function ReportDrawer({ id, onClose, onChange, user }) {
           <Stat label="Manual expenses" value={fmtEUR(t.manual_expenses_total)} />
           <Stat label="Total reimbursable" value={fmtEUR(t.total_reimbursable)} />
           <Stat label="Already reimbursed" value={fmtEUR(t.already_reimbursed)} />
+          <Stat label="Paid by company card" value={`− ${fmtEUR(t.company_card_total || 0)}`} testId="stat-company-card" />
           <Stat label="To reimburse" value={fmtEUR(t.amount_to_reimburse)} strong />
         </div>
+
+        {/* The company card already settled these, so they are taken off the
+            payout rather than paid again. Fuel is on the card; food is not. */}
+        {!!t.company_card_total && (
+          <div className="rounded-md border p-4 mb-6" style={{ background: "var(--bg-paper)", borderColor: "var(--border-default)" }} data-testid="company-card-breakdown">
+            <div className="text-xs uppercase tracking-widest mb-3" style={{ color: "var(--text-muted)" }}>
+              <Receipt className="w-3 h-3 inline mr-1" /> Paid by company card &mdash; not reimbursed
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {Object.entries(t.company_card_by_category || {}).map(([cat, amt]) => (
+                <Stat key={cat} label={cat} value={fmtEUR(amt)} testId={`stat-card-${cat.toLowerCase()}`} />
+              ))}
+            </div>
+            <div className="text-[11px] mt-3" style={{ color: "var(--text-muted)" }}>
+              {t.company_card_count || 0} expense{(t.company_card_count || 0) === 1 ? "" : "s"} totalling {fmtEUR(t.company_card_total)} were
+              paid with the company card and deducted from the amount to reimburse.
+            </div>
+          </div>
+        )}
 
         {/* Phase O.3 — reconciliation between actual receipts logged this
             month and the km-based fuel model. Helps the TM/Senior spot when
