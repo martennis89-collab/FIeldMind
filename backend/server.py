@@ -329,15 +329,6 @@ def _completed_meeting_q(
     return q
 
 
-def _legacy_visit_q(extra: dict | None = None, date_range: dict | None = None) -> dict:
-    q = dict(_NOT_DELETED)
-    if date_range:
-        q["visit_date"] = date_range
-    if extra:
-        q.update(extra)
-    return q
-
-
 def _as_activity(doc: dict | None) -> dict | None:
     """Normalise a meeting into the visit-shaped dict the rest of the app
     still reads (`visit_date`). Visits pass through unchanged."""
@@ -349,31 +340,28 @@ def _as_activity(doc: dict | None) -> dict | None:
 
 
 async def _find_activity(extra=None, date_range=None, sort_desc=True, limit=5000, statuses=("Completed",)) -> list[dict]:
-    """Meetings + not-yet-migrated visits, newest first. See
-    _completed_meeting_q for what `statuses` selects."""
-    # The two halves are independent, so issue them together instead of
-    # paying two sequential round trips to a remote Atlas cluster. Network
-    # latency dominates here — this is the helper behind the calendar,
-    # reports, reimbursement and every doctor page.
-    meetings, visits = await asyncio.gather(
-        db.meetings.find(
+    """Doctor activity, newest first. See _completed_meeting_q for what
+    `statuses` selects.
+
+    This used to union in the legacy `visits` collection, because meetings
+    and visits both recorded activity while the migration was outstanding.
+    That migration has run: every live visit is now a Completed meeting and
+    the originals are soft-deleted, so the visits half matched nothing on
+    every call — a wasted query on the busiest path in the app. Nothing
+    writes visits any more, so it cannot come back.
+    """
+    rows = [
+        _as_activity(m)
+        for m in await db.meetings.find(
             _completed_meeting_q(extra, date_range, statuses), {"_id": 0}
-        ).to_list(limit),
-        db.visits.find(
-            _legacy_visit_q(extra, date_range), {"_id": 0}
-        ).to_list(limit),
-    )
-    rows = [_as_activity(m) for m in meetings] + visits
+        ).to_list(limit)
+    ]
     rows.sort(key=lambda r: r.get("visit_date") or "", reverse=sort_desc)
     return rows[:limit]
 
 
 async def _count_activity(extra=None, date_range=None) -> int:
-    meetings, visits = await asyncio.gather(
-        db.meetings.count_documents(_completed_meeting_q(extra, date_range)),
-        db.visits.count_documents(_legacy_visit_q(extra, date_range)),
-    )
-    return meetings + visits
+    return await db.meetings.count_documents(_completed_meeting_q(extra, date_range))
 
 
 _ENRICH_SEMAPHORE = asyncio.Semaphore(10)
@@ -435,30 +423,23 @@ async def _enrich_doctors_batch(docs: list) -> list:
                 "overdue_promises": {"$sum": {"$cond": [{"$lt": ["$due_date", today]}, 1, 0]}},
             }},
         ]).to_list(None),
-        # Completed meetings and any not-yet-migrated visits, unioned in the
-        # DB via $unionWith so this stays one round-trip per aggregate.
-        # $addFields aliases scheduled_at -> visit_date so both halves share
-        # the shape the downstream code already expects.
+        # Completed meetings per doctor this quarter. Both of these
+        # aggregates used to $unionWith the legacy `visits` collection while
+        # the migration was outstanding; it has run, so that half now scans
+        # a collection of soft-deleted rows and matches nothing.
         db.meetings.aggregate([
             {"$match": {"doctor_id": {"$in": doc_ids}, "status": "Completed", **_NOT_DELETED,
                         "scheduled_at": {"$gte": quarter_start.isoformat()}}},
             {"$project": {"doctor_id": 1}},
-            {"$unionWith": {"coll": "visits", "pipeline": [
-                {"$match": {"doctor_id": {"$in": doc_ids}, **_NOT_DELETED,
-                            "visit_date": {"$gte": quarter_start.isoformat()}}},
-                {"$project": {"doctor_id": 1}},
-            ]}},
             {"$group": {"_id": "$doctor_id", "count": {"$sum": 1}}},
         ]).to_list(None),
         # Per-doctor top-10-most-recent activity in one pass: sort globally
         # first, then group + cap to 10 — $group preserves the pre-sorted
-        # order within each group's $push.
+        # order within each group's $push. $addFields keeps the visit_date
+        # alias the downstream code expects.
         db.meetings.aggregate([
             {"$match": {"doctor_id": {"$in": doc_ids}, "status": "Completed", **_NOT_DELETED}},
             {"$addFields": {"visit_date": "$scheduled_at"}},
-            {"$unionWith": {"coll": "visits", "pipeline": [
-                {"$match": {"doctor_id": {"$in": doc_ids}, **_NOT_DELETED}},
-            ]}},
             {"$sort": {"visit_date": -1}},
             {"$group": {"_id": "$doctor_id", "visits": {"$push": "$$ROOT"}}},
             {"$project": {"visits": {"$slice": ["$visits", 10]}}},

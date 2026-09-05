@@ -238,12 +238,23 @@ async def seed_demo(db) -> dict:
                 "market_signals": [],
                 "privacy_warnings": [],
             }
+            # Visits were retired in favour of meetings: a Completed meeting
+            # IS "this interaction happened". Seed the same demo history in
+            # the shape the app actually reads, so seeded data behaves
+            # exactly like real data.
             visit = {
                 "id": visit_id,
                 "doctor_id": doc["id"],
+                "doctor_name": doc.get("doctor_name"),
                 "tm_user_id": doc["assigned_tm_id"],
                 "team_id": team_id,
-                "visit_date": _iso(vdate),
+                "scheduled_at": _iso(vdate),
+                "completed_at": _iso(vdate),
+                "status": "Completed",
+                "is_demo": False,
+                "track_type": "General",
+                "deleted_at": None,
+                "is_draft": False,
                 "visit_type": "In-person visit",
                 "free_text_note": tpl["note"],
                 "confirmed_topics": tpl["topics"],
@@ -284,7 +295,7 @@ async def seed_demo(db) -> dict:
     await db.teams.insert_one(team)
     await db.doctors.insert_many(doctors)
     if visits:
-        await db.visits.insert_many(visits)
+        await db.meetings.insert_many(visits)
     if tasks:
         await db.tasks.insert_many(tasks)
 
@@ -292,7 +303,7 @@ async def seed_demo(db) -> dict:
         "users": len(users),
         "teams": 1,
         "doctors": len(doctors),
-        "visits": len(visits),
+        "meetings": len(visits),
         "tasks": len(tasks),
     }
     return report
