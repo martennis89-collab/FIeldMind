@@ -81,6 +81,12 @@ EXPENSE_CATEGORIES = ("Petrol", "Food", "Hotel", "Parking", "Tolls", "Other")
 # numbers are expected to move.
 SETTLED_REPORT_STATUSES = ("Approved", "Paid")
 
+# Roles trusted to correct an expense after its report was signed off. Senior
+# TMs are in here because they are the ones who approve their sub-team's
+# reports — the person who spots a wrong company-card flag is usually the one
+# who approved it, and sending them to an Admin to fix one row helps nobody.
+SETTLED_OVERRIDE_ROLES = ("SeniorTM", "Admin", "Owner")
+
 
 async def _settled_report_for_expense(exp: dict) -> Optional[dict]:
     """The Approved/Paid reimbursement report this expense belongs to, if any.
@@ -324,26 +330,30 @@ async def update_expense(exp_id: str, body: ExpenseUpdate, user=Depends(get_curr
         raise HTTPException(status_code=404, detail="Expense not found")
     if not await _expense_visible_to(user, exp):
         raise HTTPException(status_code=403, detail="Forbidden")
-    if user["role"] in ("TM", "SeniorTM") and exp.get("tm_user_id") != user["id"]:
+    # A TM only ever edits their own. A Senior TM edits anything
+    # `_expense_visible_to` already shows them — their own plus their team's —
+    # which is the same scope they review and approve on.
+    if user["role"] == "TM" and exp.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     # Submitted expenses are editable — a TM has to be able to correct a
     # wrong amount or tick "paid with company card" after the fact. An
     # expense settled by an Approved or Paid report is different: totals are
     # computed on read, so an edit there rewrites a signed-off record.
     #
-    # Admin/Owner may still do it. Mistakes surface after approval — most
+    # Senior TM, Admin and Owner may still do it. Mistakes surface after
+    # approval — most
     # often an expense the company card actually paid for, logged as out of
     # pocket — and the alternative is reopening a whole report to fix one
     # row. The override is stamped into the audit trail below, because the
     # money it moves has already been reported as owed.
     blocking = await _settled_report_for_expense(exp)
-    if blocking and user["role"] not in ("Admin", "Owner"):
+    if blocking and user["role"] not in SETTLED_OVERRIDE_ROLES:
         raise HTTPException(
             status_code=409,
             detail=(
                 f"This expense is part of the {blocking['month']} reimbursement report, "
-                f"which is already {blocking['status']}. Ask an Admin to correct it, or "
-                f"have that report reopened first."
+                f"which is already {blocking['status']}. Ask your Senior TM or an Admin "
+                f"to correct it, or have that report reopened first."
             ),
         )
     update: dict = {}
