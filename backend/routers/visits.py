@@ -62,6 +62,7 @@ from server import (
     _build_report_draft,
     _month_of,
     _expense_visible_to,
+    _managed_tm_ids_for,
     _company_id_for,
     _company_query_for,
     _apply_company_scope,
@@ -307,13 +308,23 @@ async def list_visits(
 ):
     q = dict(_company_query_for(user))
     q["deleted_at"] = None
-    if user["role"] in ("TM", "SeniorTM"):
+    allowed_ids = None
+    if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
+    elif user["role"] == "SeniorTM":
+        allowed_ids = await _managed_tm_ids_for(user) or [user["id"]]
+        q["tm_user_id"] = {"$in": allowed_ids}
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
     if doctor_id:
         q["doctor_id"] = doctor_id
     if tm_user_id and user["role"] in ("Admin", "Manager", "SeniorTM"):
+        # A drill-down narrows the caller's scope; it must never replace it.
+        # This assignment used to overwrite the Senior TM's own-id filter
+        # outright — and unlike Manager there is no team_id left to constrain
+        # it — so any user's visits were one query parameter away.
+        if allowed_ids is not None and tm_user_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="TM not in your sub-team")
         q["tm_user_id"] = tm_user_id
     q.pop("deleted_at", None)  # _find_activity applies its own not-deleted filter
     visits = await _find_activity(q, limit=500)

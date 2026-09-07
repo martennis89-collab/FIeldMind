@@ -54,6 +54,7 @@ from server import (
     _build_report_draft,
     _month_of,
     _expense_visible_to,
+    _managed_tm_ids_for,
     _add_business_days,
     _company_id_for,
     _company_query_for,
@@ -133,9 +134,10 @@ async def list_meetings(
     if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
     elif user["role"] == "SeniorTM":
-        # Phase L — self + direct-report TMs (not the whole team).
-        sub = await db.users.find({"manager_user_id": user["id"], "role": "TM"}, {"_id": 0, "id": 1}).to_list(500)
-        q["tm_user_id"] = {"$in": [user["id"]] + [s["id"] for s in sub]}
+        # Phase L — self + direct-report TMs (not the whole team). Same rule
+        # as every other list endpoint; kept in one helper so the four of them
+        # cannot drift apart again.
+        q["tm_user_id"] = {"$in": await _managed_tm_ids_for(user) or [user["id"]]}
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
     # Admin/Owner sees all

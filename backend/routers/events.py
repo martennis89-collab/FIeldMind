@@ -54,6 +54,7 @@ from server import (
     _build_report_draft,
     _month_of,
     _expense_visible_to,
+    _managed_tm_ids_for,
     _add_business_days,
     _company_id_for,
     _company_query_for,
@@ -121,6 +122,10 @@ async def list_events(
     q: dict = dict(_company_query_for(user))
     if user["role"] == "TM":
         q["tm_user_id"] = user["id"]
+    elif user["role"] == "SeniorTM":
+        # There was no branch here at all, so a Senior TM fell through to the
+        # bare company scope and saw every event in the business.
+        q["tm_user_id"] = {"$in": await _managed_tm_ids_for(user) or [user["id"]]}
     elif user["role"] == "Manager":
         q["team_id"] = user.get("team_id")
     now = _now_iso()

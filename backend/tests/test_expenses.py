@@ -265,42 +265,51 @@ class TestExpensesEndToEnd:
         assert restored["company_card_total"] == 0, restored
         assert restored["amount_to_reimburse"] == 120, restored
 
-    def test_seniortm_can_fix_their_teams_settled_expense(self):
+    def test_seniortm_can_fix_their_subteams_settled_expense(self):
         """A Senior TM approves their sub-team's reports, so they are usually
         the one who spots a wrong company-card flag. They get the same
-        override an Admin has, over the team they already oversee."""
+        override an Admin has, over the TMs who report to them."""
         month = _quiet_month(20)
         team_id = requests.get(f"{API}/auth/me", headers=H(self.tm), timeout=10).json().get("team_id")
 
-        # No Senior TM in the demo seed, so make one on the TM's team. Expense
-        # visibility for a Senior TM keys off team_id, which is what the
-        # override then rides on.
-        email = f"snr.{uuid.uuid4().hex[:8]}@expenses.example.com"
+        # No Senior TM in the demo seed, so build the pair: a Senior TM and a
+        # TM who reports to them. The reporting line is what grants access —
+        # a shared team_id does not.
+        snr_email = f"snr.{uuid.uuid4().hex[:8]}@expenses.example.com"
         mk = requests.post(f"{API}/users", headers=H(self.admin), timeout=20, json={
-            "full_name": "Senior Override", "email": email, "password": "snr-pass-123",
+            "full_name": "Senior Override", "email": snr_email, "password": "snr-pass-123",
             "role": "SeniorTM", "team_id": team_id,
         })
         assert mk.status_code == 200, mk.text
-        senior = _login(email, "snr-pass-123")
+        senior = _login(snr_email, "snr-pass-123")
+        senior_id = requests.get(f"{API}/auth/me", headers=H(senior), timeout=15).json()["id"]
 
-        cr = requests.post(f"{API}/expenses", headers=H(self.tm),
+        tm_email = f"sub.{uuid.uuid4().hex[:8]}@expenses.example.com"
+        mk2 = requests.post(f"{API}/users", headers=H(self.admin), timeout=20, json={
+            "full_name": "Subteam TM", "email": tm_email, "password": "sub-pass-123",
+            "role": "TM", "team_id": team_id, "manager_user_id": senior_id,
+        })
+        assert mk2.status_code == 200, mk2.text
+        sub_tm = _login(tm_email, "sub-pass-123")
+
+        cr = requests.post(f"{API}/expenses", headers=H(sub_tm),
                            data={"expense_date": f"{month}-08", "category": "Parking", "amount": "40"},
                            timeout=10).json()
         eid = cr["expense"]["id"]
 
-        gen = requests.post(f"{API}/reimbursement/reports/generate", headers=H(self.tm),
+        gen = requests.post(f"{API}/reimbursement/reports/generate", headers=H(sub_tm),
                             json={"month": month}, timeout=30)
         assert gen.status_code == 200, gen.text
         rid = gen.json()["id"]
-        requests.patch(f"{API}/reimbursement/reports/{rid}", headers=H(self.tm),
+        requests.patch(f"{API}/reimbursement/reports/{rid}", headers=H(sub_tm),
                        json={"fuel_price_per_l": 1.85}, timeout=10)
-        requests.post(f"{API}/reimbursement/reports/{rid}/submit", headers=H(self.tm), timeout=20)
+        requests.post(f"{API}/reimbursement/reports/{rid}/submit", headers=H(sub_tm), timeout=20)
         ap = requests.post(f"{API}/reimbursement/reports/{rid}/approve", headers=H(self.admin),
                            json={}, timeout=20)
         assert ap.status_code == 200, ap.text
 
         # The TM who owns it still cannot touch it after sign-off.
-        assert requests.put(f"{API}/expenses/{eid}", headers=H(self.tm),
+        assert requests.put(f"{API}/expenses/{eid}", headers=H(sub_tm),
                             json={"paid_with_company_card": True}, timeout=10).status_code == 409
 
         # An unrelated TM is refused outright — the override widened roles,
@@ -316,7 +325,6 @@ class TestExpensesEndToEnd:
                              timeout=15).json()["totals"]
         assert after["company_card_total"] == 40, after
         assert after["company_card_by_category"].get("Parking") == 40, after
-
     def test_approve_endpoint_removed(self):
         # The approve/reject endpoints are gone in this version
         cr = requests.post(f"{API}/expenses", headers=H(self.tm),

@@ -331,8 +331,8 @@ async def update_expense(exp_id: str, body: ExpenseUpdate, user=Depends(get_curr
     if not await _expense_visible_to(user, exp):
         raise HTTPException(status_code=403, detail="Forbidden")
     # A TM only ever edits their own. A Senior TM edits anything
-    # `_expense_visible_to` already shows them — their own plus their team's —
-    # which is the same scope they review and approve on.
+    # `_expense_visible_to` already shows them — their own plus the TMs who
+    # report to them — which is the same scope they review and approve on.
     if user["role"] == "TM" and exp.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     # Submitted expenses are editable — a TM has to be able to correct a

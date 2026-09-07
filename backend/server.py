@@ -1771,13 +1771,12 @@ async def _expense_visible_to(user, exp: dict) -> bool:
     if role == "Manager":
         return exp.get("team_id") == user.get("team_id")
     if role == "SeniorTM":
-        # Phase L hybrid — SeniorTM sees own expenses (TM scope) OR any
-        # expense whose team_id matches (Manager scope). Union guarantees
-        # SeniorTM ≥ union(TM, Manager).
-        return (
-            exp.get("tm_user_id") == user["id"]
-            or exp.get("team_id") == user.get("team_id")
-        )
+        # Own, plus the TMs who report to them — the same set the list
+        # endpoints already get from `_managed_tm_ids_for`. This used to match
+        # on team_id, which was wider than the role: it exposed peer Senior
+        # TMs and TMs sitting on the team who report to somebody else.
+        ids = await _managed_tm_ids_for(user) or [user["id"]]
+        return exp.get("tm_user_id") in ids
     return exp.get("tm_user_id") == user["id"]
 
 
