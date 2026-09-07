@@ -327,18 +327,23 @@ async def update_expense(exp_id: str, body: ExpenseUpdate, user=Depends(get_curr
     if user["role"] in ("TM", "SeniorTM") and exp.get("tm_user_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     # Submitted expenses are editable — a TM has to be able to correct a
-    # wrong amount or tick "paid with company card" after the fact. What is
-    # NOT editable is an expense already settled by an Approved or Paid
-    # reimbursement report: report totals are computed on read, so an edit
-    # there would silently rewrite a financial record someone signed off.
+    # wrong amount or tick "paid with company card" after the fact. An
+    # expense settled by an Approved or Paid report is different: totals are
+    # computed on read, so an edit there rewrites a signed-off record.
+    #
+    # Admin/Owner may still do it. Mistakes surface after approval — most
+    # often an expense the company card actually paid for, logged as out of
+    # pocket — and the alternative is reopening a whole report to fix one
+    # row. The override is stamped into the audit trail below, because the
+    # money it moves has already been reported as owed.
     blocking = await _settled_report_for_expense(exp)
-    if blocking:
+    if blocking and user["role"] not in ("Admin", "Owner"):
         raise HTTPException(
             status_code=409,
             detail=(
                 f"This expense is part of the {blocking['month']} reimbursement report, "
-                f"which is already {blocking['status']}. Ask a manager to reopen that "
-                f"report before changing the expense."
+                f"which is already {blocking['status']}. Ask an Admin to correct it, or "
+                f"have that report reopened first."
             ),
         )
     update: dict = {}
@@ -364,7 +369,16 @@ async def update_expense(exp_id: str, body: ExpenseUpdate, user=Depends(get_curr
         return exp
     update["updated_at"] = _now_iso()
     await db.expenses.update_one({"id": exp_id}, {"$set": update})
-    await _audit(user, "update", "expense", exp_id, prev=exp, new=update)
+    audit_new = dict(update)
+    if blocking:
+        # Findable later: this edit changed the numbers behind a report that
+        # had already been signed off.
+        audit_new["settled_report_override"] = {
+            "report_id": blocking.get("id"),
+            "month": blocking.get("month"),
+            "status": blocking.get("status"),
+        }
+    await _audit(user, "update", "expense", exp_id, prev=exp, new=audit_new)
     fresh = await db.expenses.find_one({"id": exp_id}, {"_id": 0})
     return fresh
 

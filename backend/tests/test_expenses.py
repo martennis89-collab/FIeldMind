@@ -1,6 +1,8 @@
 """Iteration-8 backend tests: expense tracking module."""
 import io
 import os
+from datetime import date
+
 import requests
 from PIL import Image, ImageDraw
 
@@ -16,6 +18,19 @@ def _login(email, password):
 
 def H(t):
     return {"Authorization": f"Bearer {t}"}
+
+
+def _quiet_month(offset):
+    """A month far enough ahead that no seeded visit can fall in it.
+
+    A generated report for such a month has an empty doctor breakdown, so it
+    submits without anyone filling in the Missing KM table. Derived from
+    today rather than hardcoded on purpose: the demo seed places visits
+    relative to now, so a literal month silently drifts into the seeded
+    range and the test starts failing on a date it had always passed on.
+    """
+    m = date.today().month - 1 + offset
+    return f"{date.today().year + m // 12}-{m % 12 + 1:02d}"
 
 
 def _make_jpeg(text="Test receipt"):
@@ -169,7 +184,7 @@ class TestExpensesEndToEnd:
         assert u.json()["amount"] == 99
 
     def test_approved_report_locks_its_expenses(self):
-        month = "2026-09"
+        month = _quiet_month(18)
         cr = requests.post(f"{API}/expenses", headers=H(self.tm),
                            data={"expense_date": f"{month}-04", "category": "Food", "amount": "30"},
                            timeout=10).json()
@@ -196,6 +211,58 @@ class TestExpensesEndToEnd:
         locked = requests.put(f"{API}/expenses/{eid}", headers=H(self.tm), json={"amount": 99}, timeout=10)
         assert locked.status_code == 409, locked.text
         assert month in locked.json()["detail"]
+
+    def test_admin_can_fix_card_flag_after_approval(self):
+        """The point of the Admin override: an expense the company card
+        actually paid for, discovered only after the report was approved.
+        Flipping the flag has to move the money, not just the boolean."""
+        month = _quiet_month(19)
+        cr = requests.post(f"{API}/expenses", headers=H(self.tm),
+                           data={"expense_date": f"{month}-06", "category": "Hotel", "amount": "120"},
+                           timeout=10).json()
+        eid = cr["expense"]["id"]
+
+        gen = requests.post(f"{API}/reimbursement/reports/generate", headers=H(self.tm),
+                            json={"month": month}, timeout=30)
+        assert gen.status_code == 200, gen.text
+        rid = gen.json()["id"]
+        requests.patch(f"{API}/reimbursement/reports/{rid}", headers=H(self.tm),
+                       json={"fuel_price_per_l": 1.85}, timeout=10)
+        requests.post(f"{API}/reimbursement/reports/{rid}/submit", headers=H(self.tm), timeout=20)
+        ap = requests.post(f"{API}/reimbursement/reports/{rid}/approve", headers=H(self.admin),
+                           json={}, timeout=20)
+        assert ap.status_code == 200, ap.text
+        before = ap.json()["totals"]
+        assert before["company_card_total"] == 0
+        assert before["amount_to_reimburse"] == 120
+
+        # The TM stays locked out of a signed-off report.
+        tm_try = requests.put(f"{API}/expenses/{eid}", headers=H(self.tm),
+                              json={"paid_with_company_card": True}, timeout=10)
+        assert tm_try.status_code == 409, tm_try.text
+
+        # An Admin can correct it.
+        fix = requests.put(f"{API}/expenses/{eid}", headers=H(self.admin),
+                           json={"paid_with_company_card": True}, timeout=10)
+        assert fix.status_code == 200, fix.text
+        assert fix.json()["paid_with_company_card"] is True
+
+        # Totals are computed on read, so the report reflects it immediately:
+        # counted as card spend, and off what the TM is owed.
+        after = requests.get(f"{API}/reimbursement/reports/{rid}", headers=H(self.admin),
+                             timeout=15).json()["totals"]
+        assert after["company_card_total"] == 120, after
+        assert after["company_card_by_category"].get("Hotel") == 120, after
+        assert after["amount_to_reimburse"] == 0, after
+
+        # And back again — the toggle must work in both directions.
+        undo = requests.put(f"{API}/expenses/{eid}", headers=H(self.admin),
+                            json={"paid_with_company_card": False}, timeout=10)
+        assert undo.status_code == 200, undo.text
+        restored = requests.get(f"{API}/reimbursement/reports/{rid}", headers=H(self.admin),
+                                timeout=15).json()["totals"]
+        assert restored["company_card_total"] == 0, restored
+        assert restored["amount_to_reimburse"] == 120, restored
 
     def test_approve_endpoint_removed(self):
         # The approve/reject endpoints are gone in this version

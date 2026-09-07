@@ -414,6 +414,7 @@ function ExpenseRow({ expense, onDelete, onSave, isManager }) {
 
 // ===================== MANAGER VIEW =====================
 function ManagerExpenses() {
+  const { user } = useAuth();
   const [month, setMonth] = useState(monthKey());
   const [team, setTeam] = useState(null);
   const [tmId, setTmId] = useState("");      // selected TM (for drill-down)
@@ -422,6 +423,24 @@ function ManagerExpenses() {
   const [loadingTeam, setLoadingTeam] = useState(true);
   const [loadingList, setLoadingList] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // Admin/Owner are the only roles the backend lets past the settled-report
+  // lock, so they are the only ones offered an edit control here.
+  const canEdit = user.role === "Admin" || user.role === "Owner";
+
+  const saveEdit = async (id, patch) => {
+    try {
+      await api.put(`/expenses/${id}`, patch);
+      toast.success("Expense updated");
+      // An edit moves amounts, so the totals above are stale too.
+      setReloadKey((k) => k + 1);
+      return true;
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not update this expense");
+      return false;
+    }
+  };
 
   // team summary
   useEffect(() => {
@@ -429,7 +448,7 @@ function ManagerExpenses() {
     api.get(`/expenses/team-summary?month=${month}`)
       .then((r) => setTeam(r.data))
       .finally(() => setLoadingTeam(false));
-  }, [month]);
+  }, [month, reloadKey]);
 
   // per-TM drill-down
   useEffect(() => {
@@ -441,7 +460,7 @@ function ManagerExpenses() {
     api.get(`/expenses?${params.toString()}`)
       .then((r) => setList(r.data.expenses || []))
       .finally(() => setLoadingList(false));
-  }, [month, tmId, statusFilter]);
+  }, [month, tmId, statusFilter, reloadKey]);
 
   const downloadAll = async (tmFilter = null) => {
     setDownloading(true);
@@ -573,7 +592,9 @@ function ManagerExpenses() {
             <div className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>No receipts match the filter.</div>
           ) : (
             <div data-testid="manager-expenses-list">
-              {list.map((e) => <ExpenseRow key={e.id} expense={e} isManager />)}
+              {list.map((e) => (
+                <ExpenseRow key={e.id} expense={e} isManager onSave={canEdit ? saveEdit : undefined} />
+              ))}
             </div>
           )}
         </div>
