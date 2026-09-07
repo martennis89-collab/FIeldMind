@@ -109,6 +109,12 @@ function movedToDay(scheduledAt, targetDate) {
 export default function CalendarPage() {
   const { user } = useAuth();
   const [view, setView] = useState("month"); // "month" | "week"
+  // GET /meetings hands Admin/Owner every meeting in the company, and a
+  // Senior TM or Manager their people's. That is the right scope for
+  // oversight and the wrong one for a calendar: your own day disappears into
+  // everyone else's. Default to yours; the toggle brings the rest back.
+  const [scope, setScope] = useState("mine"); // "mine" | "all"
+  const canSeeOthers = ["SeniorTM", "Manager", "Admin", "Owner"].includes(user.role);
   const [cursor, setCursor] = useState(() => { const n = new Date(); n.setHours(0, 0, 0, 0); return n; });
   const [meetings, setMeetings] = useState([]);
   const [events, setEvents] = useState([]);
@@ -139,13 +145,16 @@ export default function CalendarPage() {
   useEffect(() => { load(); }, []);
 
   const items = useMemo(() => {
+    // Meetings and events both carry a required tm_user_id, so one predicate
+    // covers the pair.
+    const inScope = (x) => scope === "all" || x.tm_user_id === user.id;
     const out = [];
-    for (const x of meetings) { const it = toItem(x, "meeting"); if (it) out.push(it); }
-    for (const x of events) { const it = toItem(x, "event"); if (it) out.push(it); }
+    for (const x of meetings) { if (!inScope(x)) continue; const it = toItem(x, "meeting"); if (it) out.push(it); }
+    for (const x of events) { if (!inScope(x)) continue; const it = toItem(x, "event"); if (it) out.push(it); }
     // Sort by day, then by real start time within the day.
     out.sort((a, b) => (a.dayKey.localeCompare(b.dayKey)) || (a.startDate - b.startDate));
     return out;
-  }, [meetings, events]);
+  }, [meetings, events, scope, user.id]);
 
   const byDay = useMemo(() => {
     const g = new Map();
@@ -243,6 +252,19 @@ export default function CalendarPage() {
           </h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {canSeeOthers && (
+            <div className="inline-flex rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)" }} data-testid="cal-scope-toggle">
+              {[{ key: "mine", label: "My calendar" }, { key: "all", label: "Everyone" }].map((opt) => (
+                <button key={opt.key} type="button" onClick={() => setScope(opt.key)}
+                        data-testid={`cal-scope-${opt.key}`} aria-pressed={scope === opt.key}
+                        className="px-3 py-1.5 text-sm"
+                        style={{ background: scope === opt.key ? "var(--brand-primary)" : "transparent",
+                                 color: scope === opt.key ? "white" : "var(--text-secondary)" }}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="inline-flex rounded-md border overflow-hidden" style={{ borderColor: "var(--border-default)" }} data-testid="view-toggle">
             <button onClick={() => setView("month")} data-testid="view-month-btn"
                     className="px-3 py-1.5 text-sm inline-flex items-center gap-1"
